@@ -1,0 +1,59 @@
+// The execution of `ddrn/examples/venv-graph`, as one directed graph.
+//
+// **This file is the source of the diagram in `ddrn/ARCHITECTURE.md`.** That
+// document holds the ASCII art, and `scripts/render-architecture.sh` writes
+// it. `ddrn/tests/test_architecture.py` fails when the two disagree, and it
+// fails when a node names a file that no longer exists.
+//
+// Read it with either command:
+//
+//   scripts/render-architecture.sh --show   # the ASCII art of the document
+//   dot -Tvt ddrn/architecture.dot          # colour, in a terminal
+//
+// **Each node names the file that does the work**, in its `file` attribute,
+// and `phase` says when that work runs. `graph-easy` reads neither attribute
+// and warns about both, so the render script drops its warnings.
+//
+// The labels stay short, because `ARCHITECTURE.md` gives the reason for each
+// step beside the drawing. An edge means "this happens next".
+digraph ddrn {
+  rankdir = TB;
+  node [shape = box];
+
+  // Phase 1. The evaluation of the host, which builds nothing.
+  lock     [label = "uv.lock",       phase = "evaluate", file = "ddrn/examples/venv-graph/projects/pure-app/uv.lock"];
+  menu     [label = "uv.nix: menu",  phase = "evaluate", file = "ddrn/examples/venv-graph/uv.nix"];
+  planner  [label = "planner drv",   phase = "evaluate", file = "ddrn/nix/planner.nix"];
+
+  // Phase 2. The build of the planner, inside a builder-rpc-v0 sandbox.
+  plan     [label = "plan.py",       phase = "plan",     file = "ddrn/examples/venv-graph/plan.py"];
+  graphnix [label = "graph.nix",     phase = "plan",     file = "ddrn/examples/venv-graph/graph.nix"];
+  submit   [label = "SubmitOutput",  phase = "plan",     file = "ddrn/UPSTREAM.md"];
+
+  // Phase 3. The build of the graph that the planner submitted.
+  wheel    [label = "wheel node",    phase = "build",    file = "ddrn/examples/venv-graph/scripts/install-wheel.sh"];
+  sdist    [label = "sdist planner", phase = "build",    file = "ddrn/examples/venv-graph/scripts/plan-sdist.py"];
+  local    [label = "local node",    phase = "build",    file = "ddrn/examples/venv-graph/scripts/build-local.py"];
+  venv     [label = "venv node",     phase = "build",    file = "ddrn/examples/venv-graph/scripts/make-venv.py"];
+
+  // Phase 1: the lock file becomes candidates that nothing built.
+  lock -> menu;
+  menu -> planner;
+
+  // Phase 2: the planner decides, and the evaluator of the sandbox writes.
+  planner -> plan;
+  plan -> graphnix;
+  graphnix -> submit;
+
+  // Phase 3: each node of the submitted graph builds.
+  submit -> wheel;
+  submit -> sdist;
+  submit -> local;
+  wheel -> venv;
+  sdist -> venv;
+  local -> venv;
+
+  // The recursion. A source distribution declares its own build system, and
+  // no menu holds that answer, so the node that plans it is a planner again.
+  sdist -> graphnix [style = dashed];
+}
