@@ -14,6 +14,9 @@
   tofuCoreSchemaTool,
   storeExecTool,
   gdb,
+  graphviz,
+  graph-easy,
+  uv,
 }:
 let
   # Reuses dev-env.nix's editable venv rather than assembling a second one.
@@ -58,5 +61,23 @@ mkShell {
     # non-editable build's makeWrapperArgs does (pynix/package.nix).
     tofuCoreSchemaTool
     storeExecTool
+    # `ddrn/architecture.dot` is the source of the diagram in
+    # `ddrn/ARCHITECTURE.md`. `dot` checks that the file parses and draws it
+    # in a terminal with `-Tvt`, and `graph-easy` writes the ASCII art that
+    # the document holds. `scripts/render-architecture.sh` runs both.
+    #
+    # **`graph-easy` is here because `dot -Tascii` is not a diagram.** That
+    # device came in graphviz 13.0.0, and nixpkgs builds graphviz with
+    # autotools, which leaves the plugin out. A CMake build gives the device,
+    # and the device then draws the picture with AA-lib: it renders the pixels
+    # of the image as characters, and the graph of this lab came out as 366
+    # lines of noise. `graph-easy` draws boxes and arrows instead.
+    graphviz
+    graph-easy
+    # Each project under `ddrn/examples/venv-graph/projects` comes from `uv`,
+    # and `projects/README.md` gives the command that wrote each one. The
+    # lock file of this repository pins the version, so every reader of that
+    # file runs the same `uv` and gets the same output.
+    uv
   ];
 }
