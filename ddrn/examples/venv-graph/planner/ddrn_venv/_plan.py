@@ -17,11 +17,14 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nanopynix_bindings import expr as nix_expr, store as nix_store
 
 import nanopynix
+
+if TYPE_CHECKING:
+    from ._resolve import Artifact
 
 
 def nix_string(text: str) -> str:
@@ -59,13 +62,26 @@ class Plan:
         self.nodes.append(entry)
         return name
 
-    def artifact_node(self, artifact: Any, kind: str, *, backend_path: list[str] | None = None) -> str:
+    def artifact_node(
+        self,
+        artifact: Artifact,
+        kind: str,
+        *,
+        backend: str = "",
+        backend_path: list[str] | None = None,
+    ) -> str:
         """Add the node that builds one artefact of the lock file.
 
         `kind` is what the node *does*, and it is not always the kind of the
         artefact. The installer is a wheel, and its node unpacks it rather
         than installs it, because nothing can install a wheel before that node
         exists.
+
+        A node of kind `sdist-build` runs one PEP 517 hook, so it takes the
+        backend and the path that the backend lives on. Both belong in this
+        call, and not in an assignment to the node afterwards: `add` returns
+        the existing name when a node repeats, and a later assignment would
+        then reach the wrong node.
         """
         entry: dict[str, Any] = {
             "name": artifact.node_name,
@@ -77,6 +93,9 @@ class Plan:
             "platform": artifact.is_platform_wheel,
         }
         if kind == "sdist-build":
+            if not backend:
+                raise ValueError(f"{artifact.filename}: a node of kind '{kind}' needs a backend")
+            entry["backend"] = backend
             entry["backendPath"] = backend_path or []
         return self.add(entry)
 

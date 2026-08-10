@@ -114,8 +114,7 @@ def main() -> int:
         backend_path.append(plan.artifact_node(dependency, dependency.kind))
         print(f"plan-sdist:   backend {dependency.filename} for {requirement}", file=sys.stderr)
 
-    root = plan.artifact_node(sdist, "sdist-build", backend_path=backend_path)
-    plan.nodes[-1]["backend"] = backend
+    root = plan.artifact_node(sdist, "sdist-build", backend=backend, backend_path=backend_path)
 
     print(f"==> {len(plan.nodes)} nodes for {sdist.filename}", file=sys.stderr)
 
