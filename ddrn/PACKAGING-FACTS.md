@@ -591,9 +591,31 @@ does not change when the second one arrives.
    which is why the walk has nothing to walk today.
 3. **Then forked resolution**, which the same reader gets almost free, and
    which costs uv2nix most of `lock1.nix`.
-4. **Then a planner node for each source distribution**, which closes the gap
-   that uv2nix documents as an override and that poetry2nix documents as
-   burnout. This is the step that no other tool can take.
+4. **A planner node for each source distribution: done.**
+   `ddrn/examples/venv-graph/scripts/plan-sdist.py` reads `pyproject.toml` out
+   of the archive, resolves the backend against the same menu, and submits the
+   graph that builds the distribution. `lock.json` no longer carries a
+   `backend` or a `backend-requires` for `idna`, and the environment that
+   comes out is the same store path as before,
+   `rfy15b0q3y3nmrld2wbw3j9arvjrf4wl-demo-venv`.
+
+   The run reads:
+
+   ```text
+   plan-sdist: idna-3.18.tar.gz builds through flit_core.buildapi
+   plan-sdist:   backend flit_core-4.0.2-py3-none-any.whl for flit_core<5,>=3.11
+   ```
+
+   **The planner is instantiated outside the sandbox, and it has to be.** A
+   planner cannot read a store path that the planner itself added, so
+   `builtins.outputOf` on a derivation written inside fails.
+   `ddrn/NIX-FACTS.md` gives the measurement. `default.nix` therefore
+   instantiates one planner for each source distribution of the lock file, to
+   a fixed depth, and hands each `.drv` in the way the menu hands in a fetch.
+
+   This closes the gap that uv2nix documents as an override and that
+   poetry2nix documents as burnout. It is the step that no other tool can
+   take.
 5. **Then the nixpkgs override, by tier 4.** A pre-processing step outside the
    sandbox instantiates the candidates and passes a menu of
    `{ name, version, drv, out }`. The planner names the chosen `.drv` in the

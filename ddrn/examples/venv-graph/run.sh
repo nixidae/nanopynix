@@ -81,11 +81,16 @@ echo "==> the root of the graph reads:"
   derivation show "$drv" | grep -o '"[^"]*\.drv"' | sort -u
 
 echo "==> building the environment"
+# **This build needs the feature too, and the released form did not.** A node
+# of kind `sdist` is a planner, so realising the graph runs a planner. The
+# feature is therefore a requirement of the consumer of the graph, and not
+# only of the derivation that produced the graph.
 result="$("$nix_patched/bin/nix" build \
   --store "$store" \
   --impure \
   --no-link --print-out-paths --print-build-logs \
   --extra-experimental-features "$features" \
+  --system-features 'builder-rpc-v0 recursive-nix' \
   --expr "
     let
       planner = import $here {
@@ -124,7 +129,8 @@ check="$("$nix_patched/bin/nix" build \
   --argstr nanopynixEnv "$nanopynix_env" \
   --impure \
   --no-link --print-out-paths --print-build-logs \
-  --extra-experimental-features "$features")"
+  --extra-experimental-features "$features" \
+  --system-features 'builder-rpc-v0 recursive-nix')"
 
 "$nix_patched/bin/nix" --store "$store" \
   --extra-experimental-features "$features" \
@@ -149,7 +155,8 @@ check_other="$("$nix_patched/bin/nix" build \
   --arg editableTree "$other" \
   --impure \
   --no-link --print-out-paths --print-build-logs \
-  --extra-experimental-features "$features")"
+  --extra-experimental-features "$features" \
+  --system-features 'builder-rpc-v0 recursive-nix')"
 
 "$nix_patched/bin/nix" --store "$store" \
   --extra-experimental-features "$features" \

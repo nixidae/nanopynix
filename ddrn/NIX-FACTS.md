@@ -869,6 +869,47 @@ do` from the second build, after the first one did the work. Do not read that
 line as proof that a source edit went uncompiled. Compare the mtime of the
 object file with the mtime of the source.
 
+## A planner cannot read what a planner wrote
+
+**A store path that the builder adds is not visible in that builder's own
+sandbox.** The write succeeds, the submit succeeds, and the file is absent
+from the filesystem that the builder sees. A probe measured it directly:
+
+```text
+==> wrote /nix/store/3lw0vkz9nixhpwm6v1dgp3g4fnsvnf2x-graph.drv
+==> the .drv it wrote is visible from inside: False
+==> and NOT readable: [Errno 2] No such file or directory: '/nix/store/3lw0vkz9…-graph.drv'
+==> submitted /nix/store/3lw0vkz9nixhpwm6v1dgp3g4fnsvnf2x-graph.drv
+```
+
+**This is why `builtins.outputOf` fails on a derivation that the planner
+itself wrote.** `prim_outputOf` (`primops.cc:2527`) calls
+`coerceToSingleDerivedPath`, which renders the derived path, and rendering a
+`Built` whose `drvPath` is `Opaque` calls `store->readDerivation` to learn
+whether the output path is statically known. That read opens the file:
+
+```text
+… while calling the 'outputOf' builtin
+error: opening file "/nix/store/x226q2i9…-idna-3.18.drv.drv": No such file or directory
+```
+
+**The remedy is the one that the menu already uses.** Instantiate the nested
+planner *outside*, pass its `.drv` in with
+`builtins.unsafeDiscardOutputDependency`, and the file is an input source of
+the outer planner and therefore present. `builtins.appendContext` then puts
+the build dependency back, and `outputOf` reads a file that is there.
+`ddrn/examples/venv-graph/default.nix` does this, and `graph.nix` says why at
+the node of kind `sdist`.
+
+**The recorded defect below is one instance of the same rule.**
+`writeDerivation` not priming the hash memo matters only because the fallback
+is a read, and a planner cannot read.
+
+**A consequence for the consumer.** A graph that holds a planner needs
+`builder-rpc-v0` when it is *realised*, and not only when it is produced.
+`ddrn/examples/venv-graph/run.sh` passes `--system-features` to every build
+for that reason.
+
 ## Upstream defects that this lab found
 
 **`SubmitStore::require` has no definition.** An undefined symbol.

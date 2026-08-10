@@ -26,6 +26,8 @@ from packaging.requirements import Requirement
 from packaging.tags import Tag
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
+from ._env import env
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -60,6 +62,10 @@ class Artifact:
     out: str = ""
     path: str = ""
     marker: str | None = None
+    #: The planner of this source distribution, which `default.nix`
+    #: instantiated. Only a row of kind `sdist` carries one.
+    planner_drv: str = ""
+    planner_out: str = ""
 
     @classmethod
     def from_json(cls, row: dict[str, Any]) -> Artifact:
@@ -72,6 +78,8 @@ class Artifact:
             out=row.get("out", ""),
             path=row.get("path", ""),
             marker=row.get("marker"),
+            planner_drv=row.get("plannerDrv", ""),
+            planner_out=row.get("plannerOut", ""),
         )
 
     @property
@@ -99,9 +107,14 @@ class Artifact:
         `install-wheel.sh` needs it, because the store path of the fetch has a
         hash in front of that name and `installer` reads the name.
         """
+        # `package` and `version` travel too, because a node of kind `sdist`
+        # is a planner and has to name the distribution that it plans.
+        common = {"filename": self.filename, "package": self.package, "version": self.version}
+        if self.planner_drv:
+            common |= {"plannerDrv": self.planner_drv, "plannerOut": self.planner_out}
         if self.path:
-            return {"path": self.path, "filename": self.filename}
-        return {"drv": self.drv, "out": self.out, "filename": self.filename}
+            return {**common, "path": self.path}
+        return {**common, "drv": self.drv, "out": self.out}
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,22 +129,6 @@ class Target:
     tags: frozenset[Tag]
     #: The PEP 508 marker environment.
     markers: dict[str, str]
-
-    @classmethod
-    def from_json(cls, row: dict[str, Any]) -> Target:
-        """Rebuild a target that `as_json` wrote.
-
-        The planner of a source distribution runs in its own sandbox, so the
-        outer planner passes the target it decided rather than deciding it
-        twice.
-        """
-        return cls(
-            tags=frozenset(Tag(*text.split("-")) for text in row["tags"]),
-            markers=dict(row["markers"]),
-        )
-
-    def as_json(self) -> dict[str, Any]:
-        return {"tags": sorted(str(tag) for tag in self.tags), "markers": self.markers}
 
     def accepts(self, marker: str | None) -> bool:
         """Whether a PEP 508 marker holds for this target."""
@@ -220,6 +217,27 @@ def choose(
     if best_wheel is not None:
         return best_wheel[1]
     return sdist
+
+
+def target_from_environ() -> Target:
+    """The target that the Nix half named, read from the environment.
+
+    Every planner of this example reads it the same way, because `default.nix`
+    gives every planner the same three variables.
+    """
+    python_version = env("PYTHON_VERSION")
+    platform = env("TARGET_PLATFORM")
+    return Target(
+        tags=frozenset(target_tags(python_version, platform)),
+        markers={
+            "sys_platform": env("TARGET_SYS_PLATFORM"),
+            "platform_system": "Linux",
+            "os_name": "posix",
+            "python_version": python_version,
+            "platform_machine": platform.rsplit("_", 1)[-1],
+            "implementation_name": "cpython",
+        },
+    )
 
 
 def build_system(pyproject: dict[str, Any]) -> tuple[str, list[Requirement]]:

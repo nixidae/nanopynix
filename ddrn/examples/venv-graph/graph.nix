@@ -163,6 +163,31 @@ let
         backendPath = builtins.concatStringsSep ":" (map sitePath node.backendPath);
       }
     else if node.kind == "sdist" then
+      # **A node of this kind is a planner, and not a build.** The build system
+      # of a source distribution is declared inside the archive, and no
+      # evaluation has downloaded the archive. `default.nix` instantiated a
+      # planner that does, and `builtins.outputOf` names what that plan builds.
+      #
+      # **The planner is instantiated outside, and it has to be.** A planner
+      # cannot read a store path that the planner itself added, and
+      # `builtins.outputOf` reads the derivation it is given. So a planner
+      # written here would fail with "opening file ...: No such file or
+      # directory". The `.drv` below is an input source of this planner, so the
+      # read succeeds.
+      if !(node.artifact ? plannerDrv) then
+        throw (
+          "${node.artifact.filename} needs a planner, and the menu has none. "
+          + "A chain of source distributions ran past `sdistPlannerDepth` of default.nix."
+        )
+      else
+        builtins.outputOf (builtins.appendContext node.artifact.plannerOut {
+          ${node.artifact.plannerDrv} = {
+            outputs = [ "out" ];
+          };
+        }) "out"
+    else if node.kind == "sdist-build" then
+      # What the planner above decided: run one PEP 517 hook, with a backend
+      # that is another node of the graph that the planner submitted.
       mk {
         name = node.name;
         args = [

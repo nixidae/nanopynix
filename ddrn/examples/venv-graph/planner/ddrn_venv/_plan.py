@@ -24,14 +24,6 @@ from nanopynix_bindings import expr as nix_expr, store as nix_store
 import nanopynix
 
 
-def env(name: str) -> str:
-    """Read one environment variable that the Nix half must set."""
-    value = os.environ.get(name)
-    if not value:
-        raise RuntimeError(f"{name} is empty: the Nix half must set it")
-    return value
-
-
 def nix_string(text: str) -> str:
     """`text` as a Nix string literal.
 
@@ -84,7 +76,7 @@ class Plan:
             # them. The tag is what `packaging` already parsed.
             "platform": artifact.is_platform_wheel,
         }
-        if kind == "sdist":
+        if kind == "sdist-build":
             entry["backendPath"] = backend_path or []
         return self.add(entry)
 

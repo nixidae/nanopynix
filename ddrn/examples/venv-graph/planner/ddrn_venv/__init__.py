@@ -11,9 +11,9 @@ inside its build sandbox, which `default.nix` sets from a store path.
 
 from __future__ import annotations
 
+from ._env import env as env
 from ._plan import (
     Plan as Plan,
-    env as env,
     nix_string as nix_string,
     open_restricted_store as open_restricted_store,
     submit as submit,
@@ -24,6 +24,7 @@ from ._resolve import (
     Target as Target,
     build_system as build_system,
     choose as choose,
+    target_from_environ as target_from_environ,
     target_tags as target_tags,
     wheel_rank as wheel_rank,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "nix_string",
     "open_restricted_store",
     "submit",
+    "target_from_environ",
     "target_tags",
     "wheel_rank",
 ]

@@ -87,7 +87,17 @@ let
     fileset = pkgs.lib.fileset.fileFilter (file: file.hasExt "py") ./planner;
   };
 
-  menu = {
+  #: How many levels of planner a chain of source distributions may use. A
+  #: planner of a distribution resolves a backend, and that backend may be a
+  #: source distribution which needs a planner of its own. The recursion has to
+  #: stop somewhere, so it stops here, and `graph.nix` names this constant when
+  #: a chain runs past it.
+  #:
+  #: `tests/functional/dyn-drv/eval-submit.sh` of the patched Nix runs three
+  #: levels, which is what this value allows.
+  sdistPlannerDepth = 3;
+
+  baseMenu = {
     inherit (lock) roots installer;
     artifacts = map row lock.artifacts;
     tools = {
@@ -104,6 +114,12 @@ let
       autoPatchelf = "${pkgs.auto-patchelf}";
       bintools = "${pkgs.stdenv.cc.bintools}";
       gccLib = "${pkgs.stdenv.cc.cc.lib}";
+      # The three below reach only a node of kind `sdist`, which is a planner
+      # and needs what this derivation needs: an interpreter that has
+      # nanopynix, `packaging`, and the shared planner code.
+      plannerEnv = nanopynixEnv;
+      packaging = "${pkgs.python3Packages.packaging}";
+      plannerLib = "${plannerLib}";
     };
     scripts = {
       unpackWheel = "${./scripts/unpack-wheel.sh}";
@@ -111,6 +127,10 @@ let
       buildSdist = "${./scripts/build-sdist.sh}";
       buildEditable = "${./scripts/build-editable.py}";
       makeVenv = "${./scripts/make-venv.py}";
+      planSdist = "${./scripts/plan-sdist.py}";
+      # `graph.nix` builds the planner of a source distribution, and that
+      # planner evaluates `graph.nix` again for the graph it submits.
+      graphNix = "${./graph.nix}";
     };
     # The planner reads the `pyproject.toml` of each tree below, and resolves
     # the backend that the tree asks for against the same lock file.
@@ -119,50 +139,130 @@ let
       inherit (spec) root;
     }) editables;
   };
-in
-derivation {
-  # The name says what this derivation is. The root that it submits is named
-  # `demo-venv`, and the two no longer have to agree.
-  name = "venv-planner";
-  system = pkgs.stdenv.hostPlatform.system;
-  builder = "${pkgs.bash}/bin/bash";
 
-  requiredSystemFeatures = [ "builder-rpc-v0" ];
+  # What every planner reads about the target it plans for. The planner runs on
+  # one machine and plans for another, so these are values.
+  targetEnv = {
+    PYTHON_VERSION = pkgs.lib.versions.majorMinor pkgs.python3.version;
+    TARGET_PLATFORM = "linux_x86_64";
+    TARGET_SYS_PLATFORM = "linux";
+  };
 
-  # The submitted object is a derivation, and every derivation ingests as text.
-  __contentAddressed = true;
-  outputHashMode = "text";
-  outputHashAlgo = "sha256";
+  plannerBase = {
+    system = pkgs.stdenv.hostPlatform.system;
+    builder = "${pkgs.bash}/bin/bash";
 
-  NIX_CONFIG = "experimental-features = nix-command ca-derivations dynamic-derivations";
+    requiredSystemFeatures = [ "builder-rpc-v0" ];
 
-  # **Every store path that the planner names travels in this string.**
-  # `builtins.toJSON` keeps the string context of what it serialises, so each
-  # `.drv` of the menu, each tool and each script becomes an input source of
-  # this derivation. That is what makes them present in the sandbox, and it is
-  # what lets `builtins.storePath` and `builtins.appendContext` name them.
-  DDRN_MENU = builtins.toJSON menu;
+    # The submitted object is a derivation, and every derivation ingests as
+    # text.
+    __contentAddressed = true;
+    outputHashMode = "text";
+    outputHashAlgo = "sha256";
 
-  DDRN_SYSTEM = pkgs.stdenv.hostPlatform.system;
-  DDRN_GRAPH_NIX = "${./graph.nix}";
-  DDRN_VENV_NAME = "demo-venv";
+    NIX_CONFIG = "experimental-features = nix-command ca-derivations dynamic-derivations";
 
-  PYTHON_VERSION = pkgs.lib.versions.majorMinor pkgs.python3.version;
-  # The planner plans for the host that the graph will run on, which is not
-  # necessarily the host that runs the planner. Passing the target in keeps
-  # that distinction visible.
-  TARGET_PLATFORM = "linux_x86_64";
-  TARGET_SYS_PLATFORM = "linux";
+    DDRN_SYSTEM = pkgs.stdenv.hostPlatform.system;
+    DDRN_GRAPH_NIX = "${./graph.nix}";
+  } // targetEnv;
 
-  args = [
-    "-c"
+  plannerScript =
+    path:
     ''
       set -eu
       export PYTHONPATH=${packagingPath}:${plannerLib}
       # Nix runs a builder with the *basename* of the builder as `argv[0]`, and
       # CPython derives `sys.prefix` from `argv[0]`. A virtual environment
       # therefore has to be entered through its full path.
-      exec ${builtins.storePath nanopynixEnv}/bin/python ${./plan.py}
-    ''
-  ];
-}
+      exec ${builtins.storePath nanopynixEnv}/bin/python ${path}
+    '';
+
+  # **The planner of one source distribution, instantiated here and not
+  # inside the sandbox.** A planner cannot read a store path that the planner
+  # itself added, so `builtins.outputOf` on a derivation that a planner wrote
+  # fails with "opening file ...: No such file or directory". Instantiating it
+  # out here makes the `.drv` an input source of the outer planner, so the read
+  # succeeds. `ddrn/NIX-FACTS.md` holds the measurement.
+  sdistPlanner =
+    depth: entry:
+    derivation (
+      plannerBase
+      // {
+        # A `.drv` name is accepted only for a text-ingested derivation with
+        # one output named `out` (`primops.cc:1815`), and the submitted object
+        # is a `.drv`.
+        name = "${entry.package}-${entry.version}.drv";
+
+        # **The archive is a real dependency of this derivation.** That is the
+        # whole point: this planner reads a file that no evaluation can read,
+        # and Nix downloads it before the planner runs.
+        DDRN_SDIST = fetch entry;
+
+        DDRN_MENU = builtins.toJSON (
+          (menuAt (depth - 1))
+          // {
+            sdist = {
+              inherit (entry) package version filename;
+            };
+          }
+        );
+
+        args = [
+          "-c"
+          (plannerScript ./scripts/plan-sdist.py)
+        ];
+      }
+    );
+
+  # The menu, with a planner for each source distribution, to `depth` levels.
+  # This maps over the lock file and not over `baseMenu.artifacts`, because a
+  # planner needs the `url` that `row` removes.
+  menuAt =
+    depth:
+    baseMenu
+    // {
+      artifacts = map (
+        entry:
+        let
+          base = row entry;
+        in
+        if entry.kind == "sdist" && depth > 0 then
+          let
+            planner = sdistPlanner depth entry;
+          in
+          base
+          // {
+            # The same bargain as `row` strikes for a fetch: the `.drv` is an
+            # input source, so the file is present and the planner has not run.
+            plannerDrv = builtins.unsafeDiscardOutputDependency planner.drvPath;
+            plannerOut = builtins.unsafeDiscardStringContext planner.outPath;
+          }
+        else
+          base
+      ) lock.artifacts;
+    };
+
+  menu = menuAt sdistPlannerDepth;
+in
+derivation (
+  plannerBase
+  // {
+    # The name says what this derivation is. The root that it submits is named
+    # `demo-venv`, and the two no longer have to agree.
+    name = "venv-planner";
+
+    # **Every store path that the planner names travels in this string.**
+    # `builtins.toJSON` keeps the string context of what it serialises, so each
+    # `.drv` of the menu, each tool and each script becomes an input source of
+    # this derivation. That is what makes them present in the sandbox, and it
+    # is what lets `builtins.storePath` and `builtins.appendContext` name them.
+    DDRN_MENU = builtins.toJSON menu;
+
+    DDRN_VENV_NAME = "demo-venv";
+
+    args = [
+      "-c"
+      (plannerScript ./plan.py)
+    ];
+  }
+)

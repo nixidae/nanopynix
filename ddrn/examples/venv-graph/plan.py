@@ -49,7 +49,7 @@ from ddrn_venv import (
     env,
     open_restricted_store,
     submit,
-    target_tags,
+    target_from_environ,
 )
 from packaging.requirements import Requirement
 
@@ -58,31 +58,21 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
-class BuildSystem:
-    """The PEP 517 declaration that a source distribution needs.
-
-    **A lock file does not record this.** `ddrn/PACKAGING-FACTS.md` gives the
-    measurement behind that statement, for `uv.lock` and for `poetry.lock`
-    both, so `lock.json` of this example carries it by hand for now.
-    """
-
-    backend: str
-    requires: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class Lock:
     """What the Nix half read out of the lock file, as one value.
 
     This is the whole input of `resolve`, and it is what a reader of a
     different lock format has to produce.
+
+    **It records no build system.** Neither `uv.lock` nor `poetry.lock` does,
+    and `ddrn/PACKAGING-FACTS.md` gives the measurement. A source distribution
+    therefore becomes a node of kind `sdist`, which is a planner and not a
+    build, and that planner reads the declaration out of the archive.
     """
 
     artifacts: list[Artifact]
     roots: list[str]
     installer: str
-    #: The build system of each source distribution, keyed by file name.
-    backends: dict[str, BuildSystem]
 
     @classmethod
     def from_menu(cls, menu: dict[str, Any]) -> Lock:
@@ -91,14 +81,6 @@ class Lock:
             artifacts=[Artifact.from_json(row) for row in rows],
             roots=menu["roots"],
             installer=menu["installer"],
-            backends={
-                row["filename"]: BuildSystem(
-                    backend=row["backend"],
-                    requires=tuple(row.get("backend-requires") or ()),
-                )
-                for row in rows
-                if row.get("backend")
-            },
         )
 
 
@@ -167,25 +149,12 @@ def resolve(lock: Lock, editables: list[Editable], target: Target) -> Plan:
             print(f"plan: {package}: no artefact fits this target", file=sys.stderr)
             continue
 
-        backend_path: list[str] = []
-        declared: BuildSystem | None = None
-        if chosen.kind == "sdist":
-            declared = lock.backends.get(chosen.filename)
-            if declared is None:
-                raise RuntimeError(f"{chosen.filename}: the lock file declares no build system for this sdist")
-            backend_path = resolve_backend(
-                plan,
-                artifacts,
-                [Requirement(text) for text in declared.requires],
-                target,
-                chosen.filename,
-            )
-
-        name = plan.artifact_node(chosen, chosen.kind, backend_path=backend_path)
-        if declared is not None:
-            # `graph.nix` reads the backend from the node, because a node of
-            # this kind runs one PEP 517 hook and nothing else.
-            plan.nodes[-1]["backend"] = declared.backend
+        # **A source distribution becomes a planner, and not a build.** The
+        # backend it needs is declared inside the archive, which no evaluation
+        # has downloaded. `graph.nix` turns a node of kind `sdist` into a
+        # derivation that runs `scripts/plan-sdist.py`, and that planner
+        # submits the graph which builds this distribution.
+        name = plan.artifact_node(chosen, chosen.kind)
         plan.member(name, f"{chosen.package}=={chosen.version}")
         binary = " (binary)" if chosen.is_platform_wheel else ""
         print(f"plan: {package}: {chosen.filename} ({chosen.kind}){binary}", file=sys.stderr)
@@ -216,18 +185,7 @@ def main() -> int:
     lock = Lock.from_menu(menu)
 
     python_version = env("PYTHON_VERSION")
-    platform = env("TARGET_PLATFORM")
-    target = Target(
-        tags=frozenset(target_tags(python_version, platform)),
-        markers={
-            "sys_platform": env("TARGET_SYS_PLATFORM"),
-            "platform_system": "Linux",
-            "os_name": "posix",
-            "python_version": python_version,
-            "platform_machine": platform.rsplit("_", 1)[-1],
-            "implementation_name": "cpython",
-        },
-    )
+    target = target_from_environ()
 
     editables = [
         Editable(name=name, source=spec["source"], root=spec["root"])
