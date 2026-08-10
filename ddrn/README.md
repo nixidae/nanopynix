@@ -594,12 +594,19 @@ Each of the seven steps below is done.
    backend, and one node composes a real virtual environment with
    `venv.EnvBuilder`.
 
-   **The builders follow `pyproject.nix`**, which installs with
-   `pypa/installer` and merges the members with a script that rewrites the
-   shebang of each console script. Both matter: `importlib.metadata` finds a
-   package only when an installer wrote its `.dist-info`, and a console script
-   runs the wrong interpreter until the shebang points at the `bin/python` of
-   the environment.
+   **The builders follow `pyproject.nix`**, which installs each wheel with an
+   installer and merges the members with a script that rewrites the shebang of
+   each console script. Both matter: `importlib.metadata` finds a package only
+   when an installer wrote its `.dist-info`, and a console script runs the
+   wrong interpreter until the shebang points at the `bin/python` of the
+   environment.
+
+   The installer here is `pypa/installer`, which `pyproject.nix` uses for a
+   cross build only; its default is `uv pip install`. The reason to take the
+   cross path is that `installer` is pure Python and is one wheel of the same
+   lock file, so it becomes a node of the graph. `ddrn/PACKAGING-FACTS.md`
+   records the difference, and every other fact that this lab read in
+   `pyproject.nix` and `uv2nix`.
 
    **The installer is itself a node of the graph.** The planner resolves it
    from the same lock file, and its node unpacks the wheel rather than

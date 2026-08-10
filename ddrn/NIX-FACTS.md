@@ -274,6 +274,55 @@ entry.
 three levels: a planner submits the derivation of a second planner, that
 planner submits the root of a graph, and the root gives the file.
 
+### How far the evaluator inside a build reaches into nixpkgs
+
+Measured with a probe that a planner runs, over nixpkgs
+`26.11pre1040357.e2587caef70c`. `ddrn/PACKAGING-FACTS.md` says why the question
+matters.
+
+**The whole nixpkgs tree fits in the sandbox.** One attribute,
+`DDRN_NIXPKGS = "${pkgs.path}"`, makes 345 MiB and 53558 files an input source
+of the planner, through the string context of that path. The probe finds the
+directory, and it finds `lib/` under it.
+
+**`import (nixpkgs + "/lib")` works, and it costs nothing.** 0.0 s, 86 MiB of
+resident memory, no store operation at all, and it returns
+`26.11pre1040357.e2587caef70c`. The `lib` of nixpkgs is pure Nix, and it never
+speaks to a store.
+
+**`import nixpkgs { system = ...; config = {}; overlays = []; }` works too.**
+0.1 s, 127 MiB, no store operation, and it returns a set. Evaluation is lazy,
+so the whole package set exists before any derivation of it does.
+
+**Instantiating one derivation of that set does not work.**
+`(import nixpkgs { ... }).hello.drvPath` fails with `Operation 26 not allowed
+inside derivation`. Operation 26 is `QueryPathInfo`
+(`src/libstore/include/nix/store/worker-protocol.hh:253`).
+
+**`builtins.readFile` of a path in the store reaches that same operation, and
+libexpr swallows the error.** `src/libexpr/primops.cc:2174` reads the file and
+then asks `queryPathInfo` for the references of the store path, so that it can
+re-scan them into the string context. The call sits in
+`try { ... } catch (Error &) { }`. The probe read `/.version` of the nixpkgs
+tree and got `26.11` back, with no context.
+
+**A refused operation is not a soft failure. It kills the connection.** The
+refusal throws in `daemon.cc` at protocol dispatch, before the arguments of the
+operation come off the wire, so the protocol desynchronises. Measured: after
+one swallowed `readFile` refusal, the next store call of the same evaluator
+failed with `write of 80 bytes: Broken pipe`, and an earlier run of the probe
+ended in
+
+```text
+terminating due to unexpected unrecoverable internal error: Assertion 'block'
+failed in nix::WorkerProto::BasicClientConnection::processStderrReturn at
+../worker-protocol-connection.cc:106
+```
+
+and then SIGSEGV. **A caller that catches the error still loses the socket.**
+This belongs upstream on its own: an allowlist that desynchronises the protocol
+gives a crash where it means to give a diagnostic.
+
 **Every kind of child works under a submitted root.** The test covers a graph
 of floating content-addressed derivations, a graph of input-addressed
 derivations, and an input-addressed root over one floating child. The third
@@ -340,6 +389,99 @@ menu of store paths in one environment variable makes every path in it an
 input source of the derivation. `ddrn/examples/venv-graph/default.nix` passes
 21 artefacts, 6 tools and 3 scripts that way, in `DDRN_MENU`.
 
+### What a `.drv`-only menu costs, measured
+
+A probe in the scratchpad put `unsafeDiscardOutputDependency pkg.drvPath` in
+the environment of a plain `derivation`, and counted `/nix/store` from inside
+the sandbox. **This is unpatched Nix. The mechanism needs no allowlist entry
+and no experimental feature.**
+
+The `.drv` file arrives, its whole `.drv` closure arrives with it, and the
+output stays absent:
+
+```
+probe: DRVREF present   /nix/store/0nnrl…-hello-2.12.3.drv
+probe: OUTREF ABSENT    /nix/store/c2h2f…-hello-2.12.3
+probe: STDENV present   /nix/store/yd8x4…-stdenv-linux.drv
+probe: SRCDRV present   /nix/store/z85z5…-hello-2.12.3.tar.gz.drv
+```
+
+`stdenv-linux.drv` and the `fetchurl` derivation of the source are both there,
+so the closure is the transitive one and not the single file.
+
+The count of `.drv` files in the sandbox, against the menu that the derivation
+declares:
+
+| menu | store entries | of which `.drv` |
+| --- | --- | --- |
+| nothing | 29 | 0 |
+| `hello` | 792 | 605 |
+| `python3` | 927 | 699 |
+| `python3Packages.numpy` | 1362 | 1057 |
+| `numpy`, `pandas`, `requests` | 1390 | 1085 |
+| all of `python3Packages` | 37669 | 35994 |
+
+**The closures overlap almost completely.** Two more packages after `numpy`
+cost 28 more `.drv`, because `stdenv` and the interpreter are already there.
+The first package of a menu is the expensive one, and each package after it is
+nearly free.
+
+**A menu of more than a few thousand entries does not fit in an environment
+variable.** All of `python3Packages` is 10558 packages that evaluate, and 2.2
+MB of JSON. The build then fails before the builder starts:
+
+```
+error: executing '…/bin/bash': Argument list too long
+```
+
+**`pkgs.writeText` carries a menu that `builtins.toFile` cannot.** `toFile`
+refuses a string that holds a store path. `writeText` is a derivation, so the
+reference scan of its output records every `.drv` path in the text, and the
+closure of that one file carries the whole menu into the sandbox. The full
+`python3Packages` menu measures 154.4 MiB over 37640 paths, of which 35994 are
+`.drv`, and **no output of any of the 10558 packages is built**.
+
+Evaluating that whole set costs 17.7 s with a cold evaluation cache.
+
+### The return path, proved
+
+A second probe closed the loop. A `builder-rpc-v0` planner took `hello` as a
+`.drv`-only dependency, wrote one node whose `input_drvs` names that `.drv`,
+and submitted the node. The planner reported the state it saw:
+
+```
+==> menu .drv present in the sandbox: True
+==> menu output already built:        False
+==> wrote /nix/store/3lw0vkz9nixhpwm6v1dgp3g4fnsvnf2x-graph.drv
+```
+
+`builtins.outputOf` then realised that submitted `.drv` in the outer store:
+
+```
+copying path '/nix/store/c2h2f4cw9p8i8zcfy52fd1dd6g0yhnki-hello-2.12.3' from 'https://cache.nixos.org'...
+building '/nix/store/3lw0vkz9nixhpwm6v1dgp3g4fnsvnf2x-graph.drv'...
+```
+
+The node then printed `Hello, world!`. **So a planner may name a
+pre-instantiated `.drv` in a node that it writes, and the outer store resolves
+it.**
+
+Two details of that log matter:
+
+- **The outer store substituted `hello` and did not build it.** A menu entry
+  keeps its identity, so the binary cache serves it. A nixpkgs package that a
+  planner selects costs a download and not a compile.
+- **`fill_in_output_paths` succeeded over an input `.drv` that the planner did
+  not write.** The output path of the node depends on the hash modulo of every
+  input derivation, and the planner obtained that for `hello.drv` without any
+  refused operation.
+
+Nix warns once during the realisation, and the warning is harmless here:
+
+```
+warning: Ignoring dynamic derivation …-graph.drv.drv^out while querying missing paths; not yet implemented
+```
+
 ## Python packaging, measured
 
 **A graph whose nodes the planner chose, and whose shape it decided, builds and
@@ -390,11 +532,20 @@ them.
 
 ### Installing a wheel, and what `unzip` does not do
 
-**`unzip` is not an install.** `pyproject.nix` uses `pypa/installer`
-(`build/hooks/pypa-install-hook`), and the difference is visible from inside
-the environment: `importlib.metadata.distributions()` finds a package only when
-an installer wrote its `.dist-info`, with `RECORD` and `METADATA`. A console
-script exists only when an installer read `entry_points.txt` and wrote it.
+**`unzip` is not an install.** The difference is visible from inside the
+environment: `importlib.metadata.distributions()` finds a package only when an
+installer wrote its `.dist-info`, with `RECORD` and `METADATA`. A console script
+exists only when an installer read `entry_points.txt` and wrote it.
+
+**This lab installs with `pypa/installer`, which is the cross path of
+`pyproject.nix` and not its default path.** The default hook of
+`pyproject.nix` runs `uv pip install`
+(`build/hooks/pyproject-install-hook.sh`), and `pyprojectPypaInstallHook`
+replaces it only when the build is cross. `ddrn/PACKAGING-FACTS.md` gives the
+two comments that say so. This lab takes the cross path on purpose:
+`installer` is pure Python and is one wheel of the same lock file, so it
+becomes a node of the graph, and `uv` is a compiled program that a node would
+have to take from outside the plan.
 
 **The installer is a node of the graph, and it bootstraps by unpacking.**
 Nothing can install the installer, so the planner gives that one artefact a

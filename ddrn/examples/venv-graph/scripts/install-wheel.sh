@@ -2,9 +2,13 @@
 # Install one wheel, the way PEP 376 says to.
 #
 # **`unzip` is not an install.** A wheel unpacked with `unzip` has no `RECORD`,
-# no console script, and no `.dist-info` that an installer wrote. `pypa/installer`
-# is the reference implementation, and `pyproject.nix` uses it for the same
-# reason (`build/hooks/pypa-install-hook`).
+# no console script, and no `.dist-info` that an installer wrote.
+# `pypa/installer` is the reference implementation of PEP 376.
+#
+# `pyproject.nix` reaches for it on the cross path only, and installs with
+# `uv pip install` otherwise. This node takes the cross path on purpose:
+# `installer` is pure Python and is one wheel of the same lock file, so it is a
+# node of this graph, and `uv` is a compiled program from outside the plan.
 #
 # `installer` is another node of this same graph. The planner resolved it from
 # the same lock file that gave it every other artefact, so nothing here comes
