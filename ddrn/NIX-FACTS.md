@@ -905,10 +905,47 @@ the node of kind `sdist`.
 `writeDerivation` not priming the hash memo matters only because the fallback
 is a read, and a planner cannot read.
 
-**A consequence for the consumer.** A graph that holds a planner needs
-`builder-rpc-v0` when it is *realised*, and not only when it is produced.
-`ddrn/examples/venv-graph/run.sh` passes `--system-features` to every build
-for that reason.
+### Who needs `builder-rpc-v0`, and when
+
+**The feature gates a build, and not a realisation.** To realise a derived
+path is to make its outputs valid in the store, and Nix has two routes to
+that: substitute, or build. `requiredSystemFeatures` sits on the second route
+only.
+
+`DerivationBuildingGoal::tryToBuild` compares the required features with the
+features of the store (`derivation-building-goal.cc:373`):
+
+```cpp
+auto required = drvOptions.getRequiredSystemFeatures(*drv);
+auto & available = worker.store.config.systemFeatures.get();
+if (std::ranges::any_of(required, [&](const std::string & f) { return !available.count(f); }))
+    wrongStore.missingFeatures = WrongLocalStore::Pair<StringSet>{required, available};
+```
+
+The coroutine before it in the same file is `gaveUpOnSubstitution`. So Nix
+reaches that comparison only after substitution failed.
+
+**Therefore a consumer that substitutes needs no system feature.** A cache
+that holds the realisation of the planner and the output of each node serves
+the environment by download, and `systemFeatures` is never read. This is the
+ordinary property of Nix: the machine that uses a package does not need what
+built it.
+
+**What the consumer does need is the `dynamic-derivations` experimental
+feature, at evaluation time.** `builtins.outputOf` is what names the
+environment, so no cache removes that requirement. It is a language feature
+and not a system feature, and the two are separate things.
+
+`ddrn/examples/venv-graph/run.sh` passes `--system-features` because that
+script builds everything itself: it makes a private store that no cache has
+ever served, so the local machine is the builder of the planner.
+
+**One report is incomplete for a dynamic derivation, and this is by design.**
+`queryMissing` walks the derived path graph before anything runs, and it warns
+`Ignoring dynamic derivation %s while querying missing paths; not yet
+implemented` (`misc.cc:201`). It cannot do better: the inner derivation is
+what the planner produces, so nothing knows the graph until the planner runs.
+The warning is about the accounting, and not about the realisation.
 
 ## Upstream defects that this lab found
 

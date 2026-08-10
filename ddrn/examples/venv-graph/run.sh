@@ -82,9 +82,13 @@ echo "==> the root of the graph reads:"
 
 echo "==> building the environment"
 # **This build needs the feature too, and the released form did not.** A node
-# of kind `sdist` is a planner, so realising the graph runs a planner. The
-# feature is therefore a requirement of the consumer of the graph, and not
-# only of the derivation that produced the graph.
+# of kind `sdist` is a planner, so building the graph builds a planner.
+#
+# The feature gates a *build*, and not a realisation: Nix compares it in
+# `DerivationBuildingGoal::tryToBuild`, which runs only after substitution
+# failed. A consumer that substitutes every output therefore needs no system
+# feature at all. This script needs it because the store below is private and
+# no cache has ever served it, so this machine builds everything.
 result="$("$nix_patched/bin/nix" build \
   --store "$store" \
   --impure \
