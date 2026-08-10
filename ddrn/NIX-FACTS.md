@@ -387,7 +387,7 @@ the inverse of the line above.** `unsafeDiscardOutputDependency` leaves the
 **`builtins.toJSON` keeps the string context of what it serialises.** So a
 menu of store paths in one environment variable makes every path in it an
 input source of the derivation. `ddrn/examples/venv-graph/default.nix` passes
-21 artefacts, 6 tools and 3 scripts that way, in `DDRN_MENU`.
+21 artefacts, 6 tools and 3 scripts that way, in `DDRN_INPUTS`.
 
 ### What a `.drv`-only menu costs, measured
 
@@ -869,6 +869,49 @@ do` from the second build, after the first one did the work. Do not read that
 line as proof that a source edit went uncompiled. Compare the mtime of the
 object file with the mtime of the source.
 
+## Purity, and which half of a planner can have it
+
+**`builtins.storePath` is refused in pure evaluation mode.** Measured, against
+an ordinary Nix:
+
+```text
+$ nix eval --expr 'builtins.storePath "/nix/store/di26b1kk…-coreutils-9.11"'
+error: 'builtins.storePath' is not allowed in pure evaluation mode
+```
+
+`builtins.appendContext` is in the same class, and a planner needs both. So
+the two halves of this example do not have the same purity, and they cannot:
+
+- **The outer entrypoint can be pure.** Nothing about instantiating the
+  planner needs an impure primop, once the tools arrive as derivations rather
+  than as path strings. `default.nix` of this example takes `nanopynixEnv` as
+  a string today, and `builtins.storePath` on that string is the one thing
+  that forces `--impure`.
+- **The evaluator inside the sandbox cannot be pure.** A planner receives
+  store paths as strings, and `storePath` and `appendContext` are the primops
+  that turn a string back into a dependency. There is no pure spelling of
+  that.
+
+**The classification is too coarse for a builder, and this is an argument for
+upstream.** `storePath` is impure because it can name any path of the host
+store. Inside a `builder-rpc-v0` sandbox it cannot: `RestrictedBuilder::
+ensurePath` asserts that the path is in the input closure of this build. So
+the primop is bounded there by construction, and the reason for the pure-mode
+refusal does not apply.
+
+**`builtins.fetchGit` with a commit stays pure, and it still fetches during
+the evaluation.** The two properties are separate, and `uv.nix` meets both:
+a commit pins the content, so pure evaluation mode accepts the call, and the
+call still reaches the network before the evaluation can go on. That is the
+opposite of `pkgs.fetchurl`, which is a fixed-output derivation: instantiating
+one costs nothing and downloads nothing.
+
+The difference is what the caller knows. `fetchurl` gets a hash of the output,
+so the evaluator writes a derivation and the build downloads it later.
+`fetchGit` gets a commit, which is not a hash of a NAR, so the evaluator
+cannot write that derivation and fetches instead. `ddrn/PACKAGING-FACTS.md`
+records what that costs a lock file that holds a git source.
+
 ## A planner cannot read what a planner wrote
 
 **A store path that the builder adds is not visible in that builder's own
@@ -904,6 +947,67 @@ the node of kind `sdist`.
 **The recorded defect below is one instance of the same rule.**
 `writeDerivation` not priming the hash memo matters only because the fallback
 is a read, and a planner cannot read.
+
+### A list is a memo, and a function is not
+
+**Nix evaluates each element of a list at most once, and it evaluates the body
+of a function again at every call.** So a value that a recursion needs at each
+level belongs in a list, and not in a recursive function.
+
+`default.nix` instantiates one planner for each source distribution, and each
+of those planners carries the inputs of the level below it. A recursive
+function therefore builds the whole level `n` times, once for each planner of
+the level above, which costs O(n ^ depth). `builtins.genList` gives the same
+values as a list of thunks, and each level is then built once, which costs
+O(n * depth).
+
+The measurement is the evaluation of `uv.nix` over `projects/pure-app`, which
+holds 5 source distributions, at each value of `sdistPlannerDepth`:
+
+| depth | a recursive function | a `genList` of levels |
+| --- | --- | --- |
+| 3 | 1.08 s | 1.00 s |
+| 5 | 2.83 s | 0.98 s |
+| 8 | not measured | 1.24 s |
+| 12 | not measured | 1.86 s |
+
+**The change altered no derivation.** The planner is
+`0mhmq8vd54jvwvmxzszjjy29nrflmjzh-venv-planner.drv` before it and after it.
+
+The lock files that `ddrn/PACKAGING-FACTS.md` measured hold up to 98 source
+distributions, and 98 ^ 3 is 941192. The recursive form did not reach such a
+lock file, and this is the change that lets a later project try.
+
+### The bound of the levels, reached and passed
+
+**A depth that nothing reaches is a depth that nothing tests.** The example
+built one level for a long time: `demo-tool` is a source distribution, and its
+backend is a wheel. So `sdistPlannerDepth = 3` allowed two levels that no run
+had ever used, and the `throw` past the bound had never run at all.
+
+`tests/fixtures/default.nix` now holds a chain of four source distributions.
+Each link declares the next one as its build backend, and the wheel `link-d`
+ends the chain, so the number of planners is the number of links above it. The
+two roots of `tests/sealed.nix` differ in nothing but the name:
+
+| root | planners | result |
+| --- | --- | --- |
+| `link-a` | 3 | the environment builds |
+| `link-0` | 4 | `graph.nix` throws |
+
+The failure arrives inside the **third** planner, which is the build of
+`link-b`, when that planner evaluates `graph.nix` and asks for a fourth:
+
+```text
+link-b> error: link_c-1.0.0.tar.gz needs a planner, and the menu has none.
+link-b>        A chain of source distributions ran past `sdistPlannerDepth` of default.nix.
+error: Cannot build '/nix/store/…-link-b-1.0.0.drv.drv'. Reason: builder failed with exit code 1.
+```
+
+**The outer planner builds either way.** It registers the graph and submits
+it, and nothing in that step reads past the first level. So the bound is a
+property of the realisation and not of the plan, and a test that builds only
+the planner would see nothing.
 
 ### Who needs `builder-rpc-v0`, and when
 
@@ -946,6 +1050,28 @@ ever served, so the local machine is the builder of the planner.
 implemented` (`misc.cc:201`). It cannot do better: the inner derivation is
 what the planner produces, so nothing knows the graph until the planner runs.
 The warning is about the accounting, and not about the realisation.
+
+### Why the sealed test is a pytest run, and not a Nix check
+
+`ddrn/examples/venv-graph/tests` reaches no index, so it looks like a
+candidate for `nix/checks.nix`. It is not one, and three properties of a build
+sandbox say why:
+
+1. **A check is a derivation, so the graph would run inside a build.** The
+   outer build then needs the `recursive-nix` system feature, and the daemon
+   of the machine has to grant it. A CI runner grants what its `nix.conf`
+   names, and no expression of this repository can change that.
+2. **A build substitutes nothing.** Every path that the sealed graph needs —
+   `bash`, `coreutils`, `python3`, the patched Nix and the planner environment
+   — would have to be an input of the outer derivation, and the inner store
+   would have to be seeded from those inputs.
+3. **The inner build needs `builder-rpc-v0` as well.** A planner is a build,
+   and the section above gives the comparison that gates it. So the outer
+   sandbox has to permit a nested sandbox that permits a second feature.
+
+The pytest run makes each of those a property of the machine that runs it,
+where it belongs. `ddrn/examples/venv-graph/tests/pytest.ini` keeps the run
+separate, and the `testpaths` of the repository does not name that directory.
 
 ## Upstream defects that this lab found
 

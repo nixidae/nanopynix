@@ -1,0 +1,19 @@
+# **A decoy, and it has to be one.**
+#
+# `nested-app` lives in `./backend`, and this file is at the top of the tree
+# that holds it. `pypa/hatch` has the same shape: the repository declares one
+# project at its root, and `hatchling` lives in `backend`. A git source of
+# `uv.lock` names that subdirectory, and a reader that ignored the name would
+# build this project instead.
+#
+# So this declaration names a backend that no artefact of the sealed test
+# supplies. A build that reads this file fails, and the failure says which
+# backend it looked for.
+[build-system]
+requires = []
+build-backend = "the_backend_of_the_wrong_project"
+
+[project]
+name = "nested-outer"
+version = "0.0.0"
+description = "The project at the top of the tree, which the sealed test never builds."

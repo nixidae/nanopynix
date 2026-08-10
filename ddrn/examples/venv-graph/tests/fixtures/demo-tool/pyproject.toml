@@ -1,0 +1,9 @@
+# The declaration that no index records, and that a planner has to read out of
+# the archive. `demo-backend` is another artefact of the same lock file.
+[build-system]
+requires = ["demo-backend >=1.0"]
+build-backend = "demoback"
+
+[project]
+name = "demo-tool"
+version = "3.0.0"

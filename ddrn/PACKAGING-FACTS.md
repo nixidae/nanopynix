@@ -235,10 +235,13 @@ the project asked for. The `dependencies` list is what it got.
 | --- | --- | --- |
 | `registry` | 59 | covered, wheel and sdist nodes |
 | `editable` | 36 | covered, since the PEP 660 node |
-| `virtual` | 5 | not covered; a member with edges and no install |
-| `url` | 1 | not covered; a direct URL |
-| `git` | 1 | not covered; needs a fetcher in the menu |
-| `directory` | 1 | not covered; a local path that is not editable |
+| `virtual` | 5 | covered; a member with edges and no install |
+| `url` | 1 | covered; an sdist that carries a subdirectory |
+| `git` | 1 | covered; a checkout, fetched during evaluation |
+| `directory` | 1 | covered; a tree, built as a wheel and not as an editable |
+
+All six are covered now. The two that name a place get a section of their own
+below, because each one costs something that a registry source does not.
 
 **uv.lock records no build system.** No `build-system`, `build-backend` or
 `requires` key appears in any of the 39 fixtures. uv2nix says so in its own
@@ -328,6 +331,322 @@ of package name to a list of extras and groups (`lib/workspace.nix:253`):
 `all`, `optionals`, `groups`, and `default`, where `default` reads
 `tool.uv.default-groups` of the project. `mkVirtualEnv` takes one of them, or a
 set written by hand.
+
+## uv.lock in the wild, measured
+
+The section above measured the 39 lock files of `~/Code/uv2nix/lib/fixtures`,
+which a test suite wrote. This section measures 22 lock files of real projects,
+under `~/Code/*/uv.lock`.
+
+| what | count |
+| --- | --- |
+| lock files | 22 |
+| packages | 1911 |
+| artefacts (wheel entries and sdist entries) | 15223 |
+
+The largest is `anthropic-sdk-python`: 103 packages and **1838 artefacts**. The
+ratio holds across the sample, and it is the number that sizes a menu: a lock
+of 100 packages carries about 1800 artefacts, because a package publishes one
+wheel for each interpreter and each platform.
+
+| field | count | note |
+| --- | --- | --- |
+| `source = { registry }` | 1858 | the common case |
+| `source = { editable }` | 49 | a workspace member |
+| `source = { virtual }` | 3 | edges, and nothing to install |
+| `source = { git }` | 1 | needs a fetcher |
+| package with `optional-dependencies` | 52 | extras |
+| package with `dev-dependencies` | 40 | PEP 735 groups |
+| package with `resolution-markers` | 60 | a forked resolution |
+| package with no `version` | 6 | a dynamic version |
+| `conflicts` declaration | 2 | over two lock files |
+
+`version` is `1` in every one. `revision` is 3 in 18 of them, 2 in two, 1 in
+one, and absent in one. So a reader asserts `version == 1`, and it accepts any
+`revision` and no `revision`.
+
+### What a uv.lock menu costs, measured
+
+One `pkgs.fetchurl` for each of the 1838 artefacts of
+`anthropic-sdk-python/uv.lock`, carried in a `writeText` file the way
+`ddrn/NIX-FACTS.md` describes:
+
+| what | value |
+| --- | --- |
+| the menu file | 632 KB |
+| paths in its closure | 2599 |
+| of which `.drv` | 2440 |
+| closure size | 9.5 MiB |
+| instantiation, warm | 1.2 s |
+| first build, which writes each `.drv` | 12.5 s |
+
+**Compare the pre-instantiated nixpkgs menu**, which the same document
+measures at 37669 paths and 154.4 MiB for all of `python3Packages`. A whole
+lock file costs one fortieth of that, so the menu needs no filter and no
+budget. **The planner therefore reads a menu of every artefact of the lock,
+and it makes the choice.**
+
+### How uv2nix resolves, and what each step is for
+
+`lib/lock1.nix:50`, `resolveDependencies`. It takes the lock, a PEP 508
+environment, and the names to start from. Five steps:
+
+1. **Drop each package that this environment cannot reach.** A package carries
+   `resolution-markers`, and the package survives when one of those markers
+   holds. `lock1.nix:79`.
+2. **Drop each dependency edge that this environment cannot reach.** An edge
+   carries a `marker`. `filterPackage`, `lock1.nix:231`.
+3. **Walk the edges from the start set.** `genericClosure`, `lock1.nix:111`.
+   An edge names a version only when the resolution is ambiguous, so an edge
+   with no version admits every candidate of that name. `lock1.nix:127`.
+4. **Reduce each name to one package.** `reduceDependencies`, `lock1.nix:144`.
+   A name with more than one candidate is narrowed by the versions that the
+   other reached packages pin for it, and the step repeats until each name has
+   one. It gives up after 100 rounds.
+5. **Assert.** `requires-python` against the interpreter, and
+   `supported-markers` and `required-markers` against the environment.
+   `overlays.nix:126`.
+
+`filterConflicts` (`lock1.nix:250`) runs before all of this. A `conflicts`
+declaration names a set of extras and groups that may not appear together, and
+the caller passes the one it wants. The function removes the others from the
+lock, so the resolver sees a lock with no conflict.
+
+**Step 4 is the part that a lock of a current uv rarely needs.** uv writes
+`resolution-markers` on each package of a fork, so step 1 already leaves one
+candidate. Step 4 answers an older lock, where the edges carry the
+disambiguation and the packages do not. `lock1.nix:166` says so in the message
+that it throws.
+
+### How uv resolves the same file, and why it needs no step 4
+
+`Installable::to_resolution`, in `crates/uv-resolver/src/lock/installable.rs`.
+It takes a marker environment, the tags, the extras and the groups, and the
+roots. Three steps:
+
+1. **Find the entry of each root.** `Lock::find_by_name`, which fails when more
+   than one entry carries the name. `Lock::find_by_markers` answers the same
+   question for a requirement of the manifest, and it uses
+   `resolution-markers` to choose.
+2. **Walk the edges from the roots.** The queue holds a package and one extra
+   of it, and the marker of each edge decides whether uv follows that edge.
+3. **Follow each edge to the entry that it names.** `Lock::find_by_id`, which
+   is a lookup and not a search.
+
+**Step 3 is a lookup because an edge names one entry.** uv identifies a package
+by a `PackageId`, which is the name, the version and the source together. An
+edge of the lock file carries all three whenever the name is ambiguous, and it
+carries none of them when one entry holds the name. `TryFrom<LockWire> for Lock`
+counts the entries of each name first, and its comment gives the reason: the
+two fields are "strictly redundant" for a name that one entry carries.
+
+**uv refuses a lock file whose edge is short for an ambiguous name.** The two
+messages are `Dependency `a` has missing `source` field but has more than one
+matching package`, and the same sentence for `version`.
+`PackageIdForDependency::unwire` raises them. Only a directory may omit the
+version, because the version of such a project may be dynamic;
+`Source::is_source_tree` names the three kinds that count, and they are
+`directory`, `editable` and `virtual`.
+
+**uv applies no fork filter before the walk.** A package of a fork that this
+environment does not take drops out because no live edge reaches it, and not
+because a step removed it. `resolution-markers` decides a root, and it sets the
+preferences of the next resolution. The field of `Package` says the second part
+itself.
+
+`ddrn_venv._uvlock` follows these three steps, and it therefore has no step 4.
+`uv2nix` needs one because its resolver reads the version of an edge and not the
+source (`lock1.nix:127`), so a name that two entries carry stays a choice for it.
+
+#### A marker of a lock file is simplified, and two facts make it readable
+
+**uv writes each marker in a simplified form, and the type says what that form
+needs.** `SimplifiedMarkerTree`
+(`crates/uv-distribution-types/src/requires_python.rs`) carries the rule:
+
+> A simplified marker should only exist in contexts where a `requires-python`
+> setting can be assumed. In order to get a "normal" marker out of a simplified
+> marker, one must re-contextualize it by adding the `requires-python`
+> constraint back to the marker.
+
+uv adds the constraint back with `into_marker`, at the moment it reads the file.
+This lab asserts the constraint instead, in `Lock.check_environment`, and it
+reads each marker as written. The two are the same answer for an environment
+that satisfies `requires-python`, and the assertion is what makes them the same.
+So the order in `resolve` is load bearing: assert first, evaluate second.
+
+**A second simplification applies to an edge, and the walk answers it.**
+`simplify_dependency_marker` removes from an edge "the PEP 508 conditions that
+must already hold to reach its parent node". An edge marker read alone is
+therefore weaker than the condition it stands for. A walk evaluates the marker
+of an edge only after it reaches the parent of that edge, so the removed
+conditions already hold, and the two agree again. A reader that filtered every
+edge of the file up front would still agree, and a reader that answered "does
+this edge hold" for one edge in isolation would not.
+
+#### The source is a part of the identity, and dropping it takes the wrong file
+
+**Two entries of one lock file may carry the same name and the same version.**
+`lock_multiple_sources_index_disjoint_markers`, a test of uv
+(`crates/uv/tests/lock/lock.rs`), writes `jinja2` 3.1.3 twice: once from the
+`cu118` index of PyTorch and once from `cu124`. The two entries differ in the
+source and in nothing else, and the two edges of the root differ in the source
+and the marker:
+
+```toml
+dependencies = [
+    { name = "jinja2", version = "3.1.3", source = { registry = ".../cu118" }, marker = "sys_platform == 'win32'" },
+    { name = "jinja2", version = "3.1.3", source = { registry = ".../cu124" }, marker = "sys_platform != 'win32'" },
+]
+```
+
+A reader that identifies a package by the name and the version finds the two
+entries equal, and it installs whichever one it met first. Both wheels are
+named `Jinja2-3.1.3-py3-none-any.whl`, so nothing downstream says that the
+answer is wrong. 13 lock files of the tests of uv hold such a pair. The common
+one is `torch` from the CPU index beside `torch` from the CUDA index, which is
+the usual reason to hold two indexes at all.
+
+`tests/fixtures/locks/two-indexes.lock` is that file, copied from the test of
+uv that produced it. `TestThePackageIdentity` resolves it for two environments,
+and asserts the index of each answer.
+
+### What a lock file pins, and what it leaves open
+
+**uv.lock pins the hash of every artefact, and a reader trusts every one of
+them.** It also pins the version of every package, and the edges between them,
+because uv resolved them. Nothing in this lab solves a version, queries an
+index, or reads `[package.metadata] requires-dist`, which is the question that
+the project asked. The reader takes `dependencies`, which is the answer that
+uv gave.
+
+**What a lock file does not pin is which of those apply to one machine**,
+because the file covers many machines at once. Measured over
+`anthropic-sdk-python/uv.lock`, which has 103 packages:
+
+| what is open | the measurement |
+| --- | --- |
+| which wheel of a package | `multidict` ships **145** wheels for one version, and `pydantic-core` ships 120. PEP 425 tags choose. |
+| which packages at all | **96** dependency edges carry a PEP 508 marker. |
+| which fork | **20** packages carry `resolution-markers`, so the lock holds more than one version of them. |
+| which extras and groups | the caller chooses, and a `conflicts` declaration says which choices are illegal. |
+| how to build a source distribution | **98 of the 103** packages ship one, and the lock records no build system for any of them. |
+
+So a reader takes every fact of the lock file, and it answers the five
+questions above from the target. That is selection, and not resolution.
+
+### A marker of an edge is not always a PEP 508 marker
+
+**uv encodes a conflict into the `extra` of a marker, and it says so.** The doc
+comment of `UniversalMarker` (`crates/uv-resolver/src/universal_marker.rs`)
+gives the design and the reason for it:
+
+> we technically preserve PEP 508 compatibility but abuse the `extra` attribute
+> to encode conflicts
+
+`encode_package_extra` of the same file writes the value, and it takes one of
+three shapes:
+
+| the value | what it means |
+| --- | --- |
+| `extra-7-example-foo` | the extra `foo` of the package `example` is enabled |
+| `group-7-example-dev` | the group `dev` of the package `example` is enabled |
+| `project-7-example` | the production dependencies of `example` are enabled |
+
+The number is the length of the package name in bytes. uv puts it there so that
+a reader can find where the package name ends, because an extra name may hold a
+hyphen as well. uv evaluates such a marker against the extras and the groups
+that the caller enabled, and `Installable::to_resolution` passes all three sets
+to `UniversalMarker::evaluate`.
+
+**A reader that gives `extra` an empty value answers a different question.** An
+edge of `aiohttp` in `anthropic-sdk-python/uv.lock` reads:
+
+```text
+python_full_version < '3.11' or (extra == 'extra-9-anthropic-mcp' and extra
+== 'group-9-anthropic-pydantic-v1') or (extra == 'group-9-anthropic-pydantic-v1'
+and extra == 'group-9-anthropic-pydantic-v2')
+```
+
+An `extra` cannot hold two values at once, so each of those two clauses is
+false for any environment. They are conflict markers that uv did not simplify
+away, which is `astral-sh/uv#11513` and which `lib/lock1.nix:85` of uv2nix
+names. An empty `extra` gives the right answer for this one marker, because the
+marker then reduces to the version test that it already carried.
+
+**It gives the wrong answer for a satisfiable one.** uv writes
+`marker = "extra == 'project-7-example'"` on an edge that a workspace member
+reaches, and 213 edges of the lock files in the tests of uv carry such a marker.
+An empty `extra` makes that edge false, and the package leaves the environment
+with no message. One `extra != '...'` fails the other way, and keeps a package
+that the selection did not ask for.
+
+`ddrn_venv._uvlock` therefore refuses an edge whose marker holds this encoding,
+and the message decodes each value. `TestAConflictMarkerIsNotPep508` covers the
+three shapes. The alternative is to implement `UniversalMarker::evaluate`, and
+that needs the activated extras, groups and projects of the whole walk. uv
+itself records two soundness gaps in how it accumulates those sets, in a comment
+in `to_resolution_from_packages`.
+
+### The marker environment, and the two keys that no build can know
+
+`pep508.mkEnviron` of pyproject.nix (`lib/pep508.nix:683`) builds the PEP 508
+environment from an interpreter derivation. It sets `platform_release` to `""`
+and `platform_version` to an empty version, and the comment gives the reason:
+
+> platform_release maps to platform.release() which returns the running kernel
+> version on Linux. Because this field is not reproducible it's left empty.
+
+**A build cannot know the kernel of the machine that will run the
+environment.** So a marker that reads either key evaluates against an empty
+value, and uv2nix lets the caller override the environment for that case.
+
+### A key that a planner does not pass takes the value of the build machine
+
+`Marker.evaluate(environment)` of `packaging` does not use `environment` alone.
+It merges `environment` over `default_environment()`, and
+`default_environment()` reads the interpreter that is running. **So a key that
+a planner does not pass silently describes the machine that plans, and not the
+target.**
+
+Measured with `packaging` 26.2, on a host whose kernel is 7.1.4:
+
+```text
+host platform_release = 7.1.4
+marker 'platform_release != ""' with {}   -> True
+same with an explicit ''                  -> False
+marker 'python_version >= "3.14"' with {} -> True
+same with an explicit '3.11'              -> False
+```
+
+A planner plans for a target that is not the machine it runs on, so it must
+pass **every** key of PEP 508:
+
+```text
+implementation_name  implementation_version  os_name
+platform_machine     platform_python_implementation
+platform_release     platform_system         platform_version
+python_full_version  python_version          sys_platform
+```
+
+The present lab passes six of the eleven, so five of them describe the
+builder. `packaging` raises no error for this, because it has a value for
+each one.
+
+### What a virtual environment needs from the edges, and what it does not
+
+uv2nix builds a package **set**: one derivation for each package, and each one
+carries its dependencies, because the builder of pyproject.nix composes a
+`PYTHONPATH` for each build.
+
+This lab builds one flat environment. A wheel installs on its own, and the
+order does not matter, so the edges answer one question only: **which packages
+are members**. The closure of the roots is the member list, and nothing else
+reads an edge.
+
+The one exception is a source distribution, and its build dependencies do not
+come from the lock at all. They come from the archive, which is the gap that
+this lab closes.
 
 ## How uv2nix layers onto pyproject.nix
 
@@ -572,6 +891,716 @@ and submits the build node.
 and it is stronger than the `idna` case, because uv2nix does not merely find it
 awkward. uv2nix cannot express it at all: the answer is inside a file that no
 evaluation has downloaded.
+
+## A proof that reaches no index
+
+`ddrn/examples/venv-graph/run.sh` is the proof over the real lock file, and
+every artefact of that lock comes from PyPI. So that proof needs a network, and
+it also needs the versions that PyPI serves today. A gate of this repository
+can have neither.
+
+`ddrn/examples/venv-graph/tests` is the same graph over artefacts that this
+repository builds. The run reads:
+
+```text
+plan:   installer installer-1.0.1-py3-none-any.whl (unpacked to bootstrap)
+plan: demo-lib: demo_lib-2.1.0-py3-none-any.whl (wheel)
+plan: demo-tool: demo_tool-3.0.0.tar.gz (sdist)
+plan:   backend demo_backend-1.0.0-py3-none-any.whl for demo-backend>=1.0
+plan: demo-app: editable through demoback, reading $DDRN_EDITABLE_ROOT
+==> 6 nodes, 3 of them in the environment, from 4 artefacts
+```
+
+and then, from the environment that the graph built:
+
+```text
+console script
+  hello from demo-lib
+from a source distribution
+  demo-tool was built by demoback
+editable
+  hello from the tree that the sealed check named
+```
+
+The second line is the one that matters. `demo-tool` is a source distribution,
+its `pyproject.toml` names `demoback`, and no row of the lock file records
+that name. The line exists only because a planner opened the archive.
+
+### The seam between a reader and the graph
+
+`default.nix` takes an `artifacts` argument, and each entry holds `package`,
+`version`, `filename`, `kind` and `drv`. **`drv` is a derivation, and not a
+path.** `null` means "read `lock.json`, and make a `fetchurl` for each row",
+which is what `run.sh` gets.
+
+A reader of a different lock format fills that list, and so does a test that
+builds its artefacts. The refactor changed no decision: the environment of
+`run.sh` is the same store path as before,
+`rfy15b0q3y3nmrld2wbw3j9arvjrf4wl-demo-venv`.
+
+### What a fixture artefact costs
+
+**A wheel and a source distribution each record a time, in three places.** A
+derivation that writes one is not reproducible until all three are fixed, and
+`ddrn/examples/venv-graph/tests/fixtures` fixes them:
+
+| format | field | value |
+| --- | --- | --- |
+| zip | the date of each entry | 1980-01-01, the floor of the format |
+| tar | `mtime`, `uid`, `gid`, `uname`, `gname` of each member | a fixed epoch, and `root` |
+| gzip | the `mtime` of the header | `0`, through `gzip.compress(..., mtime=0)` |
+
+A `.pyc` records a fourth one, and `SOURCE_DATE_EPOCH` is the fix for it.
+`ddrn/NIX-FACTS.md` gives that measurement.
+
+**nixpkgs ships the installed tree of `installer`, and not the wheel of it.**
+The graph bootstraps by unzipping a wheel, because nothing can install the
+installer, so the fixture repacks `python3Packages.installer` into a wheel
+again.
+
+**A member name is not a path, and two archives spell the same member two
+ways.** `tar` accepts `./demo-1.0/pyproject.toml`, and `zip` writes
+`demo-1.0/pyproject.toml`. A count of the separators answers one and not the
+other, so `ddrn_venv.is_pyproject` drops the leading `.` and each empty part,
+and then asks for exactly two parts.
+
+## A real uv project, built end to end
+
+`ddrn/examples/venv-graph/uv.nix` reads a `uv.lock` and hands it to the same
+graph that `lock.json` uses. `projects/pure-app` is the first project, and
+`uv` itself wrote every file of it. `projects/README.md` gives each command.
+
+`run-uv.sh` builds two projects. `pure-app` has a virtual root and every
+artefact of it is a pure wheel. `packaged-app` installs itself through
+`hatchling`, and one of its dependencies builds from a source distribution.
+
+The graph of `pure-app` holds one node for each package and one for the
+environment:
+
+```console
+==> the planner submitted /nix/store/yic8v7qq...-pure-app.drv
+==> the root of the graph reads:
+"7wz8dcib...-pygments-2.20.0.drv"
+"dxvcwc56...-markdown-it-py-4.2.0.drv"
+"vf58lwq9...-mdurl-0.1.2.drv"
+"w9kllfhc...-rich-15.0.0.drv"
+"yic8v7qq...-pure-app.drv"
+```
+
+**The Nix half of this reads the lock file and resolves nothing.** `uv.nix`
+walks `package[].wheels[]` and `package[].sdist` and makes one `fetchurl` for
+each, with no filter and no preference. The planner resolves inside the
+sandbox, with `packaging`.
+
+### Three decisions that `uv.lock` leaves open
+
+uv already chose every version and every hash, and this lab trusts both
+absolutely: the planner asks `choose` for `rich==15.0.0`, an exact pin, and
+never for the range that the project wrote. **A lock file is a union over every
+environment that the project supports**, so three decisions remain:
+
+| decision | who answers it | why the lock cannot |
+| --- | --- | --- |
+| which packages apply | `ddrn_venv._uvlock` | an edge carries a PEP 508 marker, and a fork carries `resolution-markers` |
+| which extras and groups | the caller, through `uv.nix` | `uv sync` takes it on its command line |
+| which artefact of a package | `ddrn_venv.choose` | `multidict` ships 145 wheels for one version |
+
+`uv export --format requirements.txt` moves the first decision into uv itself.
+It still writes markers, so PEP 508 evaluation stays, and it costs a second
+generated file to commit. This lab did not adopt it.
+
+### The wheel installer comes out of the same lock file
+
+The graph installs every wheel with `pypa/installer`, and that is a tool of
+this build system and not a dependency of the project. PEP 735 dependency
+groups are what uv offers for exactly that:
+
+```console
+$ uv add --no-sync --group ddrn installer
+```
+
+The selection of `uv.nix` enables no group, so the lock file pins the tool and
+the environment does not carry it. Both directions are proved, by the manifest
+of the environment that each selection builds:
+
+| selection | the environment holds |
+| --- | --- |
+| `{ pure-app = [ ]; }` | `markdown-it-py`, `mdurl`, `pygments`, `rich` |
+| `{ pure-app = [ "ddrn" ]; }` | the same four, and `installer==1.0.1` |
+
+### A distribution does not spell its name the way the index does
+
+`uv.lock` calls the package `pygments`. The `Name` of the metadata that the
+installer wrote is `Pygments`:
+
+```console
+distributions
+  Pygments==2.20.0
+  markdown-it-py==4.2.0
+  mdurl==0.1.2
+  rich==15.0.0
+```
+
+PEP 503 normalisation is what makes the two agree, and `ddrn_venv` applies it
+at every join. A check that compares the two spellings directly fails, and this
+one did until the run above.
+
+### `uv` writes a hash that `fetchurl` reads
+
+`uv.lock` spells every hash `sha256:<hex>`, which is a format that the `hash`
+argument of `fetchurl` accepts. So `uv.nix` passes it through with no
+translation, and a mismatch is a mismatch of the lock file itself.
+
+### The build system is the one thing that `uv.lock` does not hold
+
+`projects/packaged-app` is the measurement. `uv init --package --build-backend
+hatch` writes `requires = ["hatchling"]` into `pyproject.toml`, and `uv lock`
+copies **nothing** of that table into `uv.lock`. The lock file holds
+`hatchling` only after `uv add --group ddrn hatchling` puts it there as an
+ordinary package.
+
+The same hole covers every source distribution that the lock file names.
+`mdurl` builds through `flit_core`, and no entry of `uv.lock` says so: the
+declaration is inside the archive, which is why a source distribution becomes a
+planner node here at all.
+
+**So a dependency group is where a backend goes.** PEP 735 groups are what uv
+offers for a tool that the project needs and does not ship, the selection does
+not enable the group, and one lock file then pins the whole build. The cost is
+one entry for each backend that any build reaches, and nothing checks that the
+list is complete until a build fails:
+
+| package | what needs it |
+| --- | --- |
+| `hatchling` | the `[build-system]` of the project |
+| `editables` | `hatchling`, for a PEP 660 build, undeclared |
+| `flit-core` | the `[build-system]` inside the `mdurl` source distribution |
+| `installer` | every node of the graph, to install a wheel |
+
+`uv2nix` pays the same cost differently. `pyproject.nix` ships a set of build
+systems of its own, so the version of a backend comes from nixpkgs and not from
+the lock file of the project.
+
+### A backend needs its own closure, and `requires` names the top of it
+
+**PEP 517 says the frontend installs `requires` and what those need.** The
+`lock.json` example never met this rule, because `flit_core` depends on
+nothing. `hatchling` depends on four packages, and a build that installs the
+declaration alone fails at import.
+
+`uv.lock` holds the edges of every package that it lists, so
+`ddrn_venv.build_requirements` walks them from each name of `requires`. For
+`packaged-app` that turns two declared names into six pinned ones:
+
+```text
+plan:   backend hatchling-1.31.0-py3-none-any.whl for hatchling==1.31.0
+plan:   backend packaging-26.3-py3-none-any.whl for packaging==26.3
+plan:   backend pathspec-1.1.1-py3-none-any.whl for pathspec==1.1.1
+plan:   backend pluggy-1.6.0-py3-none-any.whl for pluggy==1.6.0
+plan:   backend trove_classifiers-2026.6.1.19-py3-none-any.whl for trove-classifiers==2026.6.1.19
+```
+
+### hatchling needs `editables` and declares four other packages
+
+Measured, and not assumed. The metadata of hatchling 1.31.0 reads:
+
+```text
+Requires-Dist: packaging>=24.2
+Requires-Dist: pathspec>=0.10.1
+Requires-Dist: pluggy>=1.0.0
+Requires-Dist: tomli>=1.2.2; python_version < '3.11'
+Requires-Dist: trove-classifiers
+```
+
+`hatchling/builders/wheel.py` reads `from editables import EditableProject` in
+`build_editable_detection`, which is the default path of `build_editable`. So a
+PEP 660 build of any hatchling project fails with `ModuleNotFoundError: No
+module named 'editables'` until something adds it. This lab adds it to
+`build-system.requires` of the project.
+
+**hatchling does declare it, through the hook that this lab does not call.**
+`hatchling/build.py` defines `get_requires_for_build_editable`, and that
+function returns `[*builder.config.dependencies, EDITABLES_REQUIREMENT]`. PEP
+517 and PEP 660 give a backend three such hooks, one for each of `build_sdist`,
+`build_wheel` and `build_editable`, and a frontend calls the hook, resolves
+what comes back, and adds it to the build environment. The next section says
+why this lab cannot, and what it pays instead.
+
+### `get_requires_for_build_*` is the hook that this lab does not call
+
+A frontend of PEP 517 builds the environment of a backend in two steps: it
+installs `build-system.requires`, and it then asks the backend what more it
+needs. `ddrn` performs the first step only.
+
+The reason is where each step would run. The plan is decided in the sandbox of
+the planner, and the backend is not installed there. A hook could run in the
+node that builds, which is where the backend does exist, but that node has no
+index, no store connection and no way to add a member to a graph that is
+already registered. So a requirement that arrives from the hook arrives after
+the only moment that could act on it.
+
+What the lab pays instead is one line for each such package in the `ddrn`
+dependency group of the project, and `editables` is the one case that a project
+here has met. What it costs is that nothing checks the list: a backend that
+asks for a package through the hook, and a group that does not name it, fails
+in the build with `ModuleNotFoundError`.
+
+**A dependency group cannot pay it for a git source, and `hatchling` is that
+case.** The group works because the `[build-system]` of the consumer project
+names the backend, and the edges of `uv.lock` then expand it. A git source
+brings its own `[build-system]`, out of the checkout, and `hatchling` writes
+this one:
+
+```toml
+[build-system]
+requires = []
+build-backend = 'hatchling.ouroboros'
+backend-path = ['src']
+```
+
+`requires` is empty and it is not honest. `hatchling/ouroboros.py` reads the
+`dependencies` list out of its own `pyproject.toml` with a regular expression,
+and returns it from `get_requires_for_build_wheel`. That list is `packaging`,
+`pathspec`, `pluggy` and `trove-classifiers`, and `hatchling` imports all four.
+So the plan holds no backend node, nothing puts those four on the path, and the
+import of the backend fails.
+
+`flit_core` has the same in-tree shape with an honest empty `requires`, because
+it declares `dependencies = []`. `projects/git-app` therefore takes `flit_core`
+from `pypa/flit`, and `projects/README.md` records why it is not `hatchling`.
+
+**`editables` wrote a bare path, and not an import finder.** For a project of
+one package under `src/`, `EditableProject` takes `add_to_path`, so the install
+holds one `.pth` and no generated module:
+
+```text
+_editable_impl_packaged_app.pth
+  import sys; import os.path; sys.path.append(os.path.expandvars('$DDRN_EDITABLE_ROOT/src'))
+```
+
+`scripts/build-local.py` rewrites that line, and it raises for the other
+form. The other form needs the syntax tree rewrite that `pyproject.nix` does
+with `libcst`, and no project of this lab has reached it yet.
+
+### `backend-path`, which is the backend that no menu holds
+
+PEP 517 lets a project carry its own build backend, and `backend-path` names
+where it lives. `requires` is then often empty, because there is nothing to
+resolve at all. `hatchling` is that shape, and it is the project that both
+`*-subdirectory.lock` fixtures name:
+
+```toml
+[build-system]
+requires = []
+build-backend = 'hatchling.ouroboros'
+backend-path = ['src']
+```
+
+**A reader that only resolves `requires` builds nothing here.** The list is
+empty, so the plan holds no backend node, and the import of
+`hatchling.ouroboros` then fails. So `scripts/build-local.py` and
+`scripts/build-sdist.sh` both read `backend-path` out of the project and put
+those directories first on the path, which is the order that PEP 517 states: a
+backend that the project carries wins over a package of the same name.
+
+The paths are relative to the directory that holds `pyproject.toml`, and PEP
+517 says they must stay inside it. Both scripts refuse one that leaves.
+
+### `tool.uv.no-binary-package` stays in `pyproject.toml`
+
+uv writes this setting into no lock file, and the lock file still carries the
+wheel of the package that the setting names. It is a decision of the consumer,
+so `uv.nix` reads it from `pyproject.toml`, where uv keeps it, and passes it to
+`ddrn_venv.choose`. That planner then takes the source distribution although a
+wheel fits:
+
+```text
+plan: mdurl-0.1.2-py3-none-any.whl: no-binary-package names mdurl
+plan: mdurl==0.1.2: mdurl-0.1.2.tar.gz (sdist)
+```
+
+### A node name is a store path name, so two nodes may not share one
+
+`uv init --package` makes a project that is a member of its own environment
+**and** the name of that environment. Both became a node called `packaged-app`,
+and `Plan.add` de-duplicated by name, so the environment node replaced the
+editable node and `builtins.outputOf` gave a directory with no `bin/python`.
+
+`Plan.add` now refuses two different nodes under one name, and the editable node
+carries an `-editable` suffix. A silent replacement is the failure mode to
+avoid: the error it produced named neither node.
+
+### A workspace names its members twice, in two spellings
+
+`uv.lock` and `pyproject.toml` each hold a list called `members`, and the two do
+not agree entry for entry. The lock file names the packages, and the project
+file names the directories:
+
+```toml
+# uv.lock
+[manifest]
+members = ["workspace-root", "ws-cli", "ws-core"]
+
+# pyproject.toml
+[tool.uv.workspace]
+members = ["packages/ws-core", "packages/ws-cli"]
+```
+
+A selection names packages, so `uv.nix` reads the first list. **uv writes
+`[manifest]` for a workspace only**, so the lock file of a single project holds
+none of it, and `pure-app` and `packaged-app` have no such table. `uv.nix`
+falls back to the name of the project, which keeps the default of a single
+project the same.
+
+`ddrn_venv._uvlock.Lock.members` parsed that table from the start and nothing
+read it. `tests/test_workspace.py` reads it now.
+
+### One lock file resolves to more than one environment
+
+**`uv.lock` records no selection**, which is the first of the three open
+decisions above, and a workspace is where that matters. Two selections of the
+one lock file of `projects/workspace`:
+
+| selection | what the environment holds |
+| --- | --- |
+| every member | `ws-cli`, `ws-core`, `rich`, `markdown-it-py`, `mdurl`, `pygments` |
+| `{ ws-core = [ ]; }` | `ws-core` |
+
+`ws-core` depends on nothing, so the second environment reaches no artefact of
+the index. The two graphs share the `ws-core-editable` node, because that node
+is the same derivation in both.
+
+The default of `uv.nix` is every member, which is what `uv sync --all-packages`
+takes. A default of "the root project" builds an empty environment for a
+workspace, because the virtual root of a workspace usually depends on nothing.
+
+### A PEP 660 redirect names the directory of the member
+
+`scripts/build-local.py` rewrites the build directory of a backend to the
+value of `editableRoot`, and the build directory is the tree of the package.
+For a project whose source is `.`, that tree **is** the project, so one value
+serves. For a member of a workspace it is a directory under the project, and
+the redirect has to carry that directory too.
+
+`uv.nix` gave every local package the same `editableRoot`, so the `.pth` of
+`ws-core` read `$DDRN_EDITABLE_ROOT/src` and the environment raised
+`ModuleNotFoundError: No module named 'ws_core'`. It now joins the relative
+directory of `source = { editable = "packages/ws-core" }` to the redirect.
+
+Two measurements come with the correction. The environment of `packaged-app`
+is still `a851fa0dqrjd1bshd2x6v02ck3mmr1n1-packaged-app`, so the `.` case did
+not move. A second copy of the whole workspace, with one edit to `ws-core`,
+changes both reports of the **same** environment, because `ws-cli` reads
+`ws-core` through the same redirect.
+
+### Ask `packaging` for the tags, and do not write the rule again
+
+`target_tags` of `_resolve.py` was written by hand, because
+`packaging.tags.sys_tags` describes the machine that calls it and a planner
+plans for a machine that it is not running on. That reason is right, and the
+conclusion was wrong: `packaging.tags.cpython_tags` and `compatible_tags` take
+`python_version` and `platforms` as arguments. They are the same computation
+against a stated target, and they are the same escape as `Marker.evaluate` with
+an explicit environment.
+
+The hand-written set held `cp{major}{minor}-abi3` alone, and PEP 384 says a
+stable-ABI wheel runs on every CPython **at or above** the version its tag
+names. `pyzmq` 27.1.0 ships six wheels for Linux on x86-64 and none of them
+names this interpreter:
+
+| wheel | why it did not fit |
+| --- | --- |
+| `cp312-abi3-manylinux_2_26…` | the tag says 3.12, and the target is 3.14 |
+| `cp313-cp313t-manylinux_2_26…` | `cp313t` is the free-threaded build |
+| `cp314-cp314t-manylinux_2_26…` | `cp314t` is the free-threaded build |
+
+So the planner matched nothing, fell back to the source distribution, and would
+have needed a C compiler and `libzmq` to build it. The first wheel is the right
+answer, and `cpython_tags` yields it.
+
+**The order comes with it.** `cpython_tags` yields the tags in the order that
+pip prefers, so `wheel_rank` is now the position of the best match rather than
+a grade that this repository invents. A wheel for exactly this interpreter
+beats a stable-ABI wheel, which beats a pure one, and a newer `manylinux_2_Y`
+beats an older one.
+
+**Only the platform list stays hand-written.** `packaging.tags.platform_tags`
+reads the glibc of the running machine, and a target has its own. PEP 600 says
+a `manylinux_2_Y` wheel runs against every glibc at or above 2.Y, so
+`target_platforms` lists each one from the newest down.
+
+#### The build tag separates two wheels that the tags do not
+
+**The tag order leaves ties, and the order of the lock file must not break
+them.** Two wheels of one distribution may carry the same tags, and PEP 427
+gives the build tag for exactly this: it "acts as a tie-breaker if two wheel
+file names are the same in all other respects", and it sorts "as an empty tuple
+if unspecified, else as a two-item tuple". `packaging.utils.parse_wheel_filename`
+returns that tuple, and `_resolve.py` discarded it.
+
+uv compares the same two values in the same order. `Package::find_best_wheel`
+keeps `(TagPriority, Option<&BuildTag>)` for each candidate and takes the
+greatest, so the build tag decides only when the tag priority is equal.
+`choose` now does the same, and `TestChoose` asserts both orders of the two
+wheels, because a rule that the order of the list satisfies is not a rule.
+
+### A wheel of nixpkgs, in place of a wheel of the index
+
+Tier 4 answers the override question, and `projects/binary-app` is the proof.
+`uv.nix` takes an `overrides` argument, as
+`{ pyzmq = pkgs.python3Packages.pyzmq; }`. The planner then makes no wheel node
+for that name, and `Plan.nixpkgs_node` names the store path instead.
+
+Both environments run the same code, and they differ in one line:
+
+| | the wheel of the index | `pkgs.python3Packages.pyzmq` |
+| --- | --- | --- |
+| extension | `_zmq.abi3.so` | `_zmq.cpython-314-x86_64-linux-gnu.so` |
+| links against | `site-packages/pyzmq.libs` | `zeromq`, `libsodium`, `glibc` of the store |
+| `auto-patchelf` | runs | does not run |
+
+**The substitution is the measurement that matters.** The build log of the
+second one reads:
+
+```
+copying path '/nix/store/…-zeromq-4.3.5' from 'https://cache.nixos.org'...
+copying path '/nix/store/…-python3.14-pyzmq-27.1.0' from 'https://cache.nixos.org'...
+```
+
+The derivation kept the identity that nixpkgs gave it, so the override cost a
+download and not a compile. Tier 2 could never offer this, and the section
+"Tier 4, the pre-instantiated menu" above gives the reason.
+
+**Nothing reconciles the two versions.** nixpkgs holds what it holds, and the
+lock file pins what uv resolved. The planner prints both on one line, and that
+line is the whole of the warning:
+
+```
+plan: pyzmq==27.1.0: nixpkgs supplies pyzmq==27.1.0, and the lock file asked for ==27.1.0
+```
+
+### A local project installs in two forms, and the lock file records neither
+
+`uv.lock` says that a member installs from its own directory. It does not say
+which form that install takes, and uv itself writes two:
+
+| command | hook | what the environment holds |
+| --- | --- | --- |
+| `uv sync` | PEP 660 `build_editable` | a redirect at the tree of the user |
+| `uv build` | PEP 517 `build_sdist` | nothing yet; the archive that an index serves |
+
+The second one is what reaches a user who does not have the tree. That user
+runs `build_wheel` over the archive, and the wheel that comes out holds the
+code. So `uv.nix` takes the form as an argument, `fromSdist`, and the graph
+makes each hook a node:
+
+```
+demo-app-sdist       build_sdist over the tree      -> one .tar.gz
+demo-app-from-sdist  build_wheel over that archive  -> a wheel, installed
+```
+
+**The two nodes are the same two nodes that an artefact of the index uses.**
+The second one is of kind `sdist-build`, which is the kind that `mdurl` takes,
+and the same `scripts/build-sdist.sh` builds both. An archive that a node of
+the graph wrote and an archive that PyPI served are one thing to the build that
+reads it.
+
+The proof of the difference is the path that the module comes from:
+
+```text
+editable   loaded from $DDRN_EDITABLE_ROOT/src/packaged_app/__init__.py
+sdist      loaded from <the environment>/lib/python3.14/site-packages/packaged_app/__init__.py
+```
+
+### The two sources that name a place, and what each one costs
+
+Four of the seven source kinds name a registry or a directory of the workspace,
+and one names a file of this machine. The other two name a place on the
+network, and `uv.lock` writes them like this:
+
+```toml
+# tests/fixtures/locks/git-subdirectory.lock
+source = { git = "https://github.com/pypa/hatch.git?subdirectory=backend&rev=hatchling-v1.27.0#cbf6598e5cbce3ba9097023c5bf783001ebbcbcb" }
+# no wheels, and no sdist
+
+# tests/fixtures/locks/url-subdirectory.lock
+source = { url = "https://github.com/pypa/hatch/archive/hatchling-v1.27.0.tar.gz", subdirectory = "backend" }
+sdist = { hash = "sha256:c5d576a04bbc3940c71dc899da35a9cfe644044a6e4e70549f41d964d6331625" }
+```
+
+Both files name one project, `hatchling`, and that project lives in `backend`
+of `pypa/hatch`. So the two kinds are the same project through two doors, and
+each door needs a different route:
+
+| kind | what arrives | route | nodes |
+| --- | --- | --- | --- |
+| `url` | an archive, with the hash on `sdist` and the address on `source` | join the two, and it is an ordinary source distribution | a planner, then `sdist-build` |
+| `git` | a checkout | a tree, like a `directory` source | one `local-wheel` |
+
+**A URL source splits its artefact across two tables, and a reader has to join
+them.** The `sdist` table carries the hash alone. `uv.nix` reads the address
+from `source.url`, and what reaches the planner is a row of the menu that no
+node treats specially.
+
+**A git source carries no artefact at all.** The package has no `wheels` table
+and no `sdist` table, so nothing of it reaches the menu. The checkout is the
+whole input, and one PEP 517 `build_wheel` call over it gives the install.
+
+**The commit is in the fragment, and the query holds what the user asked
+for.** Measured against `locked_git_url` and `GitSource::from_url`, both in
+`crates/uv-resolver/src/lock/mod.rs` of `astral-sh/uv`. That pair writes the
+string and reads it back, so it is the whole grammar:
+
+| key | what it means | this reader |
+| --- | --- | --- |
+| `subdirectory` | where the project lives in the repository | takes it |
+| `path` | a **file** of the repository, a wheel or an archive | refuses |
+| `lfs` | the checkout needs Git LFS | refuses |
+| `tag`, `branch`, `rev` | what the user asked for | drops it |
+| `#<fragment>` | the commit that uv resolved | fetches it |
+
+A tag moves and a commit does not, so `uv-git.nix` takes the commit and drops
+the name that the user gave it. uv also removes the credentials from the URL
+before it writes the string, so no reference of a lock file carries one.
+
+**The two refusals are refusals because each one changes what the package
+is.** `path` comes from `from_git_path_source_dist`, and the package is then
+an archive or a wheel that lives in the checkout, so a reader that ignored the
+key would build the root of the repository and install another project.
+`builtins.fetchGit` fetches no Git LFS object, so a checkout of an `lfs=true`
+source holds a pointer file of a hundred bytes where each large file belongs,
+and the build reads that pointer as if it were the file. Both fail with a
+message rather than build the wrong thing.
+
+**uv writes an artefact with no address in three shapes, and this reader takes
+all three.** `WheelWireSource` gives `Url`, `Path` — "used for wheels that come
+from local registries (like `--find-links`)" — and `Filename`, for a wheel that
+a `path` source names. `SourceDist` gives the same three shapes, and its
+`Metadata` variant is the hash-only row that a URL source and a `path` source
+both write.
+
+**A `path` source keeps the location on the source, and the row of the artefact
+carries the file name or nothing at all.** So the reader takes the name from
+the row when the row gives one, and from the path of the source when it does
+not:
+
+```toml
+[[package]]
+name = "vendored"
+source = { path = "vendor/vendored-1.0.0-py3-none-any.whl" }
+wheels = [ { filename = "vendored-1.0.0-py3-none-any.whl", hash = "sha256:7353…" } ]
+
+[[package]]
+name = "archived"
+source = { path = "vendor/archived-1.0.0.tar.gz" }
+sdist = { hash = "sha256:9207…" }
+```
+
+`uv.nix` joins the path to the directory of the project and calls
+`builtins.path`, so the file reaches the store with no fetch and with no hash
+to state twice. Everything below that point is unchanged: the menu holds a row
+for each file, the planner picks one out of the menu, and `graph.nix` names the
+chosen file with `builtins.storePath` where a fetch would need
+`builtins.appendContext`. `ddrn/examples/venv-graph/projects/vendored-app` is
+the project that uv wrote for these two shapes.
+
+**A git source is the one input of this lab that is not lazy, and `uv.lock` is
+the reason.** Every other input is a `pkgs.fetchurl`, which is a fixed-output
+derivation: instantiating one downloads nothing, so the menu holds every
+artefact of the lock file and the build downloads the ones that the planner
+chose. A git source records the commit and **no hash of the tree that the
+commit gives**, so there is no fixed-output derivation to instantiate.
+`builtins.fetchGit` therefore runs during evaluation, and a lock file that
+holds a git source pays that fetch whether or not the resolution installs the
+package.
+
+**One line of `uv.lock` would remove the cost.** A NAR hash of the checkout, or
+of the archive that the commit gives, would make the fetch a fixed-output
+derivation like every other one. uv records the commit because the commit is
+what pip and uv need, and neither of them defers a download.
+
+uv now holds the machinery for such a line, and no lock file uses it yet.
+`crates/uv-extract/src/dirhash.rs` hashes a directory tree with BLAKE3, and it
+gives the property that a Nix consumer needs: "the dirhash of an archive is the
+same as the dirhash of its unpacked files". Nothing in `uv-resolver` reads that
+module, so a git source of a lock file written today still records the commit
+alone.
+
+**uv installs an `editable` source as an editable, and a `directory` source as
+a wheel.** The `Source` enum of the lock says so itself: `Directory` is "a path
+to a local directory", and `Editable` is "a path to a local directory that
+should be installed as editable". So the two source kinds are the decision, and
+`uv.nix` follows it rather than install every directory the same way.
+
+**A subdirectory is what both kinds add, and one archive may hold two
+projects.** `pypa/hatch` declares a project at its root and another in
+`backend`. A reader that took the first `pyproject.toml` it found would build
+the wrong project with the wrong backend, and nothing downstream would say so.
+So `is_pyproject` moves the answer down by exactly the parts of the
+subdirectory, and the sealed test carries a decoy above each project to prove
+it: the top of the tree and the top of the archive both declare
+`the_backend_of_the_wrong_project`, which no artefact of that menu supplies.
+
+The section above records where uv states each of these, and this lab read
+`astral-sh/uv` at `e39e0b21` to write it.
+
+### An archive holds what the backend put in it, and not the tree
+
+Measured with `uv build --sdist`, over the projects of
+`ddrn/examples/venv-graph/projects`:
+
+```text
+packaged_app-0.1.0.tar.gz     ws_cli-0.1.0.tar.gz
+  PKG-INFO                      PKG-INFO
+  pyproject.toml                pyproject.toml
+  README.md                     README.md
+  src/packaged_app/__init__.py  src/ws_cli/__init__.py
+  uv.lock                       src/ws_cli/py.typed
+  .python-version
+```
+
+Three things follow, and each one is a difference from the tree:
+
+1. **The name is not the name of the project.** PEP 625 normalises it, so
+   `packaged-app` writes `packaged_app-0.1.0.tar.gz`. A consumer therefore
+   finds the archive by its extension, and `scripts/build-sdist.sh` does that.
+2. **The archive holds one directory**, named after itself, so a consumer
+   strips one level.
+3. **A file that the backend leaves out is absent for every user of the
+   index.** `ws-cli` depends on `ws-core`, and its archive carries neither the
+   other member nor `uv.lock`. `[tool.uv.sources]` is a table of uv and no
+   index reads it, so the `Requires-Dist: ws-core` of that wheel resolves
+   against PyPI and against nothing else.
+
+### The archive is the same bytes, given the same `SOURCE_DATE_EPOCH`
+
+The graph writes `packaged_app-0.1.0.tar.gz` with
+`sha256:7cf7d79c5da32c1753de9717685799633745315284186a21972c0a4d3beaecb6`, and
+so does `uv build --sdist` on the same tree. Change one variable, and the
+archive changes:
+
+```console
+$ env -u SOURCE_DATE_EPOCH uv build --sdist
+$ sha256sum dist/packaged_app-0.1.0.tar.gz
+e4a131963bdbdf3cee4a22a951191a2ea788ad0a960bfc24f814d0a9860a1c1c
+```
+
+`hatchling/builders/utils.py` reads that variable, and it takes `1580601600`
+when the variable is absent. `graph.nix` sets `315532800` for every node, for
+the reason that the file gives at `SOURCE_DATE_EPOCH`: a node output floats, so
+a build that recorded the time of the day would take a new path on every run.
+The agreement with `uv build` is a result of that setting, and not of anything
+that this lab does to the archive.
+
+### `uv` downloads an interpreter that NixOS cannot start
+
+`uv` fetches its own CPython by default, and that build is a dynamically linked
+executable for a generic Linux. Name an interpreter of nixpkgs instead:
+
+```console
+$ py=$(nix build --file . pkgs.python313 --no-link --print-out-paths)
+$ export UV_PYTHON_DOWNLOADS=never UV_PYTHON="$py/bin/python3.13"
+```
 
 ## The order that these facts imply
 

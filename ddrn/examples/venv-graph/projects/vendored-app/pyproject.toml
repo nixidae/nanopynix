@@ -1,0 +1,20 @@
+[project]
+name = "vendored-app"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "archived",
+    "vendored",
+]
+
+[tool.uv.sources]
+vendored = { path = "vendor/vendored-1.0.0-py3-none-any.whl" }
+archived = { path = "vendor/archived-1.0.0.tar.gz" }
+
+[dependency-groups]
+ddrn = [
+    "flit-core>=3.11,<4",
+    "installer>=1.0.1",
+]

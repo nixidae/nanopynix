@@ -12,6 +12,10 @@ of all three, and it is Python. A planner runs it unchanged.
 Everything below was measured on this machine, with Nix 2.34.8, a local store
 and `x86_64-linux`. Each claim names the command that produced it.
 
+**`ARCHITECTURE.md` gives the shape and the order in two pages**, with a
+drawing of the three phases. Read it first. This file gives the argument
+behind each part of that shape.
+
 ## TL;DR
 
 - A derivation whose output is text-hashed **is** a derivation. Python can
@@ -57,7 +61,88 @@ $ ddrn/examples/submitted/run.sh        # builder-rpc-v0, driven by the nix CLI
 $ ddrn/examples/submitted-graph/run.sh  # the same, driven by nanopynix
 $ ddrn/examples/evaluated-graph/run.sh  # the evaluator in the sandbox, patched Nix
 $ ddrn/examples/venv-graph/run.sh       # a Python environment, as a graph
+$ ddrn/examples/venv-graph/run-uv.sh    # the same, from a real uv.lock
 ```
+
+**`run-uv.sh` builds six projects that `uv` itself wrote.**
+`ddrn/examples/venv-graph/projects/README.md` gives the command for each one,
+and `uv.nix` reads their `uv.lock`. That file makes no packaging decision: it
+makes one `fetchurl` for every artefact of every package, and the planner
+resolves inside the sandbox with `packaging`.
+
+`pure-app` has a virtual root and installs pure wheels only. `packaged-app`
+installs itself as a PEP 660 editable that `hatchling` builds, and it builds
+one dependency from a source distribution. **`uv.lock` records no build
+system**, so each backend is pinned in a PEP 735 dependency group that the
+selection does not enable. `ddrn/PACKAGING-FACTS.md` gives the measurement and
+the cost.
+
+**The lock file does not record the form of a local install either**, and uv
+writes two of them. `uv sync` builds a PEP 660 editable, and `uv build` writes
+the source distribution that an index serves. `fromSdist` of `uv.nix` is that
+decision, and `run-uv.sh` builds `packaged-app` both ways. The release form is
+two PEP 517 hooks, so it is two nodes: `build_sdist` writes the archive, and
+`build_wheel` reads it. The environment then holds the code, and it follows no
+tree of the user.
+
+`workspace` holds two members under one lock file, and each member is an
+editable of its own directory. **`uv.lock` records no selection either**, so
+the caller names the members to install: `run-uv.sh` builds every member, and
+then one member of the two, from that one lock file. One more build ships
+`ws-core` as an archive and leaves `ws-cli` editable, so the two forms compose.
+
+**`uv.nix` reads all seven source kinds that `uv.lock` writes**, and three of
+them name a place rather than an index or a directory. A `url` source keeps the
+address on the source and the hash on the `sdist` table, so the reader joins
+the two and an ordinary source distribution arrives. A `git` source carries no
+artefact at all: `uv.nix` fetches the checkout and one PEP 517 `build_wheel`
+call over that tree is the whole build. A `path` source names a file of this
+machine, and `builtins.path` copies that file into the store with no fetch. The
+first two may put the project below the top of what they name, and `uv.lock`
+writes `subdirectory` when they do.
+
+**A git source is the one input of this lab that is not lazy.** `uv.lock`
+records the commit and no hash of the tree, so there is no fixed-output
+derivation to instantiate and `builtins.fetchGit` runs during evaluation.
+Every other artefact of the menu costs an instantiation and no download.
+`ddrn/PACKAGING-FACTS.md` gives the whole cost, and the one line of `uv.lock`
+that would remove it.
+
+`git-app` is that route end to end. It takes `flit_core` from a subdirectory of
+`pypa/flit`, at a commit that `uv add` resolved. The lock file records no file
+for it, so nothing of that package can be downloaded: the environment holds it
+only because the graph fetched the checkout and built a wheel out of the tree.
+`flit_core` also builds itself, through the `backend-path` of PEP 517, so that
+one build covers a backend that no menu holds.
+
+`binary-app` installs `pyzmq`, whose wheel holds compiled code, so its node
+runs `auto-patchelf`. It builds a second time with
+`overrides = { pyzmq = pkgs.python3Packages.pyzmq; }`, which takes the package
+from nixpkgs and makes no wheel node at all. **That override builds nothing**:
+the derivation keeps the identity that nixpkgs gave it, so the outer store
+substitutes the output from a cache.
+
+`vendored-app` takes both of its dependencies out of `vendor/`, and no index
+serves either one. The lock file gives a file name and a hash for the wheel,
+and a hash alone for the archive, so neither row carries an address. `uv.nix`
+copies each file into the store with `builtins.path`, and the graph then
+installs the wheel and builds the archive the way it treats an artefact of an
+index. **The menu holds no fetch for this project at all.**
+
+Each `run.sh` above needs a network, because every artefact of
+`ddrn/examples/venv-graph/lock.json` comes from PyPI.
+`ddrn/examples/venv-graph/tests` is the same graph over artefacts that this
+repository builds, so it reaches no index:
+
+```console
+$ direnv exec . pytest ddrn/examples/venv-graph/tests -m "not nix"  # the decisions
+$ direnv exec . pytest ddrn/examples/venv-graph/tests               # and the graph
+```
+
+That directory holds its own `pytest.ini`, and the `testpaths` of the
+repository does not name it, so a plain `pytest` never collects it. The second
+command builds the patched Nix, which takes about 20 minutes the first time.
+`DDRN_WORK` names the directory that keeps the result between runs.
 
 ## How it works
 
@@ -651,6 +736,12 @@ Each of the seven steps below is done.
    ```text
    import sys; import os.path; sys.path.append(os.path.expandvars('$DDRN_EDITABLE_ROOT/src'))
    ```
+
+   **The same project also ships.** `build_sdist` over that copy writes the
+   archive that an index would serve, and a second node builds a wheel out of
+   it. That install holds the code, so it reads no tree and the variable above
+   reaches nothing. The two forms are one argument apart, and the sealed test
+   builds both.
 
    The environment runs, and it is a virtual environment and not a directory
    with a wrapper:

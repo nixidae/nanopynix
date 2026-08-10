@@ -23,89 +23,76 @@ from __future__ import annotations
 
 import json
 import sys
-import tarfile
-import tomllib
-import zipfile
-from pathlib import Path
-from typing import Any
 
 from ddrn_venv import (
     Artifact,
+    Lock,
+    LockError,
     Plan,
+    build_requirements,
     build_system,
     choose,
     env,
     open_restricted_store,
+    read_pyproject,
     submit,
     target_from_environ,
 )
 from packaging.requirements import Requirement
 
-#: The name of the file that PEP 517 reads, inside the one top directory that
-#: a source distribution must have.
-PYPROJECT = "pyproject.toml"
-
-
-def read_pyproject(archive: str) -> dict[str, Any]:
-    """The `pyproject.toml` of a source distribution, read from the archive.
-
-    A distribution that carries no such file is not an error. PEP 517 gives
-    the fallback backend for exactly that case, and `build_system` applies it.
-    """
-    path = Path(archive)
-    if path.name.endswith(".zip"):
-        with zipfile.ZipFile(path) as archive_file:
-            for name in archive_file.namelist():
-                if name.count("/") == 1 and name.endswith(f"/{PYPROJECT}"):
-                    return tomllib.loads(archive_file.read(name).decode())
-        return {}
-
-    with tarfile.open(path) as archive_file:
-        for member in archive_file.getmembers():
-            if member.name.count("/") == 1 and member.name.endswith(f"/{PYPROJECT}"):
-                handle = archive_file.extractfile(member)
-                if handle is None:
-                    raise RuntimeError(f"{archive}: '{member.name}' is not a regular file")
-                with handle:
-                    return tomllib.loads(handle.read().decode())
-    return {}
-
 
 def main() -> int:
     store = open_restricted_store()
 
-    menu = json.loads(env("DDRN_MENU"))
-    artifacts = [Artifact.from_json(row) for row in menu["artifacts"]]
+    inputs = json.loads(env("DDRN_INPUTS"))
+    artifacts = [Artifact.from_json(row) for row in inputs["artifacts"]]
     target = target_from_environ()
 
     # The archive itself. It is an input of this derivation, so it is present,
     # and the node that builds it needs no fetch.
     archive = env("DDRN_SDIST")
-    subject: dict[str, str] = menu["sdist"]
+    subject: dict[str, str] = inputs["sdist"]
+    # **The project is not always at the top of the archive.** A URL source of
+    # `uv.lock` names a subdirectory, and the archive of `pypa/hatch` holds more
+    # than one project. The declaration to read, and the directory that the
+    # backend runs in, are both below that subdirectory.
+    subdirectory = subject.get("subdirectory", "")
     sdist = Artifact(
         package=subject["package"],
         version=subject["version"],
         filename=subject["filename"],
         kind="sdist",
         path=archive,
+        subdirectory=subdirectory,
     )
 
-    backend, requirements = build_system(read_pyproject(archive))
+    backend, requirements = build_system(read_pyproject(archive, subdirectory))
     print(f"plan-sdist: {sdist.filename} builds through {backend}", file=sys.stderr)
 
+    # **A backend needs its own dependencies, and `requires` names only the top
+    # of that closure.** `flit_core` needs nothing, and `hatchling` needs four
+    # packages to import at all. A `uv.lock` holds the edges of every package
+    # that it lists, so it expands the list when there is one.
+    if (spec := inputs.get("uv")) is not None:
+        try:
+            requirements = build_requirements(Lock.read(spec["lock"]), target.markers, requirements)
+        except LockError as error:
+            raise RuntimeError(f"{sdist.filename}: {error}") from error
+
     plan = Plan()
+    no_binary = frozenset(inputs.get("noBinary", []))
 
     # The installer, on the same terms as in the outer graph. The node is the
     # same wheel unpacked by the same script, so its content is the same and
     # content addressing gives it the same output path in both graphs.
-    bootstrap = choose(artifacts, Requirement(menu["installer"]), target)
+    bootstrap = choose(artifacts, Requirement(inputs["installer"]), target)
     if bootstrap is None:
-        raise RuntimeError(f"the installer '{menu['installer']}' is not in the menu")
+        raise RuntimeError(f"the installer '{inputs['installer']}' is not in the menu")
     plan.installer = plan.artifact_node(bootstrap, "unpack")
 
     backend_path: list[str] = []
     for requirement in requirements:
-        dependency = choose(artifacts, requirement, target)
+        dependency = choose(artifacts, requirement, target, no_binary)
         if dependency is None:
             raise RuntimeError(f"{sdist.filename}: no artefact of the menu satisfies '{requirement}'")
         # **A backend that is itself a source distribution needs no special
@@ -123,8 +110,8 @@ def main() -> int:
         plan.document(
             root=root,
             system=env("DDRN_SYSTEM"),
-            python_version=env("PYTHON_VERSION"),
-            menu=menu,
+            python_version=target.python_version,
+            inputs=inputs,
         ),
         env("DDRN_GRAPH_NIX"),
     )

@@ -1,0 +1,36 @@
+[project]
+name = "packaged-app"
+version = "0.1.0"
+description = "A uv project that hatchling builds, as a graph of derivations"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "rich>=15.0.0",
+]
+
+[project.scripts]
+packaged-app = "packaged_app:main"
+
+[build-system]
+# `uv init` wrote `["hatchling"]`, and `editables` is a hand edit. hatchling
+# reads `from editables import EditableProject` for a PEP 660 build, and the
+# metadata of hatchling names four other packages and not that one.
+requires = ["hatchling", "editables"]
+build-backend = "hatchling.build"
+
+# **The tools that build this project, pinned by the same lock file.**
+# `uv.lock` records no build system, so a backend reaches the graph only as an
+# ordinary package. The selection of `uv.nix` enables no group, so none of
+# these enters the environment. `../README.md` gives the reason for each one.
+[dependency-groups]
+ddrn = [
+    "editables>=0.5",
+    "flit-core>=3.12.0",
+    "hatchling>=1.31.0",
+    "installer>=1.0.1",
+]
+
+# Build `mdurl` from its source distribution, although a wheel fits. uv keeps
+# this setting here and copies it into no lock file, so `uv.nix` reads it here.
+[tool.uv]
+no-binary-package = ["mdurl"]

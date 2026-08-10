@@ -1,0 +1,14 @@
+# The editable project of the sealed test.
+#
+# `ddrn/examples/venv-graph/fixtures/myapp` is the same project under the real
+# lock file, and it asks for `flit_core`, which comes from PyPI. This one asks
+# for `demo-backend`, which is a fixture of this directory, so the sealed test
+# needs no index.
+[build-system]
+requires = ["demo-backend >=1.0"]
+build-backend = "demoback"
+
+[project]
+name = "demo-app"
+version = "0.1.0"
+description = "A local package that the sealed graph installs as an editable."

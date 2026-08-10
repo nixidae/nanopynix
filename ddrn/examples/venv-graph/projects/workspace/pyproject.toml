@@ -1,0 +1,20 @@
+[project]
+name = "workspace-root"
+version = "0.1.0"
+description = "A uv workspace of two members, built as one graph of derivations"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[tool.uv.workspace]
+members = [
+    "packages/ws-core",
+    "packages/ws-cli",
+]
+
+[dependency-groups]
+ddrn = [
+    "editables>=0.6",
+    "hatchling>=1.31.0",
+    "installer>=1.0.1",
+]

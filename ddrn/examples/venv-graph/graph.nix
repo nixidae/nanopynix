@@ -151,14 +151,61 @@ let
         name = node.name;
         args = [
           "-c"
-          ''exec "${tool.python}/bin/python3" "${script.buildEditable}"''
+          ''exec "${tool.python}/bin/python3" "${script.buildLocal}"''
         ];
+        mode = "editable";
         source = builtins.storePath node.source;
+        subdirectory = node.subdirectory or "";
         # A literal path names one tree forever. A reference to a variable is
         # the same bytes for every tree, so one environment reads whichever
         # tree the variable names, and nothing rebuilds.
         editableRoot = node.root;
         inherit installerPath;
+        inherit (node) backend;
+        backendPath = builtins.concatStringsSep ":" (map sitePath node.backendPath);
+      }
+    else if node.kind == "local-wheel" then
+      # **A wheel out of a tree, with no archive between the two.** This is what
+      # `pip install .` does, and what a git source of `uv.lock` needs: a
+      # checkout is a directory, and a `build_sdist` step before the wheel would
+      # only write a file that nothing reads.
+      #
+      # The install holds the code, so it follows no tree of the user. That is
+      # the difference between this node and a node of kind `editable`, and it
+      # is the difference that `uv` makes between a git source and a workspace
+      # member.
+      mk {
+        name = node.name;
+        args = [
+          "-c"
+          ''exec "${tool.python}/bin/python3" "${script.buildLocal}"''
+        ];
+        mode = "wheel";
+        source = builtins.storePath node.source;
+        subdirectory = node.subdirectory or "";
+        inherit installerPath;
+        inherit (node) backend;
+        backendPath = builtins.concatStringsSep ":" (map sitePath node.backendPath);
+      }
+    else if node.kind == "local-sdist" then
+      # **The distribution of a local project, as its own store object.** This
+      # is what `uv build` writes and what an index serves. The node runs one
+      # PEP 517 hook, `build_sdist`, and it installs nothing: a node of kind
+      # `sdist-build` reads this output and builds the wheel out of it.
+      #
+      # **The two hooks are two nodes on purpose.** The archive is the thing
+      # that a project ships, so it is worth a store path that a reader can
+      # open. It also makes the failure legible: an archive that leaves a file
+      # out fails in the node below this one, and this node still succeeded.
+      mk {
+        name = node.name;
+        args = [
+          "-c"
+          ''exec "${tool.python}/bin/python3" "${script.buildLocal}"''
+        ];
+        mode = "sdist";
+        source = builtins.storePath node.source;
+        subdirectory = node.subdirectory or "";
         inherit (node) backend;
         backendPath = builtins.concatStringsSep ":" (map sitePath node.backendPath);
       }
@@ -194,7 +241,17 @@ let
           "-c"
           ". ${script.buildSdist}"
         ];
-        sdist = fetched node.artifact;
+        # **The archive comes from the index, or from a node of this graph.**
+        # `from` names the node of kind `local-sdist` that built it, and the
+        # dependency is then an ordinary one of this evaluation. An artefact of
+        # the menu needs `fetched` instead, which puts back the context that
+        # `default.nix` discarded.
+        sdist = if node ? from then "${built.${node.from}}" else fetched node.artifact;
+        # **An archive of a URL source does not always hold one project.**
+        # `uv.lock` writes `subdirectory` for such a source, and `pypa/hatch` is
+        # the case that this lab reads. An archive that a node of this graph
+        # built holds one project at its top, so that path names nothing here.
+        subdirectory = if node ? from then "" else (node.artifact.subdirectory or "");
         inherit (node) backend;
         inherit installerPath;
         # The backend comes from the nodes that this graph already builds, and
@@ -202,6 +259,21 @@ let
         # evaluation, so the dependency is real and the order is right.
         backendPath = builtins.concatStringsSep ":" (map sitePath node.backendPath);
       }
+    else if node.kind == "nixpkgs" then
+      # **This node builds nothing, and that is the whole point.** nixpkgs
+      # already built the package for this system, so the graph takes the store
+      # path and `make-venv.py` merges it like any other member.
+      #
+      # `fetched` is the same call that an artefact of the menu goes through:
+      # the output arrives with no context, and `builtins.appendContext` makes
+      # it a real dependency of whatever reads it. The outer store then
+      # **substitutes** that output from a cache, because the derivation kept
+      # the identity that nixpkgs gave it.
+      #
+      # No `patchelfInputs` reach this node. nixpkgs linked the package against
+      # the store already, and a second pass of `auto-patchelf` would have
+      # nothing to correct.
+      fetched node.artifact
     else if node.kind == "venv" then
       # A real virtual environment, with `venv.EnvBuilder`, and the members
       # merged into it. `make-venv.py` runs under the interpreter that the

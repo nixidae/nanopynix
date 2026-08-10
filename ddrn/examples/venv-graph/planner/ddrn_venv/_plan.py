@@ -39,6 +39,44 @@ def nix_string(text: str) -> str:
     return f'"{escaped}"'
 
 
+@dataclass(frozen=True, slots=True)
+class LocalNode:
+    """What a node that builds one tree of the user needs, whichever form.
+
+    **The three forms differ in one hook, and in nothing else.** `build_editable`,
+    `build_sdist` and `build_wheel` all run in the same directory, with the same
+    backend, on the same path. So the three methods below take this value, and
+    only `editable_node` takes anything more.
+
+    `subdirectory` names the project inside `source`. `uv.lock` writes it for a
+    git source and for a URL source that hold the project below their root.
+    """
+
+    name: str
+    source: str
+    backend: str
+    backend_path: list[str]
+    subdirectory: str = ""
+
+    def entry(self, kind: str, suffix: str) -> dict[str, Any]:
+        """The node, under the name that `kind` gives it.
+
+        **The name carries a suffix, because the project may also name the
+        environment.** `uv init --package` makes a project that is both a member
+        of its own environment and the name of it, and two nodes may not share a
+        name.
+        """
+        return {
+            "name": f"{self.name}-{suffix}",
+            "kind": kind,
+            "platform": False,
+            "source": self.source,
+            "backend": self.backend,
+            "backendPath": self.backend_path,
+            "subdirectory": self.subdirectory,
+        }
+
+
 @dataclass
 class Plan:
     """The graph that a planner decided, in the shape `graph.nix` takes."""
@@ -51,14 +89,29 @@ class Plan:
     installed: list[str] = field(default_factory=list[str])
     #: The name of the node that every install step reads.
     installer: str = ""
-    _seen: set[str] = field(default_factory=set[str])
+    _seen: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
 
     def add(self, entry: dict[str, Any]) -> str:
-        """Add one node, and return its name. A repeated name adds no node."""
+        """Add one node, and return its name.
+
+        **A repeated node adds nothing, and a repeated *name* is an error.**
+        The same wheel answers more than one requirement, and the second call
+        must reuse the first node rather than make a second one. Two different
+        nodes under one name are a different thing: `graph.nix` keys a node by
+        its name, so the second would replace the first and the graph would
+        build something that no planner asked for.
+        """
         name: str = entry["name"]
-        if name in self._seen:
+        existing = self._seen.get(name)
+        if existing is not None:
+            if existing != entry:
+                raise ValueError(
+                    f"two different nodes are both called '{name}': a node of kind "
+                    f"'{existing['kind']}' and a node of kind '{entry['kind']}'. "
+                    "A node name is the name of a store path, so it has to be unique."
+                )
             return name
-        self._seen.add(name)
+        self._seen[name] = entry
         self.nodes.append(entry)
         return name
 
@@ -99,17 +152,78 @@ class Plan:
             entry["backendPath"] = backend_path or []
         return self.add(entry)
 
-    def editable_node(self, *, name: str, source: str, root: str, backend: str, backend_path: list[str]) -> str:
-        """Add the node that builds one local project as an editable."""
+    def editable_node(self, node: LocalNode, *, root: str) -> str:
+        """Add the node that builds one local project as an editable.
+
+        `root` is what the PEP 660 redirect names, and it is the one thing that
+        the other two forms do not have. Both of those hold the code, so
+        nothing redirects to a tree of the user.
+        """
+        return self.add(node.entry("editable", "editable") | {"root": root})
+
+    def local_wheel_node(self, node: LocalNode) -> str:
+        """Add the node that builds a wheel out of a tree, and installs it.
+
+        **This is what `pip install .` does, and what a git source needs.** A
+        git checkout is a directory, so no archive stands between the tree and
+        the wheel: one PEP 517 `build_wheel` call answers it. A `directory`
+        source of `uv.lock` takes the same route, because `uv` installs one
+        that way and not as an editable.
+        """
+        return self.add(node.entry("local-wheel", "from-tree"))
+
+    def local_sdist_node(self, node: LocalNode) -> str:
+        """Add the node that builds the source distribution of a local project.
+
+        **This node is what `uv build` writes.** It runs the PEP 517
+        `build_sdist` hook over the tree of the project, and its output is the
+        archive that an index would serve. It installs nothing;
+        `local_build_node` reads the archive and builds the wheel.
+        """
+        return self.add(node.entry("local-sdist", "sdist"))
+
+    def local_build_node(self, *, name: str, archive: str, backend: str, backend_path: list[str]) -> str:
+        """Add the node that builds a wheel out of a local source distribution.
+
+        **The kind is the same one that an artefact of the index takes.** A
+        distribution that a node of this graph built and a distribution that
+        the index served are the same thing to the build that reads it, so the
+        same node kind and the same script serve both. `archive` names the node
+        that holds the archive, and an artefact of the index carries a fetch
+        instead.
+        """
         return self.add(
             {
-                "name": name,
-                "kind": "editable",
+                "name": f"{name}-from-sdist",
+                "kind": "sdist-build",
                 "platform": False,
-                "source": source,
-                "root": root,
+                "from": archive,
                 "backend": backend,
                 "backendPath": backend_path,
+            }
+        )
+
+    def nixpkgs_node(self, *, package: str, version: str, drv: str, out: str) -> str:
+        """Add the node that takes one package from nixpkgs, already built.
+
+        **This node builds nothing.** `default.nix` instantiated the package
+        outside the sandbox and handed in the `.drv` and the output path with
+        the dependency between them discarded, which is the tier 4 mechanism
+        that `ddrn/PACKAGING-FACTS.md` describes. `graph.nix` puts the
+        dependency back with `builtins.appendContext`, and the outer store then
+        **substitutes** the output from a cache rather than building it.
+
+        The name carries a suffix, because the package may also be the name of
+        the environment, and two nodes may not share a name.
+        """
+        return self.add(
+            {
+                "name": f"{package}-{version}-nixpkgs",
+                "kind": "nixpkgs",
+                # The store path is whatever nixpkgs built, and this graph does
+                # not patch it. nixpkgs already linked it against this system.
+                "platform": False,
+                "artifact": {"package": package, "version": version, "drv": drv, "out": out},
             }
         )
 
@@ -133,20 +247,20 @@ class Plan:
         self.members.append(name)
         self.installed.append(label)
 
-    def document(self, *, root: str, system: str, python_version: str, menu: dict[str, Any]) -> dict[str, Any]:
+    def document(self, *, root: str, system: str, python_version: str, inputs: dict[str, Any]) -> dict[str, Any]:
         """The whole document, ready for `graph.nix`."""
         return {
             "system": system,
             "pythonVersion": python_version,
-            "tools": menu["tools"],
-            "scripts": menu["scripts"],
+            "tools": inputs["tools"],
+            "scripts": inputs["scripts"],
             "nodes": self.nodes,
             "installer": self.installer,
             "root": root,
         }
 
 
-def open_restricted_store() -> Any:
+def open_restricted_store() -> nix_store.Store:
     """Open the restricted daemon socket that `builder-rpc-v0` gives a builder.
 
     A planner runs only inside such a build, so a different `NIX_REMOTE` is an
@@ -170,7 +284,7 @@ def open_restricted_store() -> Any:
     return store
 
 
-def submit(store: Any, document: dict[str, Any], graph_nix: str) -> None:
+def submit(store: nix_store.Store, document: dict[str, Any], graph_nix: str) -> None:
     """Evaluate `graph.nix` over `document`, and submit the root it wrote.
 
     **The evaluator reads a fixed file, and the plan is its argument.** The

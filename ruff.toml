@@ -1,6 +1,14 @@
 target-version = "py313"
 line-length = 120
 
+# `uv` wrote the `pyproject.toml` and the `uv.lock` of each project under
+# `ddrn/examples/venv-graph/projects`, and `projects/README.md` gives the
+# command and each hand edit. They are input data of an example, and not source
+# of this repository, so a finding here would only ask a reader to edit what a
+# tool generates. pyright still reads this tree, so the Python of a project
+# meets the type rules.
+exclude = ["ddrn/examples/venv-graph/projects"]
+
 [lint]
 select = [
   "E",

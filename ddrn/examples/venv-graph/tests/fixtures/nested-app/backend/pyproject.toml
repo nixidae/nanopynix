@@ -1,0 +1,16 @@
+# The project that the sealed test builds out of `../`, and not out of `.`.
+#
+# **This file is one directory below the top of the tree.** `uv.lock` writes
+# `subdirectory` for a source of that shape, and the two sources that name a
+# place both do it: a git checkout of `pypa/hatch` holds `hatchling` in
+# `backend`, and the archive of the same repository holds it in the same place.
+#
+# `../pyproject.toml` is the decoy that proves the reader honours the name.
+[build-system]
+requires = ["demo-backend >=1.0"]
+build-backend = "demoback"
+
+[project]
+name = "nested-app"
+version = "0.1.0"
+description = "A project below the top of its tree, built as a wheel and not as an editable."

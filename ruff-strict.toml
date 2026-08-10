@@ -1,6 +1,14 @@
 target-version = "py313"
 line-length = 120
 
+# `uv` wrote the `pyproject.toml` and the `uv.lock` of each project under
+# `ddrn/examples/venv-graph/projects`, and `projects/README.md` gives the
+# command and each hand edit. They are input data of an example, and not source
+# of this repository, so a finding here would only ask a reader to edit what a
+# tool generates. pyright still reads this tree, so the Python of a project
+# meets the type rules.
+exclude = ["ddrn/examples/venv-graph/projects"]
+
 [lint]
 select = [
   # Pyflakes
@@ -392,6 +400,11 @@ ignorelist = ["eval"]
 # has: no logging handler of the caller reaches it.
 "ddrn/tests/**" = ["S101", "PLR2004"]
 "ddrn/examples/**" = ["T20"]
+# The separate suite of `ddrn/examples/venv-graph`, which the `testpaths` of
+# the repository does not collect. It is test code, so it follows the same
+# rule as `tests/**`. S108 covers the fallback of `TMPDIR`, which names the
+# directory that keeps the patched Nix between runs.
+"ddrn/examples/venv-graph/tests/**" = ["S101", "S108", "ANN201", "PLR2004"]
 "ddrn/src/ddrn/_planner.py" = ["T20"]
 # dev-tooling subprocess/git-plumbing harness, not shipped production code.
 # T20 too: pytest-agent is a CLI whose entire job is printing to stdout

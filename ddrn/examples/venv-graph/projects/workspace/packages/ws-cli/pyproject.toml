@@ -1,0 +1,25 @@
+[project]
+name = "ws-cli"
+version = "0.1.0"
+description = "The application member, which reads the library member and rich"
+readme = "README.md"
+authors = [
+    { name = "lillecarl", email = "git@lillecarl.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "rich>=15.0.0",
+    "ws-core",
+]
+
+[project.scripts]
+ws-cli = "ws_cli:main"
+
+[build-system]
+# `editables` is a hand edit, and `../../README.md` gives the reason. hatchling
+# imports it for a PEP 660 build and declares it nowhere.
+requires = ["hatchling", "editables"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+ws-core = { workspace = true }
