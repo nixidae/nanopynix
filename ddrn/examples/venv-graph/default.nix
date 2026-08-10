@@ -79,6 +79,14 @@ let
   # goes on `PYTHONPATH` beside the nanopynix environment.
   packagingPath = "${pkgs.python3Packages.packaging}/${pkgs.python3.sitePackages}";
 
+  # `ddrn_venv`, which every planner of this example imports. `fileset` takes
+  # the Python files and nothing else, so a `__pycache__` of the working tree
+  # does not reach the store and does not change this path.
+  plannerLib = pkgs.lib.fileset.toSource {
+    root = ./planner;
+    fileset = pkgs.lib.fileset.fileFilter (file: file.hasExt "py") ./planner;
+  };
+
   menu = {
     inherit (lock) roots installer;
     artifacts = map row lock.artifacts;
@@ -150,7 +158,7 @@ derivation {
     "-c"
     ''
       set -eu
-      export PYTHONPATH=${packagingPath}
+      export PYTHONPATH=${packagingPath}:${plannerLib}
       # Nix runs a builder with the *basename* of the builder as `argv[0]`, and
       # CPython derives `sys.prefix` from `argv[0]`. A virtual environment
       # therefore has to be entered through its full path.

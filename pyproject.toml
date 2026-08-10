@@ -17,6 +17,10 @@ extraPaths = [
   # PEP 660 editable. The graph builds it, and `scripts/check.py` imports it
   # from inside the environment that the graph made.
   "ddrn/examples/venv-graph/fixtures/myapp/src",
+  # `ddrn_venv`, which every planner of `ddrn/examples/venv-graph` imports. It
+  # is not installed either: a planner reaches it through `PYTHONPATH` inside
+  # its build sandbox.
+  "ddrn/examples/venv-graph/planner",
   # `_bench_utils`, which the benchmark modules and their conftest import by
   # bare name -- the directory goes on `sys.path` by pytest's rootdir rule
   # rather than being a package.

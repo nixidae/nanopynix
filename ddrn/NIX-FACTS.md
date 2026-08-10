@@ -530,6 +530,57 @@ the planner. This is the property that the single-derivation form cannot have:
 there, one install step holds every wheel, and any change rebuilds all of
 them.
 
+### Bytecode, and why a node was not reproducible
+
+**A floating output is a fixed point only when the build is reproducible, and
+this graph was not.** The environment moved from `rwl64yg3…-demo-venv` to
+`xvzhwvp…-demo-venv` across two runs that changed no build step. Four of the
+five members took a new path, and each of the four is installed by a node that
+runs `installer`.
+
+The difference inside a member was the bytecode alone. The header of one
+`.pyc` gives the reason:
+
+```text
+pc4d3y9y…-certifi: flags=0 (timestamp-based) field1=1786350115 field2=4426
+naf1lw9a…-certifi: flags=0 (timestamp-based) field1=1786355678 field2=4426
+```
+
+The two builds are 5563 seconds apart, and the recorded field is exactly that
+far apart. **The field is a timestamp, and it is the time of the build.**
+
+`installer` compiles bytecode. `destinations.py:261` imports `compileall`, and
+line 267 calls `compileall.compile_file` for each level of
+`bytecode_optimization_levels`. That call takes the default invalidation mode
+of `py_compile`, and `_get_default_invalidation_mode`
+(`py_compile.py:72` of CPython 3.14) reads one variable:
+
+The fence says `text`, because the block is CPython as CPython writes it. A
+`python` fence makes `ruff format` restyle the quote, and a restyled quote is
+no longer evidence.
+
+```text
+def _get_default_invalidation_mode():
+    if os.environ.get('SOURCE_DATE_EPOCH'):
+        return PycInvalidationMode.CHECKED_HASH
+    else:
+        return PycInvalidationMode.TIMESTAMP
+```
+
+A node of this graph is a plain `derivation` and runs no `stdenv`, so nothing
+set that variable. `graph.nix` now sets `SOURCE_DATE_EPOCH = "315532800"` in
+`mk`, which is the value that `stdenv` of nixpkgs uses, and the mode becomes
+`CHECKED_HASH`, which records a hash of the source instead of its mtime.
+
+**Proved by a second store.** A build from scratch in a store that this run
+created, with nothing shared but the binary cache, gives
+`rfy15b0q3y3nmrld2wbw3j9arvjrf4wl-demo-venv`, which is what the first store
+gives.
+
+The trap generalises: **a graph of floating outputs turns one irreproducible
+node into a rebuild of everything above it**, and the symptom looks like a
+change that the author made. This one was mistaken for a refactor at first.
+
 ### Installing a wheel, and what `unzip` does not do
 
 **`unzip` is not an install.** The difference is visible from inside the

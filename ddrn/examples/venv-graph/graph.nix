@@ -20,8 +20,11 @@
   nodes,
   # The name of the node that holds `pypa/installer`.
   installer,
-  # `{ name, members, installed }`. A member is the name of a node.
-  venv,
+  # The name of the node that this graph is built for. Every other node is a
+  # dependency of that one. The planner of the environment roots its document
+  # at the environment; a planner of one distribution roots its document at
+  # that distribution.
+  root,
 }:
 
 let
@@ -41,13 +44,19 @@ let
   # and downloads none of them. `builtins.appendContext` puts the dependency
   # back for the artefacts that the planner chose, and it reaches `EnsurePath`
   # too.
+  # An artefact that carries a `path` is already present, because some
+  # derivation named it as an input. A planner of one source distribution
+  # receives its own archive that way, and needs no fetch for it.
   fetched =
     artifact:
-    builtins.appendContext artifact.out {
-      ${artifact.drv} = {
-        outputs = [ "out" ];
+    if artifact ? path then
+      builtins.storePath artifact.path
+    else
+      builtins.appendContext artifact.out {
+        ${artifact.drv} = {
+          outputs = [ "out" ];
+        };
       };
-    };
 
   # Every node floats. A floating output has no path until the build gives it
   # one, so a node that reads another node interpolates a placeholder, and
@@ -69,6 +78,16 @@ let
         inherit system site;
         builder = "${tool.bash}/bin/bash";
         PATH = basePath;
+        # **Without this, no node of this graph is reproducible.**
+        # `installer` compiles bytecode with `compileall.compile_file`, and
+        # `py_compile._get_default_invalidation_mode` chooses `TIMESTAMP` when
+        # this variable is empty. A timestamp `.pyc` records the mtime of the
+        # source at build time, so each build writes different bytes, the
+        # floating output takes a new path, and every node above it rebuilds.
+        # The variable makes the mode `CHECKED_HASH`, which records a hash of
+        # the source instead. `stdenv` of nixpkgs sets the same value, and a
+        # node of this graph runs no `stdenv`.
+        SOURCE_DATE_EPOCH = "315532800";
       }
       // args
       // floating
@@ -158,6 +177,19 @@ let
         # evaluation, so the dependency is real and the order is right.
         backendPath = builtins.concatStringsSep ":" (map sitePath node.backendPath);
       }
+    else if node.kind == "venv" then
+      # A real virtual environment, with `venv.EnvBuilder`, and the members
+      # merged into it. `make-venv.py` runs under the interpreter that the
+      # environment is for, which is what `EnvBuilder` takes as its base.
+      mk {
+        name = node.name;
+        args = [
+          "-c"
+          ''exec "${tool.python}/bin/python3" "${script.makeVenv}"''
+        ];
+        members = builtins.concatStringsSep " " (map (name: "${built.${name}}") node.members);
+        installed = builtins.concatStringsSep "\n" node.installed;
+      }
     else
       throw "unknown node kind '${node.kind}'";
 
@@ -168,15 +200,4 @@ let
     }) nodes
   );
 in
-# The root node makes a real virtual environment, with `venv.EnvBuilder`, and
-# merges the members into it. `make-venv.py` runs under the interpreter that
-# the environment is for, which is what `EnvBuilder` takes as its base.
-mk {
-  inherit (venv) name;
-  args = [
-    "-c"
-    ''exec "${tool.python}/bin/python3" "${script.makeVenv}"''
-  ];
-  members = builtins.concatStringsSep " " (map (name: "${built.${name}}") venv.members);
-  installed = builtins.concatStringsSep "\n" venv.installed;
-}
+built.${root}
