@@ -64,6 +64,11 @@ $ ddrn/examples/venv-graph/run.sh       # a Python environment, as a graph
 $ ddrn/examples/venv-graph/run-uv.sh    # the same, from a real uv.lock
 ```
 
+**To point this at a project of your own, read
+`ddrn/examples/venv-graph/README.md`.** It gives the two commands that build
+one environment, what your `pyproject.toml` needs in it, and every argument
+that `uv.nix` takes.
+
 **`run-uv.sh` builds seven projects that `uv` itself wrote.**
 `ddrn/examples/venv-graph/projects/README.md` gives the command for each one,
 and `uv.nix` reads their `uv.lock`. That file makes no packaging decision: it
