@@ -168,6 +168,79 @@ number of packages raised to the depth.
 | how a node builds | `graph.nix` | a build step is a derivation, and only Nix writes one |
 | where an artefact comes from | `uv.nix` | a fetch is a fixed-output derivation, and only Nix writes one |
 
+## A smaller environment, and why it is usually larger
+
+**The interpreter is the environment.** The environment of
+`projects/pure-app` holds `rich` and two more distributions, and it is
+238220632 bytes over 28 store paths. `python3` is 141459368 of those bytes, and
+one file inside it, `libpython3.14.a`, is 66397194. No file of the environment
+names that archive: it is the static library that builds an extension module.
+
+**A total closure is the wrong number for a machine that runs Nix.** The store
+is shared, and `pkgs.python3` is already in it: a NixOS system holds it, and so
+does any other package of nixpkgs that needs an interpreter. What the
+environment costs such a machine is what it adds, and that is a different
+measurement:
+
+```console
+$ nix path-info -r --json <the environment>   # and subtract the closure of pkgs.python3
+```
+
+| a target that already holds `pkgs.python3` | it adds | new paths |
+| --- | --- | --- |
+| the environment, with `pkgs.python3` | 19207400 | 5 |
+| the environment, with the stripped override | 82133056 | 6 |
+
+**So a stripped interpreter makes the environment larger, and not smaller.**
+The two interpreters share 22 of their 23 paths, and only the interpreter
+itself differs: 141459368 bytes against 62925592. An override is a new store
+path, so the machine holds both. The 62925592 bytes are added, and the
+141459368 stay, because everything else on that machine still names them.
+
+`default.nix` and `uv.nix` take a `python` argument anyway, and its default is
+`pkgs.python3`:
+
+```console
+$ nix build --file ddrn/examples/venv-graph/uv.nix \
+    --arg project ./ddrn/examples/venv-graph/projects/pure-app \
+    --arg python '(import <nixpkgs> {}).python3.override {
+      stripConfig = true; stripIdlelib = true; stripTests = true; stripTkinter = true;
+    }'
+```
+
+| the whole closure, an empty target | bytes | the price |
+| --- | --- | --- |
+| `pkgs.python3`, the default | 238220632 | none |
+| the stripped override | 159686920 | one CPython build, 357 s here |
+
+**Those numbers apply to an empty target, and to nothing else.** A container
+image that holds this closure and no more, or a `nix copy` to a machine that
+runs nothing else, pays the whole 238220632 bytes, and the override takes 33%
+off. Every other deployment shares the interpreter, and the override then costs
+62925592 bytes and a build of CPython. Measure the target before you reach for
+it.
+
+The override does keep every optional dependency: `zlib`, `ssl`, `ctypes`,
+`sqlite3`, `readline`, `curses`, `bz2`, `lzma` and `decimal` all import from
+the environment that it builds. Each package that `fromNixpkgs` supplies needs
+a build against the same interpreter as well.
+
+**`pkgs.python3Minimal` is smaller still, and this lab cannot use it.** Its
+closure is 77948792 bytes over 8 paths, which is 64% below `python3`, and
+`cpython/default.nix` gives the reason for both halves of that saving:
+`withMinimalDeps = true` turns off the optional dependencies, and
+`stripConfig`, `stripIdlelib`, `stripTests` and `stripTkinter` each default to
+that same value. **`zlib` goes with them, so the interpreter cannot open a
+wheel.** Every wheel is a zip with deflate members, and `zipfile` raises:
+
+```
+RuntimeError: Compression requires the (missing) zlib module
+```
+
+`ssl` and `ctypes` are absent as well, so a project that speaks HTTPS or loads
+a shared library cannot run there either. `ddrn/PACKAGING-FACTS.md` holds the
+whole table of what each interpreter keeps, and the command that measured it.
+
 ## The tests
 
 | suite | what it proves | command |

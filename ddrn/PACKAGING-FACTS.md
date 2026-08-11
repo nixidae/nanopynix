@@ -1037,6 +1037,201 @@ and it is stronger than the `idna` case, because uv2nix does not merely find it
 awkward. uv2nix cannot express it at all: the answer is inside a file that no
 evaluation has downloaded.
 
+## What the environment costs at run time, measured
+
+The measurements above are the cost of the **evaluation**. This one is the cost
+of what the user runs. It is a different number, and the whole of it is the
+interpreter.
+
+The subject is `projects/pure-app`, whose environment holds `rich` and its two
+dependencies. `run-uv.sh` built it into a private store, and the method is one
+command:
+
+```console
+$ nix --store "$store" path-info -r --json <the environment>
+```
+
+| path | NAR bytes | share |
+| --- | --- | --- |
+| `python3-3.14.6` | 141459368 | 59.4% |
+| `glibc-2.42-67` | 35073096 | 14.7% |
+| `pygments-2.20.0` | 13441424 | 5.6% |
+| the 24 other paths | 48225088 | 20.2% |
+| the environment itself | 21656 | 0.0% |
+| **the closure** | **238220632** | **28 paths** |
+
+**The environment holds nothing that it should not.** It is 21656 bytes,
+because a virtual environment is a tree of symbolic links. The three
+distributions that the user asked for are 19 MB of the 238 MB. Nothing that
+built the environment is in it: neither `packaging` nor `installer` appears in
+the closure, because each one is an input of a build step and not a member.
+
+**So the question is the interpreter, and one file of it is 28% of everything.**
+`du -sb` over the store path of `python3` gives the breakdown:
+
+| inside `python3-3.14.6` | bytes |
+| --- | --- |
+| `lib/python3.14/config-3.14-x86_64-linux-gnu/libpython3.14.a` | 66397194 |
+| `lib/python3.14/__pycache__` | 15449098 |
+| `lib/libpython3.14.so.1.0` | 7474640 |
+| `lib/python3.14/idlelib` | 7040073 |
+| `lib/python3.14/lib-dynload` | 6884096 |
+| `lib/python3.14/test` | 2743124 |
+| `lib/python3.14/pydoc_data` | 2411476 |
+| `lib/python3.14/tkinter` | 1458792 |
+
+`libpython3.14.a` is the static archive that builds an extension module. No
+file of the environment names it, and `grep -rl config-3.14` over the
+environment finds nothing.
+
+### The two interpreters that nixpkgs builds, and what each one costs
+
+nixpkgs builds `python3` and `python3Minimal`, and a binary cache holds both.
+Any other combination is an `.override`, which is a local build of CPython.
+
+```console
+$ nix path-info --store https://cache.nixos.org -S <the interpreter>
+```
+
+| interpreter | closure | paths |
+| --- | --- | --- |
+| `python3` | 219013232 | 23 |
+| `python3Minimal` | 77948792 | 8 |
+
+`python3Minimal` is 64% smaller, and `cpython/default.nix` says why: it takes
+`withMinimalDeps = true`, and `stripConfig`, `stripIdlelib`, `stripTests` and
+`stripTkinter` each default to that same value. So it drops the static archive
+**and** the optional dependencies together.
+
+**`python3Minimal` cannot open a wheel, so this lab cannot use it.** Every
+wheel is a zip with deflate members, and the module that reads deflate is
+absent. Measured by running each import against the store path:
+
+```console
+$ /nix/store/...-python3-minimal-3.14.6/bin/python3 -c 'import zlib'
+```
+
+| module | `python3Minimal` |
+| --- | --- |
+| `zlib`, `ssl`, `ctypes`, `sqlite3`, `readline`, `curses`, `bz2`, `lzma`, `gdbm`, `_zstd` | missing |
+| `decimal`, `pyexpat`, `xml.etree.ElementTree`, `hashlib`, `zoneinfo`, `mimetypes` | present |
+
+`zipfile` then raises
+`RuntimeError: Compression requires the (missing) zlib module`. `ssl` and
+`ctypes` rule the interpreter out for most projects as well.
+
+### The third interpreter, which no cache holds
+
+The two knobs are separate, so a third combination exists: keep every optional
+dependency, and strip the dead weight only.
+
+```console
+$ nix build --expr '(import <nixpkgs> {}).python3.override {
+    stripConfig = true; stripIdlelib = true; stripTests = true; stripTkinter = true;
+  }' --impure --no-link --print-out-paths
+```
+
+| interpreter | closure | paths | on disk | a wheel opens |
+| --- | --- | --- | --- | --- |
+| `python3` | 219013232 | 23 | 141459368 | yes |
+| `python3Minimal` | 77948792 | 8 | 27659480 | **no** |
+| the stripped override | 140479456 | 23 | 62357942 | yes |
+
+The override keeps `zlib`, `ssl`, `ctypes`, `sqlite3`, `readline`, `curses`,
+`bz2`, `lzma`, `decimal` and `hashlib`, and its closure is 36% below the
+closure of `python3`. **That comparison holds for an empty target only.** The
+section below measures what each one adds to a target that already holds
+`pkgs.python3`, and the order reverses there.
+
+**The environment was built with it, and it runs.** `default.nix` takes a
+`python` argument, so the whole graph builds against whichever interpreter the
+caller names:
+
+```console
+$ nix build --file uv.nix --arg project ./projects/pure-app \
+    --arg python '(import <nixpkgs> {}).python3.override {
+      stripConfig = true; stripIdlelib = true; stripTests = true; stripTkinter = true;
+    }' --argstr venvName pure-app-slim
+```
+
+| the environment of `pure-app` | closure |
+| --- | --- |
+| with `python3` | 238220632 |
+| with the stripped override | 159686920 |
+
+That is 33% less, for an empty target. A derivation that runs the second
+environment reports
+`sys.prefix` inside it, `rich` from its own `site-packages`, and an import of
+`zlib`, `ssl`, `ctypes` and `sqlite3`. A deflate zip opens.
+
+**It costs a build of CPython, and a cache does not answer for it.**
+`nix path-info --store https://cache.nixos.org` gives `null` for the store
+path, because an override is a derivation that nixpkgs never built. The build
+above took 357 s on this machine, and that number holds the substitution of
+each build input as well. Every package that `fromNixpkgs` supplies would also
+need a build against the same interpreter.
+
+### The total closure is the wrong number, and the marginal closure is right
+
+**A total closure is what an empty target pays, and almost no target is
+empty.** The store is shared. A machine that runs NixOS holds `pkgs.python3`
+already, and so does every other package of nixpkgs that names an interpreter.
+What an environment costs such a machine is what it **adds**: the paths of its
+closure that the target does not hold yet.
+
+The method subtracts one closure from the other, over the path sets and not
+over the totals:
+
+```console
+$ nix --store "$store" path-info -r --json <the environment> > env.json
+$ nix path-info -r --json <the interpreter of the target> > base.json
+```
+
+Read the `path` key of each entry into a set, subtract the second set from the
+first, and add the `narSize` of what remains.
+
+| the two interpreters | paths | NAR bytes |
+| --- | --- | --- |
+| the closure of `python3` | 23 | 219013232 |
+| the closure of the stripped override | 23 | 140479456 |
+| shared by both | 22 | 77553864 |
+| only in `python3` | 1 | 141459368 |
+| only in the stripped override | 1 | 62925592 |
+
+**The two interpreters differ in one path, and share the other 22.** `glibc`,
+`ncurses`, `sqlite`, `openssl` and every other dependency is the same store
+path in both, because the override changes the build of CPython only.
+
+| a target that already holds `pkgs.python3` | it adds | new paths |
+| --- | --- | --- |
+| the environment, with `pkgs.python3` | 19207400 | 5 |
+| the environment, with the stripped override | 82133056 | 6 |
+
+**So the stripped override makes the deployment larger by 62925592 bytes.** An
+override is a new store path, so the target holds both interpreters: the
+141459368 bytes of `pkgs.python3` stay, because everything else on that machine
+still names them, and the 62925592 bytes of the override arrive beside them.
+The 33% saving above is real for an empty target and for nothing else.
+
+So the three options are a choice, and the target decides it:
+
+| | an empty target | a target with `pkgs.python3` | the price |
+| --- | --- | --- | --- |
+| `python3` | 238220632 | 19207400 | none; this is the default of `default.nix` |
+| `python3Minimal` | not usable | not usable | the interpreter cannot open a wheel |
+| the stripped override | 159686920 | 82133056 | one CPython build, and no binary cache |
+
+**Two deployments make the total closure the right number.** A container image
+that carries this closure and nothing else pays the whole 238220632 bytes. A
+`nix copy` to a machine that runs no other Nix package pays it as well. Every
+other deployment shares the interpreter, and the override then costs bytes
+rather than saving them.
+
+**The lab takes neither decision for the user.** `python` is an argument, and
+its default is `pkgs.python3`, which is the correct default for a shared store.
+A caller that builds a single-purpose image passes one expression and pays one
+build of CPython.
+
 ## A proof that reaches no index
 
 `ddrn/examples/venv-graph/run.sh` is the proof over the real lock file, and

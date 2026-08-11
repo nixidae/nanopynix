@@ -99,6 +99,33 @@
   # **The version is the one that nixpkgs holds, and not the one that the lock
   # file pins.** Nothing reconciles the two, and the planner prints both.
   fromNixpkgs ? { },
+  # The interpreter that the environment runs, and that every install step
+  # uses. **This is the whole runtime closure of an environment**, and
+  # `ddrn/PACKAGING-FACTS.md` measures it: 219 MB of the 238 MB that the
+  # environment of `projects/pure-app` costs.
+  #
+  # **Keep the default unless the target is an empty store.** A store that
+  # holds `pkgs.python3` already shares 22 of the 23 paths of any override, so
+  # a stripped interpreter adds a second CPython rather than replacing the
+  # first. The environment then costs 82 MB on that target, against 19 MB with
+  # this default. A single-purpose container image is the case where the
+  # override wins, and it wins 33% of 238 MB there.
+  #
+  # `pkgs.python3Minimal` is not a candidate at all: it drops `zlib`, so it
+  # cannot open a wheel. A stripped override keeps every optional dependency,
+  # and it costs a build of CPython that no binary cache answers:
+  #
+  #     python = pkgs.python3.override {
+  #       stripConfig = true;
+  #       stripIdlelib = true;
+  #       stripTests = true;
+  #       stripTkinter = true;
+  #     };
+  #
+  # **The marker environment comes from this same interpreter**, so the version
+  # that the planner plans for and the version that the environment holds are
+  # one value and cannot drift.
+  python ? pkgs.python3,
   venvName ? "demo-venv",
   # Overrides for the PEP 508 marker environment of the target.
   #
@@ -194,6 +221,11 @@ let
   # `packaging` is what the planner needs, and only the planner needs it. The
   # environment that comes out carries no trace of it. It is pure Python, so it
   # goes on `PYTHONPATH` beside the nanopynix environment.
+  #
+  # **This one stays on `pkgs.python3`, and it does not follow `python`.** The
+  # planner runs on `plannerEnv`, which is the interpreter that nanopynix was
+  # built against, so `packaging` has to match that one and not the interpreter
+  # of the environment. Neither reaches the runtime closure.
   packagingPath = "${pkgs.python3Packages.packaging}/${pkgs.python3.sitePackages}";
 
   # `ddrn_venv`, which every planner of this example imports. `fileset` takes
@@ -231,7 +263,7 @@ let
       unzip = "${pkgs.unzip}";
       gnutar = "${pkgs.gnutar}";
       gzip = "${pkgs.gzip}";
-      python = "${pkgs.python3}";
+      python = "${python}";
       # The three below reach only a node that installs a binary wheel.
       patchelf = "${pkgs.patchelf}";
       # `pkgs.autoPatchelfHook` is a setup hook, and a graph node runs no setup
@@ -296,23 +328,22 @@ let
   #: `lib/pep508.nix`, and it gives the same reason. A caller that needs a
   #: marker of either key overrides `markers`.
   targetMarkers = {
-    implementation_name = pkgs.python3.implementation;
-    implementation_version = pkgs.python3.version;
+    implementation_name = python.implementation;
+    implementation_version = python.version;
     os_name = "posix";
     platform_machine = hostPlatform.parsed.cpu.name;
-    platform_python_implementation =
-      if pkgs.python3.implementation == "cpython" then "CPython" else "PyPy";
+    platform_python_implementation = if python.implementation == "cpython" then "CPython" else "PyPy";
     platform_release = "";
     platform_system = if hostPlatform.isDarwin then "Darwin" else "Linux";
     platform_version = "";
-    python_full_version = pkgs.python3.version;
-    python_version = pkgs.lib.versions.majorMinor pkgs.python3.version;
+    python_full_version = python.version;
+    python_version = pkgs.lib.versions.majorMinor python.version;
     sys_platform = if hostPlatform.isDarwin then "darwin" else "linux";
   };
 
   targetEnv = {
     DDRN_TARGET = builtins.toJSON {
-      pythonVersion = pkgs.lib.versions.majorMinor pkgs.python3.version;
+      pythonVersion = pkgs.lib.versions.majorMinor python.version;
       # The platform of a wheel tag, which PEP 425 spells differently from
       # `platform_machine`.
       platform = "${if hostPlatform.isDarwin then "macosx" else "linux"}_${hostPlatform.parsed.cpu.name}";

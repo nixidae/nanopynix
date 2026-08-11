@@ -59,6 +59,11 @@
   # of those as a wheel, so this reader does too.
   fromSdist ? [ ],
   venvName ? null,
+  # The interpreter that the environment runs. `./default.nix` gives the whole
+  # reason at its `python` argument, and the short one is this: the interpreter
+  # is the whole runtime closure, and a smaller one costs a build of CPython
+  # and adds a second interpreter to every store that holds `pkgs.python3`.
+  python ? pkgs.python3,
   markers ? { },
   # Each package that nixpkgs supplies instead of the index, as
   # `{ pyzmq = pkgs.python3Packages.pyzmq; }`. `./default.nix` gives the whole
@@ -414,6 +419,7 @@ let
       markers
       noBinary
       fromNixpkgs
+      python
       uvEditables
       ;
 
