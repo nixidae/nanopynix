@@ -1073,6 +1073,59 @@ The pytest run makes each of those a property of the machine that runs it,
 where it belongs. `ddrn/examples/venv-graph/tests/pytest.ini` keeps the run
 separate, and the `testpaths` of the repository does not name that directory.
 
+### nanopynix builds the whole graph, with no `nix` command
+
+The tests drive the example through the patched `nix` command. That command is
+not necessary. A nanopynix session that the patched Nix links builds the same
+graph in process, and it builds the dynamic derivation as well.
+
+The measurement, on 2026-08-11:
+
+```python
+async with Session(
+    store_uri="/tmp/ddrn-venv-graph-uv/store",
+    experimental_features=["nix-command", "flakes", "ca-derivations", "dynamic-derivations"],
+    settings=NixSettings(system_features=["builder-rpc-v0", "recursive-nix"]),
+) as session:
+    async with session.store() as store:
+        async with session.eval(store, eval_settings=NixEvalSettings(pure_eval=False)) as ev:
+            root = await ev.string(EXPR)  # `import ./check-workspace.nix { ... }`
+            drv = await root.attr("drvPath").as_string()
+            await store.build_paths_with_results([f"{drv}^out"])
+```
+
+The first run reported `status='built'`, and the second run reported
+`status='resolves-to-already-valid'`. So the first run ran the planner, the
+planner submitted the graph over the restricted socket, and the trampoline
+realised the root. Each of the three is code of `libnixstore`, and no part of
+it belongs to the command line program.
+
+Four facts make the session equal to the command line:
+
+| what the command gives | what the session gives |
+| --- | --- |
+| `--store /path` | `Session(store_uri="/path")`, which reaches `openStore` |
+| `--extra-experimental-features` | `Session(experimental_features=[...])` |
+| `--system-features` | `NixSettings(system_features=[...])` |
+| `--impure` | `NixEvalSettings(pure_eval=False)` |
+
+**The client has to be the patched build, because the worker is the client.**
+`nanopynix/src/nanopynix/rpc/_worker_argv.py:70` builds the argument vector as
+`[sys.executable, "-m", WORKER_MODULE]`, and the docstring gives the reason:
+the two ends cannot be different builds, which is also why `InitRequest`
+carries no version field. `Session` offers no interpreter argument, so a client
+of the development shell cannot drive a patched worker. The process that
+evaluates has to run the interpreter of `nanopynixMaster`.
+
+That interpreter is one derivation, and it is cheap once the patched Nix
+exists:
+
+```console
+$ nix build --impure --expr '(import ./. { }).nanopynixMaster.pythonSet.mkVirtualEnv
+    "ddrn-master-test-env" { nanopynix = [ ]; pytest = [ ]; pytest-asyncio = [ ]; anyio = [ ]; }'
+/nix/store/pg734mhjrykgxcxsbs4ffdhavk5lvp8v-ddrn-master-test-env
+```
+
 ## Upstream defects that this lab found
 
 **`SubmitStore::require` has no definition.** An undefined symbol.
