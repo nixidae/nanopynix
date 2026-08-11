@@ -299,7 +299,7 @@ let
           ''exec "${tool.python}/bin/python3" "${script.makeApplication}"''
         ];
         venv = "${built.${node.venv}}";
-        base = "${built.${node.base}}";
+        bases = builtins.concatStringsSep " " (map (name: "${built.${name}}") node.bases);
       }
     else
       throw "unknown node kind '${node.kind}'";

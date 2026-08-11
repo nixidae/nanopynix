@@ -244,6 +244,24 @@ echo
 echo "==> one member of that workspace, as an application"
 show store cat "$(build check-application.nix)"
 
+# **The template of the shape is a node of the graph, whichever node built the
+# member.** The workspace above installs `ws-cli` as a PEP 660 editable, and so
+# does this one, but `packaged-app` is a project that is also the name of its
+# own environment. The editable node therefore carries the `-editable` suffix,
+# and the application reads that node.
+#
+# The check also names `rich` in the absent list: a dependency of the project
+# ships `bin/pygmentize` through `pygments`, and an application of one member
+# holds no program of a package that the member only depends on.
+echo
+echo "==> a project that is its own environment, as an application"
+show store cat "$(build check-application.nix \
+  --arg project "$here/projects/packaged-app" \
+  --arg editableTree "$here/projects/packaged-app" \
+  --arg application '["packaged-app"]' \
+  --argstr venvName packaged-app-bin \
+  --arg absent '["python" "python3" "activate" "pygmentize" "markdown-it"]')"
+
 # **A wheel that holds compiled code, and the same package from nixpkgs.** The
 # first build takes the manylinux wheel that `uv.lock` pins, and
 # `auto-patchelf` rewrites its `RPATH` so the loader of this system can resolve

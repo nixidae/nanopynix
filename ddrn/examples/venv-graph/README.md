@@ -140,7 +140,7 @@ this.
 | `editableRoot` | what a PEP 660 editable redirects to. The default is the variable `$DDRN_EDITABLE_ROOT`, so one environment serves every tree |
 | `markers` | `platform_release` and `platform_version`, which no build can know |
 | `uvCheck` | `true` runs `uv lock --check` over the project before the planner runs. See below |
-| `application` | the one member to render as a program rather than an environment. See below |
+| `application` | which members to render as programs rather than an environment. One name, or a list. See below |
 
 ## Extras and groups, the way `uv sync` takes them
 
@@ -201,15 +201,46 @@ bin/ws-cli -> /nix/store/...-workspace-app-env/bin/ws-cli
 template becomes a link into the environment. `nix-support` and
 `site-packages` are the two things that the template does not offer.
 
+**A list names several members, and it is still one output.** A project that
+ships three programs ships them together, and three applications would each
+hold a link into the same environment:
+
+```nix
+application = [ "ws-cli" "ws-web" ];
+```
+
 **The closure does not shrink, and that is not what this is for.** Measured
 over `projects/workspace`: the application is 238229120 bytes over 31 store
 paths, and its environment is 238228600 bytes over 30. The application adds
 520 bytes and one path, which is itself. Every link names the environment, so
 the interpreter stays. What changes is what reaches the PATH of a user.
 
-An application is one member of the environment, so the selection has to
-install it. A name that no member answers stops the build, and the message
-names the members that the environment does hold.
+An application is made of members of the environment, so the selection has to
+install each one. A name that no member answers stops the build, and the
+message names every such name and the members that the environment does hold.
+A member that installs no program outside `site-packages` stops it as well: a
+library adds nothing to an application, and an output that built and held
+nothing is the worse failure.
+
+### The environment of the same arguments
+
+The result carries an `environment` attribute, which is this same project with
+no application. So one set of arguments gives both shapes:
+
+```nix
+let app = import ./uv.nix { project = ./.; application = "ws-cli"; };
+in {
+  packages.default = app;          # bin/ws-cli, for a NixOS configuration
+  devShells.default = app.environment;   # bin/python, for a shell
+}
+```
+
+**It is the same store path that the application links into.** The environment
+of an application takes the `-env` suffix, and the attribute takes the same
+suffix, so a user who installs both gets one environment and not two copies of
+it. It costs a second planner build, because the two planners differ in one
+variable, and no second environment: every node they submit is
+content-addressing and identical.
 
 ## A stale `uv.lock` stops the build
 

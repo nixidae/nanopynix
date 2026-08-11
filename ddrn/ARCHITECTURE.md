@@ -184,9 +184,10 @@ The root of the graph is a node of kind `venv` or a node of kind
 `bin/python`, `bin/activate` and `pyvenv.cfg`, because `make-venv.py` writes a
 real one with `venv.EnvBuilder`. That is the shape for a development shell.
 
-**An application holds one program.** `make-application.py` walks the store
-path of the node that installed one member, and it links each path of that
-tree out of the environment. `nix-support` and `site-packages` are the two
+**An application holds the programs of the members that the caller names.**
+`make-application.py` walks the store path of the node that installed each
+named member, and it links each path of those trees out of the environment. A
+list of members is one output, and not one output for each name. `nix-support` and `site-packages` are the two
 things it skips, and `pyproject.nix` skips the same two in
 `build/util/mk-application.py`. The output of `projects/workspace` with
 `application = "ws-cli"` holds one entry:
@@ -203,6 +204,13 @@ on the PATH of every user, in front of the interpreter of the system.
 238229120 bytes over 31 store paths, and its environment is 238228600 bytes
 over 30. Every link names the environment, so the interpreter stays. What
 changes is the PATH surface.
+
+The result carries an `environment` attribute, which is the same project with
+no application, so one set of arguments gives both shapes. **The two name one
+store path**: the environment of an application takes the `-env` suffix, and
+the attribute takes the same suffix, so a user who installs both gets one
+environment. It costs a second planner build and no second environment, which
+content addressing is the reason for.
 
 ## A smaller environment, and why it is usually larger
 

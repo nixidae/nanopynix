@@ -119,26 +119,33 @@
   # The check itself costs 27 ms, measured over `projects/workspace` with a
   # cold cache.
   uvCheck ? false,
-  # The one member to render as an application, by package name, or `null` for
-  # the environment itself.
+  # Which members to render as an application, by package name. One name, a
+  # list of them, or `null` for the environment itself.
   #
   # **A virtual environment is not a program.** It carries `bin/python`,
   # `bin/activate` and the console script of every member, so a NixOS
   # configuration that puts one in `environment.systemPackages` shadows the
   # interpreter of the system with the one of the environment. An application
-  # is the tree of one member, with each entry a link into that same
+  # is the tree of the named members, with each entry a link into that same
   # environment:
   #
-  #     application = "ws-cli";   ->   bin/ws-cli, and nothing else
+  #     application = "ws-cli";              ->  bin/ws-cli, and nothing else
+  #     application = [ "ws-cli" "ws-web" ]; ->  the programs of both members
+  #
+  # **A list is one output, and not one for each name.** A project that ships
+  # three programs ships them together, and three separate applications would
+  # each hold a link into the same environment.
   #
   # **The closure does not shrink**, because every link names a path inside the
-  # environment. What changes is what reaches the PATH of a user.
+  # environment. What changes is what reaches the PATH of a user. The
+  # `environment` attribute of the result gives that environment, for a
+  # development shell of the same project.
   #
   # `pyproject.nix` calls this `util.mkApplication`, and it takes the same two
   # inputs: the environment for the content, and the `$out` of the one package
   # for the shape.
   application ? null,
-}:
+}@arguments:
 
 let
   inherit (pkgs) lib;
@@ -154,6 +161,9 @@ let
   # The name of the project, which names the environment that comes out of the
   # resolution.
   projectName = pyproject.project.name;
+
+  # The name that the caller asked for, or the name of the project.
+  environmentName = if venvName != null then venvName else projectName;
 
   # **The roots of a lock file are its workspace members, and `[manifest]`
   # names them.** uv writes that table for a workspace only, so a lock file of
@@ -615,7 +625,7 @@ let
     # file resolves puts a PEP 508 requirement here.
     roots = [ ];
 
-    venvName = if venvName != null then venvName else projectName;
+    venvName = environmentName;
 
     # **A local project of a uv workspace comes through `uvEditables`, and not
     # through here.** The resolution decides which of them this target
@@ -639,6 +649,36 @@ lib.throwIfNot (lockVersion == 1)
         # lockCheck` runs uv over the project and builds no graph, and the
         # project tree still enters no store path of a build that never names
         # this attribute.
-        planner // { inherit lockCheck; }
+        #
+        # `environment` is this same project with no application, so a caller
+        # that ships one program and develops against the whole environment
+        # writes the arguments once:
+        #
+        #     app = import ./uv.nix { project = ./.; application = "ws-cli"; };
+        #     shell = app.environment;
+        #
+        # **It costs a second planner, and no second environment.** The two
+        # planners differ in one variable, so Nix builds both. Every node that
+        # they submit is content-addressing and identical, so the environment
+        # itself is one store path that both graphs reach.
+        planner
+        // {
+          inherit lockCheck;
+          environment =
+            if application == null then
+              planner
+            else
+              import ./uv.nix (
+                arguments
+                // {
+                  application = null;
+                  # **The suffix has to match, or one environment takes two
+                  # store paths.** `Plan.root` names the environment of an
+                  # application `<name>-env`, and a node name is the name of a
+                  # store path.
+                  venvName = "${environmentName}-env";
+                }
+              );
+        }
       )
   )

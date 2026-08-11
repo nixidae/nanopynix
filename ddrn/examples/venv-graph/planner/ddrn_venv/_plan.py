@@ -25,6 +25,8 @@ from packaging.utils import canonicalize_name
 import nanopynix
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from ._resolve import Artifact
 
 
@@ -249,12 +251,12 @@ class Plan:
             }
         )
 
-    def application_node(self, name: str, *, venv: str, base: str) -> str:
+    def application_node(self, name: str, *, venv: str, bases: Sequence[str]) -> str:
         """Add the node that links the programs of one member out of `venv`.
 
-        `base` is the node that installed that member, and it is the template
-        of the shape. `scripts/make-application.py` gives the two rules that
-        decide which paths of the template reach the output.
+        `bases` names the node that installed each member, and those nodes are
+        the template of the shape. `scripts/make-application.py` gives the two
+        rules that decide which paths of a template reach the output.
         """
         return self.add(
             {
@@ -262,19 +264,24 @@ class Plan:
                 "kind": "application",
                 "platform": False,
                 "venv": venv,
-                "base": base,
+                "bases": list(bases),
             }
         )
 
-    def root(self, name: str, *, application: str | None = None) -> str:
+    def root(self, name: str, *, application: str | Sequence[str] | None = None) -> str:
         """The node that the planner submits, which is one of two shapes.
 
         **An environment holds every program of every member, and an
-        application holds one.** `uv.nix` gives the second shape through its
-        `application` argument, and `scripts/make-application.py` gives the
-        whole reason to want it: a virtual environment carries `bin/python`,
-        so a NixOS configuration that installs one shadows the interpreter of
-        the system.
+        application holds the programs of the members that the caller names.**
+        `uv.nix` gives the second shape through its `application` argument, and
+        `scripts/make-application.py` gives the whole reason to want it: a
+        virtual environment carries `bin/python`, so a NixOS configuration that
+        installs one shadows the interpreter of the system.
+
+        `application` takes one name or a list of them. **A list is one output
+        over one environment**, and not one output for each name: a project
+        that ships three programs ships them together, and three separate
+        applications would each hold a link into the same environment.
 
         The environment is a node either way. The application links out of it,
         so both nodes are in the graph and only the root differs. The
@@ -284,14 +291,26 @@ class Plan:
         if application is None:
             return self.venv_node(name)
 
-        base = self.by_package.get(canonicalize_name(application))
-        if base is None:
-            held = ", ".join(sorted(self.by_package)) or "no member at all"
+        wanted = [application] if isinstance(application, str) else list(application)
+        if not wanted:
             raise ValueError(
-                f"application names '{application}', and the environment holds {held}. "
+                "application is an empty list. Name at least one member, or pass null for the environment itself."
+            )
+
+        bases = [self.by_package.get(canonicalize_name(package)) for package in wanted]
+        missing = [package for package, base in zip(wanted, bases, strict=True) if base is None]
+        if missing:
+            held = ", ".join(sorted(self.by_package)) or "no member at all"
+            names = ", ".join(f"'{package}'" for package in missing)
+            raise ValueError(
+                f"application names {names}, and the environment holds {held}. "
                 "An application is one member of the environment, so the selection has to install it."
             )
-        return self.application_node(name, venv=self.venv_node(f"{name}-env"), base=base)
+
+        # `dict.fromkeys` keeps the order that the caller wrote and drops a
+        # repeat. Two names of one member are one template.
+        found = list(dict.fromkeys(base for base in bases if base is not None))
+        return self.application_node(name, venv=self.venv_node(f"{name}-env"), bases=found)
 
     def member(self, name: str, label: str, *, package: str) -> None:
         """Mark a node as a member of the environment, and not only a build input.
