@@ -58,6 +58,7 @@ from ddrn_venv import (
     Target,
     build_requirements,
     build_system,
+    check_freshness,
     choose,
     env,
     open_restricted_store,
@@ -137,6 +138,11 @@ class UvProject:
     #: The tree of each local package, keyed by its normalised name. `uv.nix`
     #: copies each one into the store, and the backend of the project reads it.
     editables: dict[str, dict[str, str]]
+    #: The `pyproject.toml` of each member that lives in the workspace, keyed by
+    #: its normalised name, as a store path. `check_freshness` compares each one
+    #: with the `[package.metadata]` that the lock file recorded. An empty
+    #: mapping turns that comparison off.
+    declarations: dict[str, str] = field(default_factory=dict[str, str])
 
     @classmethod
     def from_json(cls, spec: dict[str, Any]) -> UvProject:
@@ -144,6 +150,7 @@ class UvProject:
             lock=Lock.read(spec["lock"]),
             select=spec["select"],
             editables=spec.get("editables", {}),
+            declarations=spec.get("declarations", {}),
         )
 
     def selection(self, target: Target) -> tuple[list[str], list[LocalProject]]:
@@ -160,7 +167,14 @@ class UvProject:
         installs a member as a PEP 660 editable, and `uv build` writes the
         source distribution that an index serves. Both are the same project,
         and `mode` is that decision. `uv.nix` takes it as an argument.
+
+        **The freshness check runs first, and it runs before the resolution.**
+        A lock file that the project has grown past resolves the old
+        declaration, and every answer after that point is an answer about the
+        wrong project.
         """
+        check_freshness(self.lock, self.declarations)
+
         resolution = resolve_lock(self.lock, target.markers, self.select)
 
         roots: list[str] = []

@@ -16,6 +16,24 @@ uv 0.12.1 (x86_64-unknown-linux-gnu)
 Each command below writes `nix run --file . pkgs.uv --`, which names the same
 program from outside the dev shell. Inside the shell, `uv` alone is enough.
 
+## Edit a `pyproject.toml`, and run `uv lock` again
+
+**The build refuses a lock file that a project has grown past.** `uv.nix` puts
+the `pyproject.toml` of each member of the workspace into the store, and the
+planner compares each one with the `[package.metadata]` that `uv.lock`
+recorded. A dependency that one file states and the other does not stops the
+build:
+
+```
+ddrn_venv._uvlock.LockError: uv.lock is stale: 'pure-app' declares different
+dependencies than the lock file resolved. pyproject.toml adds
+['typing-extensions']. Run `uv lock` and build again.
+```
+
+Run `uv lock` in the directory of the project, and build again.
+`ddrn/PACKAGING-FACTS.md` gives what the comparison covers, and the one edit
+that it lets through.
+
 ## Two settings that this machine needs
 
 `uv` downloads its own CPython by default, and that interpreter is a

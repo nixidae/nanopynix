@@ -595,10 +595,12 @@ and asserts the index of each answer.
 
 **uv.lock pins the hash of every artefact, and a reader trusts every one of
 them.** It also pins the version of every package, and the edges between them,
-because uv resolved them. Nothing in this lab solves a version, queries an
-index, or reads `[package.metadata] requires-dist`, which is the question that
-the project asked. The reader takes `dependencies`, which is the answer that
-uv gave.
+because uv resolved them. Nothing in this lab solves a version or queries an
+index. `[package.metadata].requires-dist` is the question that the project
+asked, and the reader takes `dependencies`, which is the answer that uv gave.
+The section below is the one place that reads the question, and it resolves
+nothing there either: it only asks whether the project still asks the same
+question.
 
 **What a lock file does not pin is which of those apply to one machine**,
 because the file covers many machines at once. Measured over
@@ -614,6 +616,69 @@ because the file covers many machines at once. Measured over
 
 So a reader takes every fact of the lock file, and it answers the five
 questions above from the target. That is selection, and not resolution.
+
+### A lock file records the declaration, and a project can grow past it
+
+**A user who edits `pyproject.toml` and does not run `uv lock` has a lock file
+that resolves the old declaration.** uv refuses such a file. `Lock::satisfies`
+(`crates/uv-resolver/src/lock/mod.rs`) compares the two and gives one of 21
+`SatisfiesResult` values, and `MismatchedPackageRequirements` is the one for
+this case. A reader that skipped the comparison would build the old
+environment and say nothing, which is the worst of the three answers.
+
+`ddrn_venv._freshness` makes the part of that comparison that is exact.
+`uv.nix` puts the `pyproject.toml` of each member into the store,
+`default.nix` passes each path through as `uvDeclarations`, and
+`UvProject.selection` compares before it resolves.
+
+**It compares the name, the extras and the specifier, and nothing else.**
+`normalize_requirement` of the same file says what uv rewrites before it
+compares: it sorts the extras and the groups, it rebuilds a git or a path
+source from its fields, and it calls `requires_python.simplify_markers` on the
+marker. **It does not touch the specifier.** So those three fields are exactly
+comparable, and the marker and the source are not. A marker-only edit
+therefore passes this check, and `uv lock --check` is the command for the whole
+answer.
+
+**Four rules decide what each side holds, and none of them is the table of the
+same name.** Each rule came from the source of uv, and not from the output of a
+command:
+
+| rule | where uv states it |
+| --- | --- |
+| An extra is a row of `requires-dist` under an `extra == '...'` marker, so the declared side is the union of `dependencies` and every `optional-dependencies` list. | `RequiresDist::from_project_maybe_dynamic`, `crates/uv-pypi-types/src/metadata/requires_dist.rs` |
+| `tool.uv.dev-dependencies` is the group `dev`. | `FlatDependencyGroups::from_pyproject_toml`, `crates/uv-workspace/src/dependency_groups.rs`, with `DEV_DEPENDENCIES` in `crates/uv-normalize/src/group_name.rs` |
+| `include-group` is resolved, through as many levels as it takes, before uv writes `requires-dev`. | `resolve_group` of the same file |
+| A dynamic `dependencies` or `optional-dependencies` table is not in the file, so uv builds the package to learn it. | `MetadataError::DynamicField`, same file as the first rule |
+
+A fifth rule costs nothing to follow: uv drops a group that states no
+requirement from both sides, with
+`self.includes_empty_groups() || !requirements.is_empty()`. An empty group
+compares equal to an absent one, so this reader agrees without a special case.
+
+**A lock file of an older uv writes no `[package.metadata]` at all.** uv has the
+same case, and it calls it `allow_missing_package_metadata`. A reader cannot
+tell such a file from a member that declares nothing, so the check compares
+neither.
+
+**Two edits pass this check, and each one has its own cause.** A marker-only
+edit passes because uv simplifies every marker before it compares. A new member
+of a workspace passes because `uv.nix` builds one declaration for each package
+that `uv.lock` holds, so a member that the lock file never saw reaches no
+comparison. uv finds that one with `SatisfiesResult::MismatchedMembers`, which
+reads `[tool.uv.workspace].members`. That table holds a glob, so a reader of it
+would walk the directory of the workspace during the evaluation.
+
+`ddrn/examples/venv-graph/tests/test_freshness.py` holds one test for each rule
+above, against the lock files that uv wrote in `tests/fixtures/locks`. The seam
+was proved end to end by adding `typing-extensions` to
+`projects/pure-app/pyproject.toml` and building `uv.nix` for that project:
+
+```
+ddrn_venv._uvlock.LockError: uv.lock is stale: 'pure-app' declares different
+dependencies than the lock file resolved. pyproject.toml adds
+['typing-extensions']. Run `uv lock` and build again.
+```
 
 ### A marker of an edge is not always a PEP 508 marker
 

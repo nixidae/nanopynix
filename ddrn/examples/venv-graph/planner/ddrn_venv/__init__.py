@@ -12,6 +12,12 @@ inside its build sandbox, which `default.nix` sets from a store path.
 from __future__ import annotations
 
 from ._env import env as env
+from ._freshness import (
+    Pin as Pin,
+    # `check` alone says nothing about what it checks, and this package holds
+    # more than one check.
+    check as check_freshness,
+)
 from ._plan import (
     LocalNode as LocalNode,
     Plan as Plan,
@@ -61,11 +67,13 @@ __all__ = [
     "LockError",
     "Package",
     "PackageId",
+    "Pin",
     "Plan",
     "Resolution",
     "Target",
     "build_requirements",
     "build_system",
+    "check_freshness",
     "choose",
     "env",
     "filter_conflicts",

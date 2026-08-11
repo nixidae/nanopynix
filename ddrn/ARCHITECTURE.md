@@ -105,8 +105,13 @@ read its output back as a derivation. `ddrn/nix/planner.nix` wraps that.
 `builder-rpc-v0` gives its builder a restricted daemon socket at `NIX_REMOTE`,
 and one new operation, `SubmitOutput`.
 
-`plan.py` runs there, and it takes four steps:
+`plan.py` runs there, and it takes five steps:
 
+0. **Refuse a stale lock file.** `ddrn_venv._freshness` compares the
+   `[package.metadata]` of each member with the `pyproject.toml` that the
+   workspace holds now. A project that grew a dependency since the last
+   `uv lock` would otherwise get the old environment and no message. uv makes
+   the same comparison, in `Lock::satisfies`.
 1. **Read the lock file.** `ddrn_venv._uvlock` resolves `uv.lock` for the
    target: which fork, which extras, which groups. It follows the same three
    steps that `Installable::to_resolution` of uv takes, and
@@ -156,6 +161,7 @@ number of packages raised to the depth.
 
 | decision | where | why not the other half |
 | --- | --- | --- |
+| whether the lock file is current | `_freshness.py`, in the sandbox | the comparison needs the lock file and the declaration together, and only the planner reads the lock file |
 | which fork, which extras, which groups | `_uvlock.py` | the rules are uv's, and uv's source states them |
 | which artefact fits this target | `_resolve.py` | `packaging` is the reference implementation of PEP 425, 440 and 508 |
 | which backend builds an archive | `_sdist.py`, in the sandbox | the answer is inside the archive, and evaluation cannot read it |

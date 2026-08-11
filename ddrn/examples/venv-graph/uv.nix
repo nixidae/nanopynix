@@ -221,6 +221,38 @@ let
     lib.filter (package: localKind package != null) document.package
   );
 
+  # The `pyproject.toml` of one member, in the store.
+  #
+  # **This file is what tells a stale lock file from a current one.** `uv.lock`
+  # records the declaration of each member in `[package.metadata]`, so a
+  # reader can compare the two and refuse a lock file that the project has
+  # grown past. uv does the same in `Lock::satisfies`, and
+  # `ddrn_venv._freshness` gives the rules that this reader takes from it.
+  #
+  # **The file goes in whole, and this reader interprets none of it here.** A
+  # comparison of two dependency lists needs a PEP 508 parser, and the whole
+  # argument of this lab is that such a parser belongs in `packaging` and not
+  # in the Nix language. So the planner reads the TOML.
+  declarationOf =
+    package:
+    let
+      relative = localPath package;
+    in
+    builtins.path {
+      path = (if relative == "." then project else project + "/${relative}") + "/pyproject.toml";
+      name = "${package.name}-pyproject.toml";
+    };
+
+  # One entry for each member that lives in a directory of this workspace. A
+  # git source is a tree as well, and it is not a member: uv resolved it, and
+  # this project declares no dependency of it.
+  declarations = lib.listToAttrs (
+    map (package: {
+      inherit (package) name;
+      value = "${declarationOf package}";
+    }) (lib.filter (package: localKind package != null) document.package)
+  );
+
   # **The address of an artefact is on the row, or on the source.** A package
   # of an index gives a `url` on each row of `wheels` and on `sdist`. A URL
   # source gives the address once, on the source, and leaves the `sdist` table
@@ -394,6 +426,10 @@ let
     # what `uv sync --all-packages` takes. A caller that wants one member of a
     # workspace names that member alone.
     uvSelect = if select != null then select else lib.genAttrs members (_: [ ]);
+
+    # The `pyproject.toml` of each member, so that the planner can refuse a
+    # lock file that the project has grown past.
+    uvDeclarations = declarations;
 
     # **The roots of the environment come out of the resolution**, so this list
     # adds nothing to them. A caller that wants one more package than the lock

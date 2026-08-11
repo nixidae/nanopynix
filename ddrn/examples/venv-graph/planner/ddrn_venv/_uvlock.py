@@ -214,6 +214,12 @@ class Package:
     dev_dependencies: Mapping[str, tuple[Edge, ...]] = field(default_factory=dict[str, tuple["Edge", ...]])
     wheels: tuple[File, ...] = ()
     sdist: File | None = None
+    #: The `[package.metadata]` table, which holds the declaration that this
+    #: entry was resolved from. uv writes it so that `Lock::satisfies` can tell
+    #: a stale lock file from a current one, and `ddrn_venv._freshness` reads
+    #: it for the same purpose. **No resolution reads it**: the edges above
+    #: already hold what the resolution decided.
+    metadata: Mapping[str, Any] = field(default_factory=dict[str, Any])
 
     @property
     def id(self) -> PackageId:
@@ -711,6 +717,7 @@ def _package(entry: Mapping[str, Any], markers: MarkerParser, unambiguous: Mappi
         },
         wheels=tuple(File.parse(wheel) for wheel in entry.get("wheels", [])),
         sdist=File.parse(entry["sdist"]) if entry.get("sdist") else None,
+        metadata=entry.get("metadata", {}),
     )
 
 

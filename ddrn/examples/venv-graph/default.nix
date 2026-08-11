@@ -65,6 +65,21 @@
   # evaluation and gives it `mode = "wheel"`, because a checkout is a directory
   # and no archive stands between the tree and the wheel.
   uvEditables ? { },
+  # The `pyproject.toml` of each member of `uvLock` that lives in a directory
+  # of the workspace, keyed by its normalised name, as a store path.
+  #
+  # **This is what tells a stale lock file from a current one.** `uv.lock`
+  # records the declaration of each member in `[package.metadata]`. A project
+  # whose `pyproject.toml` has grown a dependency since the last `uv lock`
+  # would otherwise build the environment of the old declaration and say
+  # nothing. `ddrn_venv._freshness` makes the comparison, and it gives the
+  # rules that it takes from `Lock::satisfies` of uv.
+  #
+  # An empty set turns the check off, and that is the default. A caller that
+  # gives `uvLock` but no project directory has nothing to compare against.
+  # `./uv.nix` reads a project, so it names one file for each member.
+  # `tests/sealed.nix` gives no `uvLock` at all, so no comparison reaches it.
+  uvDeclarations ? { },
   # Each package to build from its source distribution, even when a wheel fits.
   # This is `tool.uv.no-binary-package`, which uv keeps in `pyproject.toml` and
   # writes into no lock file, so `./uv.nix` reads it from the project.
@@ -261,6 +276,7 @@ let
       lock = "${uvLock}";
       select = uvSelect;
       editables = uvEditables;
+      declarations = uvDeclarations;
     };
   };
 
