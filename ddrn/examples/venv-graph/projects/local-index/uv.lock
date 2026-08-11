@@ -1,0 +1,62 @@
+version = 1
+revision = 3
+requires-python = ">=3.13"
+
+[[package]]
+name = "crated"
+version = "1.0.0"
+source = { registry = "index" }
+sdist = { path = "crated-1.0.0.tar.gz" }
+
+[[package]]
+name = "flit-core"
+version = "3.12.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/69/59/b6fc2188dfc7ea4f936cd12b49d707f66a1cb7a1d2c16172963534db741b/flit_core-3.12.0.tar.gz", hash = "sha256:18f63100d6f94385c6ed57a72073443e1a71a4acb4339491615d0f16d6ff01b2", size = 53690, upload-time = "2025-03-25T08:03:23.969Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f2/65/b6ba90634c984a4fcc02c7e3afe523fef500c4980fec67cc27536ee50acf/flit_core-3.12.0-py3-none-any.whl", hash = "sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c", size = 45594, upload-time = "2025-03-25T08:03:20.772Z" },
+]
+
+[[package]]
+name = "installer"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/06/fe/b9f481cf0cc867958a21338baa900357b7b7d86cac9b025948049d77923c/installer-1.0.1.tar.gz", hash = "sha256:052c7fc3721d54c696e2dea019be67539d7b144e924f559f54beb3121831c364", size = 481132, upload-time = "2026-05-11T18:13:28.158Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/26/48/bedf3ba4163e7db392c9d4cbdfc8217423196c8fccbe5a404a0f094fde63/installer-1.0.1-py3-none-any.whl", hash = "sha256:011d045df8b954ced7dde3a7e42ae4418da40ecda7990f2d11d5ed7c146fd98b", size = 464455, upload-time = "2026-05-11T18:13:26.252Z" },
+]
+
+[[package]]
+name = "local-index"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "crated" },
+    { name = "stocked" },
+]
+
+[package.dev-dependencies]
+ddrn = [
+    { name = "flit-core" },
+    { name = "installer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "crated", specifier = ">=1.0.0" },
+    { name = "stocked", specifier = ">=1.0.0" },
+]
+
+[package.metadata.requires-dev]
+ddrn = [
+    { name = "flit-core", specifier = ">=3.11,<4" },
+    { name = "installer", specifier = ">=1.0.1" },
+]
+
+[[package]]
+name = "stocked"
+version = "1.0.0"
+source = { registry = "index" }
+wheels = [
+    { path = "stocked-1.0.0-py3-none-any.whl" },
+]

@@ -245,17 +245,61 @@ let
   # gives both:
   #
   #   source = { path = "vendor/vendored-1.0.0-py3-none-any.whl" }   the file is the package
-  #   wheels = [ { path = "../wheels/demo-1.0-py3-none-any.whl" } ]  a local registry
+  #   source = { registry = "index" }                                a local registry, and
+  #   wheels = [ { path = "stocked-1.0.0-py3-none-any.whl" } ]       the row is under it
   #
   # The first is `Source::Path`, and the row of the artefact then carries the
   # hash and the file name alone. The second is a registry that is a directory,
-  # which `--find-links` gives. Each path is relative to the lock file.
+  # which `--find-links` and `format = "flat"` both give.
+  #
+  # **The path of a row has three components, and not two.** uv joins the root
+  # of the workspace, the path of the registry and the path of the row, in
+  # `to_registry_wheel` and in `to_source_dist`
+  # (`crates/uv-resolver/src/lock/mod.rs`). A row that names its file relative
+  # to the project would name the wrong file, or no file at all.
+  #
+  # Each of the last two parts may be absolute, because uv makes a row relative
+  # only when the user gave the index as a relative path
+  # (`try_relative_to_if`). `joinPath` keeps an absolute part as it is.
+  isAbsolute = text: lib.hasPrefix "/" text;
+  joinPath = base: part: if isAbsolute part then part else "${base}/${part}";
+
+  # Whether the value of `registry` names a place on the network. uv asks the
+  # same question with `split_scheme`, and it reads a value with no scheme as a
+  # directory (`RegistrySourceWire`). A value with an unknown scheme is a
+  # directory to uv and a URL here, and no lock file writes one.
+  hasScheme = text: builtins.match "[a-zA-Z][a-zA-Z0-9+.-]*:.*" text != null;
+
+  # The directory of a registry that this machine holds, or `null`.
+  registryDir =
+    package:
+    if package.source ? registry && !hasScheme package.source.registry then
+      package.source.registry
+    else
+      null;
+
   localRelative =
-    package: file: file.path or (if package.source ? path then package.source.path else null);
+    package: file:
+    if file ? path then
+      let
+        directory = registryDir package;
+      in
+      if directory == null then
+        throw (
+          "uv.nix: '${package.name}' names an artefact by a path, and its source is not a "
+          + "registry of this machine. uv writes such a row for a local registry only, and it "
+          + "refuses the same file with MissingUrl."
+        )
+      else
+        joinPath directory file.path
+    else if package.source ? path then
+      package.source.path
+    else
+      null;
   isLocal = package: file: localRelative package file != null;
 
   # **`builtins.path` names the one file, and not the directory that holds
-  # it.** A second file of `vendor/` is therefore not an input of the planner,
+  # it.** A second file of the index is therefore not an input of the planner,
   # and an edit of that second file does not change the plan.
   localArtifact =
     package: file:
@@ -263,7 +307,7 @@ let
       relative = localRelative package file;
     in
     builtins.path {
-      path = project + "/${relative}";
+      path = if isAbsolute relative then /. + relative else project + "/${relative}";
       name = baseNameOf relative;
     };
 

@@ -64,7 +64,7 @@ $ ddrn/examples/venv-graph/run.sh       # a Python environment, as a graph
 $ ddrn/examples/venv-graph/run-uv.sh    # the same, from a real uv.lock
 ```
 
-**`run-uv.sh` builds six projects that `uv` itself wrote.**
+**`run-uv.sh` builds seven projects that `uv` itself wrote.**
 `ddrn/examples/venv-graph/projects/README.md` gives the command for each one,
 and `uv.nix` reads their `uv.lock`. That file makes no packaging decision: it
 makes one `fetchurl` for every artefact of every package, and the planner
@@ -128,6 +128,11 @@ and a hash alone for the archive, so neither row carries an address. `uv.nix`
 copies each file into the store with `builtins.path`, and the graph then
 installs the wheel and builds the archive the way it treats an artefact of an
 index. **The menu holds no fetch for this project at all.**
+
+`local-index` puts a registry in a directory of the project. The source then
+names that directory and the row of the artefact names the file under it, so
+the location has three parts and not two. uv joins the same three, and a reader
+that joined the row to the project would name a file that does not exist.
 
 Each `run.sh` above needs a network, because every artefact of
 `ddrn/examples/venv-graph/lock.json` comes from PyPI.

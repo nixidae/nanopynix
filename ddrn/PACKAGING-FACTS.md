@@ -1504,6 +1504,45 @@ chosen file with `builtins.storePath` where a fetch would need
 `builtins.appendContext`. `ddrn/examples/venv-graph/projects/vendored-app` is
 the project that uv wrote for these two shapes.
 
+**A registry may be a directory, and the location of an artefact then has three
+parts.** The source names the directory, and the row of the artefact names the
+file under it:
+
+```toml
+[[package]]
+name = "stocked"
+version = "1.0.0"
+source = { registry = "index" }
+wheels = [ { path = "stocked-1.0.0-py3-none-any.whl" } ]
+```
+
+uv joins the root of the workspace, the path of the registry and the path of
+the row. `to_registry_wheel` writes `root.join(index_path).join(file_path)`,
+and `to_source_dist` writes `workspace_root.join(path).join(file_path)`, both
+in `crates/uv-resolver/src/lock/mod.rs`. A reader that took the row as a path
+of the project names a file that does not exist, so this divergence fails
+loudly. `ddrn/examples/venv-graph/projects/local-index` is the project, and
+`tests/test_local_index.py` asserts that the file is under the registry and
+nowhere else.
+
+Three more facts of the same shape follow, and this reader takes each one:
+
+- **A value with no scheme is a directory.** `RegistrySourceWire` reads the
+  value of `registry` as a URL when `split_scheme` finds a scheme that
+  `Scheme::parse` knows, and as a path otherwise.
+- **Either path may be absolute.** uv makes the row relative only when the user
+  gave the index as a relative path (`try_relative_to_if(…,
+  !path.was_given_absolute())`).
+- **Only a registry of a directory writes a `path` on a row.**
+  `from_registry_wheel` writes it under `IndexUrl::Path` alone, and
+  `to_registry_wheel` refuses the same row for a registry of the network with
+  `MissingUrl`. `uv.nix` raises there rather than guess a directory.
+
+**A row of such a registry carries no hash.** A flat registry serves the file
+itself, so uv records no digest for it. That costs this reader nothing, because
+`builtins.path` copies the file and needs none. A `pkgs.fetchurl` would have
+had nothing to state.
+
 **A git source is the one input of this lab that is not lazy, and `uv.lock` is
 the reason.** Every other input is a `pkgs.fetchurl`, which is a fixed-output
 derivation: instantiating one downloads nothing, so the menu holds every

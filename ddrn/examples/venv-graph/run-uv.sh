@@ -11,7 +11,7 @@
 # artefact, and resolves nothing. The planner resolves, inside the sandbox,
 # with `packaging`.
 #
-# Six projects run, and each one exercises what the ones before it cannot:
+# Seven projects run, and each one exercises what the ones before it cannot:
 #
 #   pure-app      a virtual root, and every artefact a pure wheel
 #   packaged-app  a PEP 660 editable of the project, built by `hatchling`,
@@ -36,6 +36,9 @@
 #                 one by a path of the project, so no artefact of either has an
 #                 address. One is a wheel, and the other is an archive that the
 #                 graph builds.
+#   local-index   a registry that is a directory of the project. The source
+#                 names that directory and the row of the artefact names the
+#                 file under it, so the location has three parts and not two.
 #
 # The graph downloads from PyPI, so this script needs a network. `git-app`
 # needs one for a second reason: `uv.nix` clones the repository of a git source
@@ -97,7 +100,7 @@ show() {
 # Each entry is a directory of `./projects`, and the name that the environment
 # of it takes. The two differ for the workspace, whose directory is `workspace`
 # and whose root project is `workspace-root`.
-for entry in pure-app:pure-app packaged-app:packaged-app workspace:workspace-root binary-app:binary-app git-app:git-app vendored-app:vendored-app; do
+for entry in pure-app:pure-app packaged-app:packaged-app workspace:workspace-root binary-app:binary-app git-app:git-app vendored-app:vendored-app local-index:local-index; do
   project="${entry%%:*}"
   expected="${entry##*:}"
   echo
@@ -267,3 +270,12 @@ show store cat "$(build check-git.nix)"
 echo
 echo "==> two dependencies that no index serves"
 show store cat "$(build check-vendored.nix)"
+
+# **The last project keeps the directory of the registry on the source, and the
+# name of the file on the row.** So the location has three parts: the project,
+# the registry and the row. uv joins the same three in `to_registry_wheel`, and
+# a reader that joined the row to the project alone would name a file that does
+# not exist.
+echo
+echo "==> a registry that is a directory of the project"
+show store cat "$(build check-index.nix)"

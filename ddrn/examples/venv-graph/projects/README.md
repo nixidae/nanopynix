@@ -469,3 +469,88 @@ Three things follow, and `../check-vendored.nix` reports each one:
 The two files of `vendor/` are in this repository, because a lock file that
 names a path needs that path to exist. Both are small.
 `tests/test_vendored_app.py` reads this lock file, which the graph builds.
+
+## `local-index`
+
+The seventh project. Its registry is a directory of the project, and `uv`
+resolves both dependencies out of it.
+
+```console
+$ nix run --file . pkgs.uv -- init --app --no-package --name local-index \
+    --python 3.13 --no-workspace --vcs none local-index
+$ cd local-index
+$ rm main.py
+$ mkdir index
+$ # write index/stocked-1.0.0-py3-none-any.whl and index/crated-1.0.0.tar.gz
+$ # add the two index tables below to pyproject.toml
+$ nix run --file . pkgs.uv -- add --no-sync stocked crated
+$ nix run --file . pkgs.uv -- add --no-sync --group ddrn installer "flit-core>=3.11,<4"
+```
+
+```toml
+[[tool.uv.index]]
+name = "local"
+url = "index"
+format = "flat"
+default = true
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+```
+
+**`default = true` is what keeps the lock file portable.** A `tool.uv.sources`
+entry that names the index by name makes uv write the absolute path of the
+index into `[package.metadata]`, and that path is the machine that ran the
+command. The local index as the default writes no such key, and the second
+table keeps PyPI available for the `ddrn` group.
+
+uv puts the directory of the registry on the source and the name of the file on
+the row:
+
+```toml
+[[package]]
+name = "crated"
+version = "1.0.0"
+source = { registry = "index" }
+sdist = { path = "crated-1.0.0.tar.gz" }
+
+[[package]]
+name = "stocked"
+version = "1.0.0"
+source = { registry = "index" }
+wheels = [
+    { path = "stocked-1.0.0-py3-none-any.whl" },
+]
+```
+
+**The location has three parts, and this is what the project proves.** uv joins
+the root of the workspace, the path of the registry and the path of the row. A
+reader that joined the row to the project would look for
+`crated-1.0.0.tar.gz` at the top of this directory, where there is no such
+file. `ddrn/PACKAGING-FACTS.md` names the two lines of uv that join the three.
+
+Neither row carries a hash, because a flat registry of a directory serves the
+file itself. That costs nothing: `uv.nix` copies the file with `builtins.path`.
+
+`tests/test_local_index.py` reads this lock file, and `../check-index.nix`
+builds the environment and reports what it holds.
+
+## The two distributions that a project vendors
+
+`vendored-app/vendor` and `local-index/index` hold four small files, and no
+index serves any of them. `tests/fixtures/mk-wheel.py` and
+`tests/fixtures/mk-sdist.py` wrote all four, from a source tree of one module.
+Each script takes its input in the environment:
+
+```console
+$ mkdir -p /tmp/src/stocked
+$ printf '__version__ = "1.0.0"\n' > /tmp/src/stocked/__init__.py
+$ out=index/stocked-1.0.0-py3-none-any.whl src=/tmp/src distName=stocked \
+    distVersion=1.0.0 python tests/fixtures/mk-wheel.py
+```
+
+`mk-sdist.py` takes the same four values, and its source tree also holds the
+`pyproject.toml` that names the backend. Both scripts write the same bytes
+every time: a zip carries an mtime for each member, and a tar carries the owner
+as well, so each script fixes both.

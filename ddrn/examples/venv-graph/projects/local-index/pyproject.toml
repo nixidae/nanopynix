@@ -1,0 +1,26 @@
+[project]
+name = "local-index"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "crated>=1.0.0",
+    "stocked>=1.0.0",
+]
+
+[[tool.uv.index]]
+name = "local"
+url = "index"
+format = "flat"
+default = true
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+
+[dependency-groups]
+ddrn = [
+    "flit-core>=3.11,<4",
+    "installer>=1.0.1",
+]

@@ -77,8 +77,9 @@ to draw the same graph in colour.
 ### Phase 1: evaluate, and build nothing
 
 `uv.nix` reads `uv.lock` and makes one `fetchurl` for each artefact of each
-package. An artefact of a `path` source has no address, so `builtins.path`
-copies that file into the store instead. **It makes no packaging decision.** It
+package. An artefact that this machine already holds has no address, so
+`builtins.path` copies that file into the store instead. **It makes no
+packaging decision.** It
 does not read a wheel tag, it does not evaluate a marker, and it does not
 choose between a wheel and a source distribution.
 
@@ -168,7 +169,7 @@ number of packages raised to the depth.
 | the decisions | each packaging rule, with no Nix | `pytest ddrn/examples/venv-graph/tests -m "not nix"` |
 | the graph | the same code through a sealed build | `pytest ddrn/examples/venv-graph/tests` |
 | the ATerm writer | it agrees with Nix itself | `pytest ddrn/tests` |
-| six real projects | end to end, from lock files that uv wrote | `ddrn/examples/venv-graph/run-uv.sh` |
+| seven real projects | end to end, from lock files that uv wrote | `ddrn/examples/venv-graph/run-uv.sh` |
 
 The sealed suite reaches no index: every artefact is a derivation of this
 repository. `run-uv.sh` needs a network, because its artefacts come from PyPI.
