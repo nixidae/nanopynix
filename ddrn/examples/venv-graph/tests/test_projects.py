@@ -31,7 +31,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from toolchain import EXAMPLE, Toolchain, environment_of, prefix_of, work_directory
+from toolchain import EXAMPLE, Toolchain, environment_of, nix_string, prefix_of
 
 pytestmark = [pytest.mark.nix, pytest.mark.network]
 
@@ -57,19 +57,7 @@ NAMES = {
 EVERY_MEMBER = '["ws-cli" "ws-core" "rich" "markdown-it-py" "mdurl" "pygments"]'
 
 
-@pytest.fixture(scope="module")
-async def toolchain() -> Toolchain:
-    """The patched Nix and the private store, prepared once for this module.
-
-    The work directory outlives the run, so this fixture has no teardown. The
-    store holds the patched Nix, and a second run of any module reuses it.
-    """
-    ready = Toolchain(work_directory("ddrn-venv-graph-uv"))
-    await ready.prepare()
-    return ready
-
-
-async def check(toolchain: Toolchain, expression: str, *arguments: str) -> str:
+async def check(toolchain: Toolchain, expression: str, **arguments: str) -> str:
     """Build one check of the example, and read the report that it wrote.
 
     **The check runs as a derivation, and not from this process.** A chroot
@@ -77,7 +65,7 @@ async def check(toolchain: Toolchain, expression: str, *arguments: str) -> str:
     environment is absolute, so a program of that environment does not run
     here. `../check.nix` gives the whole reason.
     """
-    return await toolchain.cat(await toolchain.build(EXAMPLE / expression, *arguments))
+    return toolchain.cat(await toolchain.build(EXAMPLE / expression, **arguments))
 
 
 class TestEveryProjectPlans:
@@ -88,7 +76,7 @@ class TestEveryProjectPlans:
         # **The planner submits a `.drv`, and not an environment.** Its own
         # output is the root of the graph that it registered, and the name of
         # that root is the name of the environment.
-        root = await toolchain.build(UV, "--arg", "project", str(PROJECTS / project))
+        root = await toolchain.build(UV, project=str(PROJECTS / project))
         assert root.endswith(f"-{environment}.drv"), root
 
 
@@ -126,7 +114,7 @@ class TestPackagedApp:
         )
 
         here = await check(toolchain, "check-packaged.nix")
-        there = await check(toolchain, "check-packaged.nix", "--arg", "editableTree", str(other))
+        there = await check(toolchain, "check-packaged.nix", editableTree=str(other))
 
         assert "a tree that this test wrote a moment ago" in there
         assert "a tree that this test wrote a moment ago" not in here
@@ -146,7 +134,7 @@ class TestPackagedApp:
         other = tmp_path / "ignored-tree"
         shutil.copytree(PROJECTS / "packaged-app", other)
 
-        report = await check(toolchain, "check-sdist.nix", "--arg", "editableTree", str(other))
+        report = await check(toolchain, "check-sdist.nix", editableTree=str(other))
         assert str(other) not in report
 
 
@@ -157,12 +145,8 @@ class TestTheWorkspace:
         report = await check(
             toolchain,
             "check-workspace.nix",
-            "--argstr",
-            "venvName",
-            "workspace-all",
-            "--arg",
-            "expect",
-            EVERY_MEMBER,
+            venvName=nix_string("workspace-all"),
+            expect=EVERY_MEMBER,
         )
         # The `ws-cli` line reads the other member, so this also proves the
         # edge between two editables of one workspace.
@@ -173,15 +157,9 @@ class TestTheWorkspace:
         report = await check(
             toolchain,
             "check-workspace.nix",
-            "--argstr",
-            "venvName",
-            "workspace-core",
-            "--arg",
-            "select",
-            '{ "ws-core" = []; }',
-            "--arg",
-            "expect",
-            '["ws-core"]',
+            venvName=nix_string("workspace-core"),
+            select='{ "ws-core" = []; }',
+            expect='["ws-core"]',
         )
         assert "ws-core" in report
 
@@ -193,15 +171,9 @@ class TestTheWorkspace:
         report = await check(
             toolchain,
             "check-workspace.nix",
-            "--argstr",
-            "venvName",
-            "workspace-core-sdist",
-            "--arg",
-            "expect",
-            EVERY_MEMBER,
-            "--arg",
-            "fromSdist",
-            '["ws-core"]',
+            venvName=nix_string("workspace-core-sdist"),
+            expect=EVERY_MEMBER,
+            fromSdist='["ws-core"]',
         )
         assert "ws-cli" in report
 
@@ -221,31 +193,21 @@ class TestTheApplication:
         report = await check(
             toolchain,
             "check-application.nix",
-            "--arg",
-            "project",
-            str(PROJECTS / "packaged-app"),
-            "--arg",
-            "editableTree",
-            str(PROJECTS / "packaged-app"),
-            "--arg",
-            "application",
-            '["packaged-app"]',
-            "--argstr",
-            "venvName",
-            "packaged-app-bin",
+            project=str(PROJECTS / "packaged-app"),
+            editableTree=str(PROJECTS / "packaged-app"),
+            application='["packaged-app"]',
+            venvName=nix_string("packaged-app-bin"),
         )
         assert "bin/packaged-app" in report
 
 
-#: The arguments that give `uv.nix` the application of the workspace. A test of
-#: `app` writes an expression, and not a command line, so it needs them here.
-WORKSPACE_APP = f'{{ project = {PROJECTS / "workspace"}; application = ["ws-cli"]; venvName = "workspace-app"; }}'
-
-
-def target(toolchain: Toolchain, extra: str = "") -> str:
-    """The `uv.nix` of the workspace application, as a Nix expression."""
-    arguments = f'{WORKSPACE_APP} // {{ nanopynixEnv = "{toolchain.env}"; {extra} }}'
-    return f"(import {UV} ({arguments}))"
+#: The arguments that give `uv.nix` the application of the workspace, as Nix
+#: source. `Toolchain.source` adds `nanopynixEnv` to every call.
+WORKSPACE_APP = {
+    "project": str(PROJECTS / "workspace"),
+    "application": '["ws-cli"]',
+    "venvName": '"workspace-app"',
+}
 
 
 class TestTheApplicationAsADerivation:
@@ -259,8 +221,8 @@ class TestTheApplicationAsADerivation:
 
     async def test_the_wrapper_names_the_program(self, toolchain: Toolchain) -> None:
         # One member, so `mainProgram` takes the name of that member.
-        name = await toolchain.evaluate(f"{target(toolchain)}.app.meta.mainProgram")
-        assert name == "ws-cli"
+        source = toolchain.source(UV, "app.meta.mainProgram", **WORKSPACE_APP)
+        assert await toolchain.evaluate(source) == "ws-cli"
 
     async def test_the_wrapper_takes_the_name_of_the_program(self, toolchain: Toolchain) -> None:
         # **The store path is named after the program, and not after the
@@ -269,24 +231,15 @@ class TestTheApplicationAsADerivation:
         wrapper = await toolchain.build(
             UV,
             "app",
-            "--arg",
-            "project",
-            str(PROJECTS / "workspace"),
-            "--arg",
-            "application",
-            '["ws-cli"]',
-            "--argstr",
-            "venvName",
-            "workspace-app",
+            **WORKSPACE_APP,
         )
         assert wrapper.endswith("-ws-cli"), wrapper
 
         # **The whole content is one symbolic link.** So the closure grows by
         # this path alone, and the application behind it stays one store path
         # however many wrappers name it.
-        listing = await toolchain.list_files(wrapper)
-        assert listing.count("\n") == 0, listing
-        assert listing.split("->")[-1].strip().endswith("-workspace-app"), listing
+        assert toolchain.list_files(wrapper) == []
+        assert toolchain.link_target(wrapper).endswith("-workspace-app")
 
     async def test_a_program_that_the_application_does_not_hold(self, toolchain: Toolchain) -> None:
         # **The build verifies the name rather than trust it.** A member that
@@ -296,18 +249,8 @@ class TestTheApplicationAsADerivation:
         report = await toolchain.build_failing(
             UV,
             "app",
-            "--arg",
-            "project",
-            str(PROJECTS / "workspace"),
-            "--arg",
-            "application",
-            '["ws-cli"]',
-            "--argstr",
-            "mainProgram",
-            "not-a-program",
-            "--argstr",
-            "venvName",
-            "workspace-app",
+            **WORKSPACE_APP,
+            mainProgram=nix_string("not-a-program"),
         )
         assert "holds no program called 'not-a-program'" in report
         assert "ws-cli" in report
@@ -315,8 +258,8 @@ class TestTheApplicationAsADerivation:
     async def test_an_environment_has_no_application(self, toolchain: Toolchain) -> None:
         # `app` of a call that names no application is a mistake, and not the
         # environment under another name.
-        plain = f'(import {UV} {{ project = {PROJECTS / "workspace"}; nanopynixEnv = "{toolchain.env}"; }})'
-        refusal = await toolchain.evaluate_failing(f"{plain}.app")
+        plain = toolchain.source(UV, "app", project=str(PROJECTS / "workspace"))
+        refusal = await toolchain.evaluate_failing(plain)
         assert "names no application" in refusal
 
 
@@ -335,12 +278,8 @@ class TestBinaryApp:
         report = await check(
             toolchain,
             "check-binary.nix",
-            "--argstr",
-            "venvName",
-            "binary-nixpkgs",
-            "--arg",
-            "fromNixpkgs",
-            "{ pyzmq = (import <nixpkgs> {}).python3Packages.pyzmq; }",
+            venvName=nix_string("binary-nixpkgs"),
+            fromNixpkgs="{ pyzmq = (import <nixpkgs> {}).python3Packages.pyzmq; }",
         )
         assert "pyzmq" in report
 

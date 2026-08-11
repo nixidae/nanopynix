@@ -290,9 +290,18 @@ whole table of what each interpreter keeps, and the command that measured it.
 | suite | what it proves | command |
 | --- | --- | --- |
 | the decisions | each packaging rule, with no Nix | `pytest ddrn/examples/venv-graph/tests -m "not nix"` |
-| the graph | the same code through a sealed build | `pytest ddrn/examples/venv-graph/tests` |
+| the graph | the same code through a sealed build | `pytest ddrn/examples/venv-graph/tests -m "not network"` |
 | the ATerm writer | it agrees with Nix itself | `pytest ddrn/tests` |
 | seven real projects | end to end, from lock files that uv wrote | `pytest ddrn/examples/venv-graph/tests -m network` |
+
+**A test that builds needs the development shell of the patched Nix**, because
+it drives Nix through nanopynix and a worker is the build of its client:
+
+```console
+$ nix develop --impure --file . nanopynixMaster.shell \
+    --command pytest ddrn/examples/venv-graph/tests
+```
+
 
 The sealed suite reaches no index: every artefact is a derivation of this
 repository. The `network` mark names the tests whose artefacts come from PyPI,

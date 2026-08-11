@@ -35,29 +35,23 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import anyio
 import pytest
-from toolchain import EXAMPLE, Toolchain, environment_of, work_directory
+from toolchain import EXAMPLE, HERE, environment_of
+
+if TYPE_CHECKING:
+    from toolchain import Toolchain
 
 pytestmark = pytest.mark.nix
-
-HERE = Path(__file__).resolve().parent
 
 #: The expression that every test of this module builds. Each attribute of it
 #: is one planner or one check.
 SEALED = HERE / "sealed.nix"
 
 
-@pytest.fixture(scope="module")
-def work() -> Path:
-    return work_directory("ddrn-sealed-venv")
-
-
-async def test_the_sealed_graph_builds_and_runs(work: Path, tmp_path: Path) -> None:
-    toolchain = Toolchain(work)
-    await toolchain.prepare()
-
+async def test_the_sealed_graph_builds_and_runs(toolchain: Toolchain, tmp_path: Path) -> None:
     # **The planner submits a `.drv`, and not an environment.** Its own output
     # is the root of the graph that it registered, and nothing is downloaded
     # or built by that step.
@@ -65,7 +59,7 @@ async def test_the_sealed_graph_builds_and_runs(work: Path, tmp_path: Path) -> N
     assert root.endswith("-sealed-venv.drv"), root
 
     check = await toolchain.build(SEALED, "check")
-    report = await toolchain.cat(check)
+    report = toolchain.cat(check)
 
     # The console script exists only if the installer that the planner
     # bootstrapped wrote it. An unpacked wheel carries no such file.
@@ -90,8 +84,8 @@ async def test_the_sealed_graph_builds_and_runs(work: Path, tmp_path: Path) -> N
         )
     )
 
-    other_check = await toolchain.build(SEALED, "check", "--arg", "editableTree", str(other))
-    other_report = await toolchain.cat(other_check)
+    other_check = await toolchain.build(SEALED, "check", editableTree=str(other))
+    other_report = toolchain.cat(other_check)
     assert "a tree that this test wrote a moment ago" in other_report
 
     # One environment, and two checks that read it. Prove it, rather than say
@@ -100,7 +94,7 @@ async def test_the_sealed_graph_builds_and_runs(work: Path, tmp_path: Path) -> N
     assert environment_of(report).endswith("-sealed-venv")
 
 
-async def test_the_same_project_ships_as_a_source_distribution(work: Path) -> None:
+async def test_the_same_project_ships_as_a_source_distribution(toolchain: Toolchain) -> None:
     """The release form of `demo-app`, out of the same graph and the same tree.
 
     **Two PEP 517 hooks run, and the second reads what the first wrote.**
@@ -112,14 +106,11 @@ async def test_the_same_project_ships_as_a_source_distribution(work: Path) -> No
     this same project reports a path under `$DDRN_EDITABLE_ROOT`, and this one
     reports a path inside the environment.
     """
-    toolchain = Toolchain(work)
-    await toolchain.prepare()
-
     root = await toolchain.build(SEALED, "sdistPlanner")
     assert root.endswith("-sealed-sdist-venv.drv"), root
 
     check = await toolchain.build(SEALED, "sdistCheck")
-    report = await toolchain.cat(check)
+    report = toolchain.cat(check)
 
     environment = environment_of(report)
     assert environment.endswith("-sealed-sdist-venv")
@@ -135,7 +126,7 @@ async def test_the_same_project_ships_as_a_source_distribution(work: Path) -> No
     assert "hello from the tree that the sealed check named" in report
 
 
-async def test_a_project_below_the_top_of_a_tree_and_of_an_archive(work: Path) -> None:
+async def test_a_project_below_the_top_of_a_tree_and_of_an_archive(toolchain: Toolchain) -> None:
     """The two source kinds of `uv.lock` that name a place, in one graph.
 
     **Both may put the project below the top of what they name**, and `uv.lock`
@@ -157,14 +148,11 @@ async def test_a_project_below_the_top_of_a_tree_and_of_an_archive(work: Path) -
     no artefact of this menu supplies, so a build that ignored the subdirectory
     fails rather than install the wrong thing.
     """
-    toolchain = Toolchain(work)
-    await toolchain.prepare()
-
     root = await toolchain.build(SEALED, "nestedPlanner")
     assert root.endswith("-sealed-nested-venv.drv"), root
 
     check = await toolchain.build(SEALED, "nestedCheck")
-    report = await toolchain.cat(check)
+    report = toolchain.cat(check)
 
     assert "hello from the project below the top of its tree" in report
     assert "hello from the project below the top of its archive" in report
@@ -178,7 +166,7 @@ async def test_a_project_below_the_top_of_a_tree_and_of_an_archive(work: Path) -
     assert module.startswith(environment), module
 
 
-async def test_a_chain_of_three_planners_builds(work: Path) -> None:
+async def test_a_chain_of_three_planners_builds(toolchain: Toolchain) -> None:
     """The bound of `sdistPlannerDepth`, reached and not passed.
 
     **A planner of a source distribution may need a planner of its own.** The
@@ -189,14 +177,11 @@ async def test_a_chain_of_three_planners_builds(work: Path) -> None:
     `sdistPlannerDepth` of `../default.nix` is 3, and this is the root that
     uses every level of it.
     """
-    toolchain = Toolchain(work)
-    await toolchain.prepare()
-
     root = await toolchain.build(SEALED, "chainPlanner")
     assert root.endswith("-link-a-venv.drv"), root
 
     check = await toolchain.build(SEALED, "chainCheck")
-    report = await toolchain.cat(check)
+    report = toolchain.cat(check)
 
     # The module exists only if each of the three planners ran and each build
     # that they registered succeeded.
@@ -206,7 +191,7 @@ async def test_a_chain_of_three_planners_builds(work: Path) -> None:
     assert module.startswith(environment), module
 
 
-async def test_a_chain_of_four_planners_names_the_bound(work: Path) -> None:
+async def test_a_chain_of_four_planners_names_the_bound(toolchain: Toolchain) -> None:
     """One link more, and the graph refuses rather than recurse for ever.
 
     `link-0` sits on top of the same chain, so it needs a fourth planner.
@@ -218,13 +203,10 @@ async def test_a_chain_of_four_planners_names_the_bound(work: Path) -> None:
     and nothing there reads past the first level. The failure arrives when the
     third planner evaluates `graph.nix` and asks for a fourth.
     """
-    toolchain = Toolchain(work)
-    await toolchain.prepare()
-
     root = await toolchain.build(SEALED, "tooDeepPlanner")
     assert root.endswith("-link-0-venv.drv"), root
 
-    output = await toolchain.build_failing(SEALED, "tooDeepVenv")
+    output = await toolchain.build_graph_failing(SEALED, "tooDeepPlanner")
 
     # The message has to name the file and the constant to change, because a
     # reader who meets it has a chain that this bound does not fit.

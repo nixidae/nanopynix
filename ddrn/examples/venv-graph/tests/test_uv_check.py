@@ -23,21 +23,19 @@ refusal.
 
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import anyio
 import pytest
+from toolchain import EXAMPLE
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from toolchain import Toolchain
 
 pytestmark = pytest.mark.nix
 
-HERE = Path(__file__).resolve().parent
-EXAMPLE = HERE.parent
+UV = EXAMPLE / "uv.nix"
 
 #: Every project of the example. Each one passes, and a failure of any one is a
 #: false alarm that would stop a build that uv calls current.
@@ -51,54 +49,39 @@ PROJECTS = [
     "local-index",
 ]
 
-#: `uv.nix` asks for this, and `lockCheck` reads none of it. The path needs to
-#: exist for nothing, because the attribute is lazy.
-UNUSED_ENV = "/nix/store/0000000000000000000000000000000-unused"
+
+async def passes(toolchain: Toolchain, project: Path) -> None:
+    """Build the check of `project`, which must succeed.
+
+    **This builds in the store of this machine, and not in the private one.**
+    `lockCheck` needs `pkgs.uv` and no patched Nix, so a build here
+    substitutes what it needs and copies nothing into the private store.
+    """
+    await toolchain.build_on_host(UV, "lockCheck", project=str(project))
 
 
-def command(project: Path) -> Sequence[str]:
-    """The `nix build` that builds the check of one project, and nothing else."""
-    return [
-        "nix",
-        "build",
-        "--impure",
-        "--file",
-        str(EXAMPLE / "uv.nix"),
-        "lockCheck",
-        "--arg",
-        "project",
-        str(project),
-        "--argstr",
-        "nanopynixEnv",
-        UNUSED_ENV,
-        "--no-link",
-        "--print-out-paths",
-        # Nix prints the last lines of the log of a build that failed, and the
-        # default is 25. The diagnostic of this check is longer than that.
-        "--log-lines",
-        "100",
-    ]
+async def refuses(toolchain: Toolchain, project: Path) -> str:
+    """Build the check of `project`, which must fail, and read what it printed.
 
-
-async def check(project: Path) -> tuple[int, str]:
-    """Build the check of `project`, and give back its code and its output."""
-    result = await anyio.run_process(list(command(project)), env=dict(os.environ), check=False)
-    return result.returncode, (result.stdout + result.stderr).decode()
+    `Toolchain._realise` reads the whole build log, so the diagnostic of this
+    check arrives whole. The `--log-lines 100` of the old command line existed
+    because Nix prints 25 lines of a failed build by default.
+    """
+    return await toolchain.build_on_host_failing(UV, "lockCheck", project=str(project))
 
 
 class TestEveryProjectPasses:
     """No false alarm, which is the condition for the argument to be usable."""
 
     @pytest.mark.parametrize("name", PROJECTS)
-    async def test_uv_calls_the_lock_file_current(self, name: str) -> None:
-        code, output = await check(EXAMPLE / "projects" / name)
-        assert code == 0, output
+    async def test_uv_calls_the_lock_file_current(self, toolchain: Toolchain, name: str) -> None:
+        await passes(toolchain, EXAMPLE / "projects" / name)
 
 
 class TestWhatItCatches:
     """The gap of `_freshness`, and the edit that opens it."""
 
-    async def test_a_marker_on_one_dependency_is_a_refusal(self, tmp_path: Path) -> None:
+    async def test_a_marker_on_one_dependency_is_a_refusal(self, toolchain: Toolchain, tmp_path: Path) -> None:
         # `_freshness` drops every marker, because uv simplifies a marker
         # against `requires-python` and a reader that compared the text would
         # call an ordinary lock file stale. So this edit passes the planner and
@@ -114,8 +97,7 @@ class TestWhatItCatches:
             encoding="utf-8",
         )
 
-        code, output = await check(project)
-        assert code != 0
+        output = await refuses(toolchain, project)
         assert "Run `uv lock` in the project, and build again." in output
 
         # `--frozen` resolves nothing, so it finds no marker and says so. The
@@ -123,7 +105,7 @@ class TestWhatItCatches:
         # two modes differ.
         assert "only checked for validity" in output
 
-    async def test_a_workspace_that_grew_a_member_is_a_refusal(self, tmp_path: Path) -> None:
+    async def test_a_workspace_that_grew_a_member_is_a_refusal(self, toolchain: Toolchain, tmp_path: Path) -> None:
         # `check_members` finds this one as well, so the two agree here. The
         # value of the case is that agreement: the backstop does not contradict
         # the reader on what the reader does implement.
@@ -143,8 +125,7 @@ class TestWhatItCatches:
             encoding="utf-8",
         )
 
-        code, output = await check(project)
-        assert code != 0
+        output = await refuses(toolchain, project)
         assert "Run `uv lock` in the project, and build again." in output
 
         # A missing member is structural, so `--frozen` names it exactly. That

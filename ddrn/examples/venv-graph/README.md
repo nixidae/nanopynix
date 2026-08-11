@@ -375,12 +375,20 @@ message that `zipfile` raises, and the whole table.
 ## The tests
 
 ```console
-$ pytest ddrn/examples/venv-graph/tests -m "not nix"       # the decisions, one second
-$ pytest ddrn/examples/venv-graph/tests -m "not network"   # and the sealed graph
-$ pytest ddrn/examples/venv-graph/tests                    # and the seven real projects
-$ ddrn/examples/venv-graph/run-uv.sh                       # two of them, step by step
-$ ddrn/examples/venv-graph/bench/measure.sh --cold         # what an evaluation costs
+$ pytest ddrn/examples/venv-graph/tests -m "not nix"    # the decisions, one second
+$ shell="nix develop --impure --file . nanopynixMaster.shell --command"
+$ $shell pytest ddrn/examples/venv-graph/tests -m "not network"   # and the sealed graph
+$ $shell pytest ddrn/examples/venv-graph/tests          # and the seven real projects
+$ ddrn/examples/venv-graph/run-uv.sh                    # two of them, step by step
+$ ddrn/examples/venv-graph/bench/measure.sh --cold      # what an evaluation costs
 ```
+
+**Every test that builds runs through nanopynix, and none runs the `nix`
+command.** One RPC session evaluates each expression, builds each derivation
+and reads each result. That session has to link the patched Nix, and
+`nanopynixMaster.shell` is the development shell that does: the worker is the
+build of the client, so the two cannot differ. A plain `pytest` skips each
+such test, and the message gives the command above.
 
 These tests are not part of the suite of the repository. `tests/pytest.ini`
 gives that directory its own rootdir, and says why.

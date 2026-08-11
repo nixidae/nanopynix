@@ -1073,6 +1073,42 @@ The pytest run makes each of those a property of the machine that runs it,
 where it belongs. `ddrn/examples/venv-graph/tests/pytest.ini` keeps the run
 separate, and the `testpaths` of the repository does not name that directory.
 
+### A nested deriving path names the output of a submitted derivation
+
+`builtins.outputOf p "out"` gives a string that holds a placeholder, so
+nothing can evaluate `.drvPath` of it. The deriving path says the same thing,
+and Nix reads it:
+
+| what a caller writes | what it names |
+| --- | --- |
+| `<planner>.drv^out` | the derivation that the planner submitted |
+| `<planner>.drv^out^out` | the `out` output of **that** derivation |
+| `<planner>.drv^*^*` | refused: `does not have an output named '*'` |
+
+Measured on 2026-08-12, over `tests/sealed.nix`. `build_paths_with_results`
+takes the two-level form and reports the failure of the graph behind it. The
+`*` form works at the first level only, because `*` asks the derivation for its
+outputs and the second level has no derivation to ask until the first one
+builds.
+
+`ddrn/examples/venv-graph/tests/toolchain.py` reads the second form in
+`build_graph_failing`, which is the only place that realises a graph without a
+derivation of its own around it.
+
+### A build that a planner submitted has no log to ask for
+
+`Store.get_build_log(path)` needs a path. A derivation that a planner wrote has
+no path that a caller knows, so the log of it cannot be asked for by name.
+
+**The log events of the session carry it instead.** `Session.capture_logs()`
+records each event, and `message_without_ansi` is the text. That is what
+`--print-build-logs` gave the command line.
+
+Nix trims the log that it puts in a failure message, and `log-lines` decides
+how much. The default is 25. Measured over the chain of four planners in
+`tests/sealed.nix`: at 25 lines the message stops before the `throw` that names
+the cause, and at 1000 lines the whole log arrives.
+
 ### A dynamic output carries no `meta`
 
 `builtins.outputOf` gives a string, and a string has no attributes. So every
@@ -1168,14 +1204,35 @@ carries no version field. `Session` offers no interpreter argument, so a client
 of the development shell cannot drive a patched worker. The process that
 evaluates has to run the interpreter of `nanopynixMaster`.
 
-That interpreter is one derivation, and it is cheap once the patched Nix
-exists:
+**The development shell of that scope is that interpreter, and it is
+editable.** `default.nix:502` defines `shell` inside the scope, so
+`nanopynixMaster.shell` is the same development shell built against the patched
+Nix. It carries pytest, ruff and pyright, and its nanopynix is an editable
+install of this checkout:
 
 ```console
-$ nix build --impure --expr '(import ./. { }).nanopynixMaster.pythonSet.mkVirtualEnv
-    "ddrn-master-test-env" { nanopynix = [ ]; pytest = [ ]; pytest-asyncio = [ ]; anyio = [ ]; }'
-/nix/store/pg734mhjrykgxcxsbs4ffdhavk5lvp8v-ddrn-master-test-env
+$ nix develop --impure --file . nanopynixMaster.shell \
+    --command pytest ddrn/examples/venv-graph/tests
+335 passed
 ```
+
+**`nix develop` sets `TMPDIR` to a fresh directory for each invocation.**
+Measured: the harness read `TMPDIR` to place its work directory, so every run
+under `nix develop` took an empty store, copied the environment again, and
+built every graph from nothing. It cost 1.6 GB of `/tmp` for each run, and the
+run took 221 s rather than 60 s. `work_directory` reads `DDRN_WORK` and a
+stable default now, and no `TMPDIR`.
+
+**One session is 2.4 times faster than the command line.** Measured over the
+same 335 tests, with a warm store:
+
+| harness | time |
+| --- | --- |
+| `nix build` for each step, one process for each | 60.1 s |
+| one RPC session, and no `nix` command | 25.3 s, 25.7 s |
+
+The saving is the process for each build, and the `nix store cat` for each
+report: a chroot store is a plain directory tree, so a test opens the file.
 
 ## Upstream defects that this lab found
 
