@@ -1073,6 +1073,46 @@ The pytest run makes each of those a property of the machine that runs it,
 where it belongs. `ddrn/examples/venv-graph/tests/pytest.ini` keeps the run
 separate, and the `testpaths` of the repository does not name that directory.
 
+### An overlay store works, and the host store cannot be its lower layer
+
+`nanopynix.namespace.OverlayNamespace` mounts an OverlayFS at `/nix/store`
+inside the worker, with the host store as the lower layer. The worker then
+builds against every path the host already holds and copies nothing. This host
+supports it: `probe_namespace_support` reports `supported=True`, and a session
+over such a store builds an ordinary derivation and substitutes another one:
+
+```
+lower: daemon  uri: local-overlay://
+trivial: [('built', True)]
+hello:   [('substituted', True)]
+```
+
+**The graph of this example does not build there, and the reason is the Nix of
+the machine.** Every node of it is a floating content-addressed derivation, and
+a build trace of such a node has to reach a store. The host runs Nix 2.34, and
+the two ways to name it as the lower layer each fail:
+
+| lower store | what happens |
+| --- | --- |
+| `daemon` | `the daemon is missing the 'realisation-with-path-not-hash' protocol feature, needed to support content-addressing derivations` |
+| `local?read-only=true` | `no such table: BuildTraceV3 (in '/nix/var/nix/db/db.sqlite')` |
+| `local` | untried: it would write to the store database of the machine |
+
+Both were measured on 2026-08-12, over `check-uv.nix` of `projects/pure-app`.
+The planner itself builds in the overlay. The failure arrives when the graph
+that the planner submitted registers its first output.
+
+**The second row is two defects, and the file names both.**
+`src/libstore/ca-specific-schema.sql` creates `BuildTraceV3`, and
+`src/libstore/local-store.cc:345` applies it under
+`if (!config->readOnly && upgradeDBSchema(...))`. So a read-only store never
+gets the table, and `local-store.cc:382` writes to it anyway.
+
+**The error names the database of the lower store.** A build trace of a node
+that the upper layer built belongs in the state directory of the overlay, which
+`OverlayNamespace` gives it. That it reaches `/nix/var/nix/db/db.sqlite`
+instead is the defect to report.
+
 ### A nested deriving path names the output of a submitted derivation
 
 `builtins.outputOf p "out"` gives a string that holds a placeholder, so
@@ -1245,4 +1285,17 @@ restricted allowlist refuses. A planner avoids the memo by giving the graph
 floating content-addressed outputs, so that no output path comes from a hash
 modulo the inputs.
 
-Neither is reported upstream.
+**A local-overlay store writes a build trace to the database of its lower
+store.** Measured: a graph built in the upper layer failed with `no such table:
+BuildTraceV3 (in '/nix/var/nix/db/db.sqlite')`, which is the store of the
+machine. The overlay holds a state directory of its own, and that is where the
+trace of a node that the upper layer built belongs.
+
+**A read-only local store skips the content-addressing migration, and then
+writes.** `src/libstore/local-store.cc:345` applies the schema under
+`if (!config->readOnly && ...)`, and `local-store.cc:382` inserts into
+`BuildTraceV3` with no such guard. So a read-only store that Nix accepts fails
+at the first build trace, with a message about a table rather than about the
+mode.
+
+None of these is reported upstream.
