@@ -25,6 +25,8 @@ What one run proves:
    a git checkout and a URL.
 6. A chain of source distributions reaches `sdistPlannerDepth` and builds, and
    one link more makes `graph.nix` throw with the name of that constant.
+7. The application becomes a derivation that carries `meta.mainProgram`, and
+   the build of it refuses a program that the application does not hold.
 
 **This test builds the patched Nix.** That takes about 20 minutes the first
 time, and nothing after that, because the work directory holds the result.
@@ -212,3 +214,41 @@ async def test_a_chain_of_four_planners_names_the_bound(toolchain: Toolchain) ->
     # reader who meets it has a chain that this bound does not fit.
     assert "link_c-1.0.0.tar.gz needs a planner" in output
     assert "sdistPlannerDepth" in output
+
+
+class TestTheApplicationAsADerivation:
+    """`../application.nix`, over the fixtures.
+
+    **`builtins.outputOf` gives a string, and a string carries no `meta`.** So
+    `nix run`, `lib.getExe` and a NixOS module each refuse it. `application.nix`
+    wraps the application in a derivation whose whole content is one symbolic
+    link, and `ddrn/NIX-FACTS.md` gives each measurement.
+
+    `uv.nix` is the other caller of that file, and `test_projects.py` covers it
+    over a real lock file. This class covers the file with no network.
+    """
+
+    async def test_the_wrapper_takes_the_name_of_the_program(self, toolchain: Toolchain) -> None:
+        # **The store path is named after the program, and not after the
+        # environment.** So `result/bin/demo-lib` and the path itself agree.
+        wrapper = await toolchain.build(SEALED, "app")
+        assert wrapper.endswith("-demo-lib"), wrapper
+
+        # The whole content is one symbolic link, so the closure grows by this
+        # path alone and the application behind it stays one store path.
+        assert toolchain.list_files(wrapper) == []
+        assert toolchain.link_target(wrapper).endswith("-sealed-app")
+
+    async def test_the_wrapper_names_the_program(self, toolchain: Toolchain) -> None:
+        source = toolchain.source(SEALED, "app.meta.mainProgram")
+        assert await toolchain.evaluate(source) == "demo-lib"
+
+    async def test_a_program_that_the_application_does_not_hold(self, toolchain: Toolchain) -> None:
+        # **The build verifies the name rather than trust it.** A member that
+        # installs a console script of another name would otherwise give a
+        # `mainProgram` that names nothing, and `nix run` would fail with a
+        # message about a missing file.
+        report = await toolchain.build_failing(SEALED, "appWrongProgram")
+        assert "holds no program called 'not-a-program'" in report
+        # The refusal lists what the application does hold.
+        assert "demo-lib" in report

@@ -13,7 +13,8 @@
 #              local project shipped as its own source distribution instead,
 #              a project below the top of its tree and one below the top of its
 #              archive, a chain of source distributions at both edges of
-#              `sdistPlannerDepth`, and the composition of the environment.
+#              `sdistPlannerDepth`, the composition of the environment, and the
+#              derivation that carries `meta` of an application.
 #   run.sh     a binary wheel and `auto-patchelf`, and the choice between two
 #              wheels whose tags compete.
 #
@@ -121,6 +122,34 @@ let
       ''
     ];
   };
+
+  # **The application, and the derivation that carries its `meta`.**
+  # `../application.nix` is the file under test, and `uv.nix` is the other
+  # caller of it. `test_projects.py` covers that caller over a lock file, which
+  # needs a network. This one needs none.
+  appPlanner = import ../. {
+    inherit pkgs nanopynixEnv;
+    inherit (fixtures) artifacts;
+    roots = [ "demo-lib" ];
+    installer = "installer";
+    venvName = "sealed-app";
+    application = "demo-lib";
+    editables = { };
+  };
+
+  applicationOf =
+    program:
+    import ../application.nix {
+      inherit pkgs program;
+      application = builtins.outputOf appPlanner.outPath "out";
+      name = "sealed-app";
+    };
+
+  app = applicationOf "demo-lib";
+
+  # **The build verifies the program rather than trust the name.** `demo-lib`
+  # installs one console script, and this names another one.
+  appWrongProgram = applicationOf "not-a-program";
 
   # **The two sources of `uv.lock` that name a place, in one graph.** Neither
   # one is a registry and neither one is a directory of the workspace, and both
@@ -296,5 +325,8 @@ in
     chainCheck
     tooDeepPlanner
     tooDeepVenv
+    appPlanner
+    app
+    appWrongProgram
     ;
 }

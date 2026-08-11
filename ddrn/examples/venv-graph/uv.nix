@@ -300,43 +300,14 @@ let
     else
       null;
 
-  # **A derivation of the application, so that `meta` has somewhere to live.**
-  # `builtins.outputOf` gives a bare string, and a string carries no `meta`.
-  # Measured: `nix run` over that string fails with `attribute 'type' does not
-  # exist`, and an attribute set that names `outPath` and `drvPath` by hand
-  # fails with `path "/0a988..." is not in the Nix store`. This derivation is
-  # the only shape that works, and its whole content is one symbolic link to the
-  # application. Measured: it adds 176 bytes and one path to a closure of
-  # 238229120 bytes.
-  #
-  # **The output of this derivation is deferred, like every node of the graph.**
-  # Its input is the application, whose path no evaluation knows, so Nix cannot
-  # compute this path either. `nix run` realises the installable and then reads
-  # the result, so it works. `lib.getExe` interpolates `outPath` during
-  # evaluation, so it gives a placeholder: that placeholder is correct inside
-  # another derivation, and it is not a path that a shell can use.
-  #
-  # **The build verifies the program rather than trust the name.** A member
-  # usually installs a console script of its own name, and `mainProgram` above
-  # says what to do when it does not.
-  applicationWrapper =
-    pkgs.runCommand (if chosenProgram != null then chosenProgram else environmentName)
-      {
-        application = builtins.outputOf planner.outPath "out";
-        meta = lib.optionalAttrs (chosenProgram != null) { mainProgram = chosenProgram; };
-      }
-      ''
-        ${lib.optionalString (chosenProgram != null) ''
-          if [ ! -x "$application/bin/${chosenProgram}" ]; then
-            echo "uv.nix: the application holds no program called '${chosenProgram}'." >&2
-            echo "It holds:" >&2
-            ls -1 "$application/bin" >&2
-            echo "Name one of those with the 'mainProgram' argument of uv.nix." >&2
-            exit 1
-          fi
-        ''}
-        ln -s "$application" "$out"
-      '';
+  # The application as a derivation. `./application.nix` says why a derivation
+  # is necessary, and what the build of it verifies.
+  applicationWrapper = import ./application.nix {
+    inherit pkgs;
+    application = builtins.outputOf planner.outPath "out";
+    program = chosenProgram;
+    name = environmentName;
+  };
 
   # **`tool.uv` is a setting of the project, and uv copies none of it into the
   # lock file.** So this reads the setting where uv keeps it, rather than
@@ -730,8 +701,8 @@ lib.throwIfNot (lockVersion == 1)
         #     shell = target.environment;
         #
         # `app` is the same application as a derivation, for `nix run`, for
-        # `lib.getExe` and for `environment.systemPackages`. The comment on
-        # `applicationWrapper` above says why a wrapper is necessary.
+        # `lib.getExe` and for `environment.systemPackages`. `./application.nix`
+        # says why a wrapper is necessary.
         #
         # **It costs a second planner, and no second environment.** The two
         # planners differ in one variable, so Nix builds both. Every node that

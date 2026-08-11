@@ -270,11 +270,15 @@ build verifies the name rather than trust it.** A member whose entry point is
 called something else fails, and the message lists what the application holds:
 
 ```
-uv.nix: the application holds no program called 'not-a-program'.
+the application holds no program called 'not-a-program'.
 It holds:
 ws-cli
-Name one of those with the 'mainProgram' argument of uv.nix.
+Name one of those with the 'mainProgram' argument.
 ```
+
+`application.nix` holds this derivation, and `uv.nix` is one caller of it.
+`tests/sealed.nix` is the other, which is how the file is covered with no
+network.
 
 `lib.getExe` gives the deferred placeholder rather than a path, because it
 interpolates `outPath` during evaluation. That placeholder is correct inside
