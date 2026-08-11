@@ -109,9 +109,11 @@ and one new operation, `SubmitOutput`.
 
 0. **Refuse a stale lock file.** `ddrn_venv._freshness` compares the
    `[package.metadata]` of each member with the `pyproject.toml` that the
-   workspace holds now. A project that grew a dependency since the last
-   `uv lock` would otherwise get the old environment and no message. uv makes
-   the same comparison, in `Lock::satisfies`.
+   workspace holds now, and `ddrn_venv._workspace` reads the member globs over
+   the directories that `workspace.nix` listed. A project that grew a
+   dependency, or a workspace that grew a member, would otherwise get the old
+   environment and no message. uv makes both comparisons, in
+   `Lock::satisfies`.
 1. **Read the lock file.** `ddrn_venv._uvlock` resolves `uv.lock` for the
    target: which fork, which extras, which groups. It follows the same three
    steps that `Installable::to_resolution` of uv takes, and
@@ -162,6 +164,9 @@ number of packages raised to the depth.
 | decision | where | why not the other half |
 | --- | --- | --- |
 | whether the lock file is current | `_freshness.py`, in the sandbox | the comparison needs the lock file and the declaration together, and only the planner reads the lock file |
+| which directories exist | `workspace.nix`, at evaluation | a member that the lock file never named is in no store path, so only the evaluator finds it. **That file lists, and decides nothing** |
+| which directories are members | `_workspace.py`, in the sandbox | the rule is a glob of uv, and `fnmatch` reads a glob |
+| which extras and groups a member installs | `_workspace.py`, in the sandbox | the default is `tool.uv.default-groups` of each `pyproject.toml`, and the store path of that file arrives beside the lock file |
 | which fork, which extras, which groups | `_uvlock.py` | the rules are uv's, and uv's source states them |
 | which artefact fits this target | `_resolve.py` | `packaging` is the reference implementation of PEP 425, 440 and 508 |
 | which backend builds an archive | `_sdist.py`, in the sandbox | the answer is inside the archive, and evaluation cannot read it |

@@ -130,6 +130,12 @@ class Plan:
         than installs it, because nothing can install a wheel before that node
         exists.
 
+        **That bootstrap node carries a name of its own.** The same installer
+        is a member of the environment when a group or an extra asks for it,
+        and the node that installs it is a different node with a different
+        output. One name for both makes `add` refuse the graph, so the
+        bootstrap takes the `-bootstrap` suffix.
+
         A node of kind `sdist-build` runs one PEP 517 hook, so it takes the
         backend and the path that the backend lives on. Both belong in this
         call, and not in an assignment to the node afterwards: `add` returns
@@ -137,7 +143,7 @@ class Plan:
         then reach the wrong node.
         """
         entry: dict[str, Any] = {
-            "name": artifact.node_name,
+            "name": f"{artifact.node_name}-bootstrap" if kind == "unpack" else artifact.node_name,
             "kind": kind,
             "artifact": artifact.as_plan(),
             # `graph.nix` gives a node the loader and the libraries of this

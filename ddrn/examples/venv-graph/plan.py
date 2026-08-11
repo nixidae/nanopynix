@@ -66,11 +66,14 @@ from ddrn_venv import (
     submit,
     target_from_environ,
 )
+from ddrn_venv._workspace import members as members_of, selection
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+    from ddrn_venv._workspace import Choice
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,7 +142,9 @@ class UvProject:
 
     lock: Lock
     #: Each root of the resolution, with the extras and the groups to enable.
-    select: dict[str, list[str]]
+    #: `None` asks this class to build it, from `extras`, from `groups` and
+    #: from the `pyproject.toml` of each member.
+    select: dict[str, list[str]] | None
     #: The tree of each local package, keyed by its normalised name. `uv.nix`
     #: copies each one into the store, and the backend of the project reads it.
     editables: dict[str, dict[str, str]]
@@ -148,15 +153,49 @@ class UvProject:
     #: with the `[package.metadata]` that the lock file recorded. An empty
     #: mapping turns that comparison off.
     declarations: dict[str, str] = field(default_factory=dict[str, str])
+    #: The `pyproject.toml` of every directory under the workspace, keyed by
+    #: the path of that directory. `uv.nix` walks the tree to build it, because
+    #: a member that the lock file never saw reaches no comparison of
+    #: `declarations`. `ddrn_venv._workspace` reads the globs out of it. An
+    #: empty mapping turns that comparison off.
+    workspace: dict[str, str] = field(default_factory=dict[str, str])
+    #: Which extras of each member to enable, when `select` says nothing.
+    #: `None` is `uv sync` with no flag, `"all"` is `--all-extras`, and a list
+    #: names them. `ddrn_venv._workspace.extras_of` gives the rule of uv.
+    extras: Choice = None
+    #: Which dependency groups, when `select` says nothing. `None` is
+    #: `tool.uv.default-groups` of each member, which is `["dev"]` when that
+    #: table says nothing, and `"all"` is `--all-groups`.
+    groups: Choice = None
 
     @classmethod
     def from_json(cls, spec: dict[str, Any]) -> UvProject:
         return cls(
             lock=Lock.read(spec["lock"]),
-            select=spec["select"],
+            select=spec.get("select"),
             editables=spec.get("editables", {}),
             declarations=spec.get("declarations", {}),
+            workspace=spec.get("workspace", {}),
+            extras=spec.get("extras"),
+            groups=spec.get("groups"),
         )
+
+    def roots(self) -> dict[str, list[str]]:
+        """Which members to install, and what to enable in each one.
+
+        **`uv.lock` records none of this**, so `select` is the decision when a
+        caller states it. A caller that states nothing gets what `uv sync`
+        gives: every member of the workspace, no extra, and the groups that
+        `tool.uv.default-groups` names.
+        """
+        if self.select is not None:
+            return self.select
+        found = members_of(self.workspace)
+        if found is None:
+            raise LockError(
+                "no selection was given, and the workspace could not be read to build one. Pass `select` to `uv.nix`."
+            )
+        return selection(found, self.extras, self.groups)
 
     def selection(self, target: Target) -> tuple[list[str], list[LocalProject]]:
         """What this target installs: the pinned artefacts, and the local trees.
@@ -178,9 +217,9 @@ class UvProject:
         declaration, and every answer after that point is an answer about the
         wrong project.
         """
-        check_freshness(self.lock, self.declarations)
+        check_freshness(self.lock, self.declarations, self.workspace)
 
-        resolution = resolve_lock(self.lock, target.markers, self.select)
+        resolution = resolve_lock(self.lock, target.markers, self.roots())
 
         roots: list[str] = []
         projects: list[LocalProject] = []

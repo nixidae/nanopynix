@@ -130,13 +130,41 @@ this.
 | argument | what it decides |
 | --- | --- |
 | `project` | the directory that holds `pyproject.toml` and `uv.lock` |
-| `select` | which members, extras and groups to install. `null` takes every member with no extra and no group, which is what `uv sync --all-packages` takes |
+| `select` | which members, extras and groups to install, spelled out. `null` reads the workspace and builds the list, the way `uv sync --all-packages` does |
+| `extras` | which extras each member installs. `null` is no extra, `"all"` is `uv sync --all-extras`, and a list names them |
+| `groups` | which dependency groups each member installs. `null` reads `tool.uv.default-groups`, `"all"` is `uv sync --all-groups`, and a list names them |
 | `venvName` | the name of the environment. The default is the name of the project |
 | `python` | the interpreter that the environment runs. See below |
 | `fromNixpkgs` | `{ pyzmq = pkgs.python3Packages.pyzmq; }` takes a package from nixpkgs instead of the index, and the graph builds no wheel for that name |
 | `fromSdist` | each member to install from its own source distribution, rather than as a PEP 660 editable |
 | `editableRoot` | what a PEP 660 editable redirects to. The default is the variable `$DDRN_EDITABLE_ROOT`, so one environment serves every tree |
 | `markers` | `platform_release` and `platform_version`, which no build can know |
+
+## Extras and groups, the way `uv sync` takes them
+
+`uv.lock` records which extra and which group each package declares, and it
+records no decision about them. `uv sync` takes that decision on its command
+line, and `uv.nix` takes it as `extras` and `groups`.
+
+```nix
+# every optional dependency of every member, and the test group of each one
+import ./uv.nix {
+  project = ./.;
+  extras = "all";
+  groups = [ "test" ];
+}
+```
+
+Two defaults differ, and uv is the reason for both. `extras = null` installs no
+extra, because uv keeps no default for an extra in `pyproject.toml`.
+`groups = null` reads `tool.uv.default-groups` of your project, and it installs
+the group `dev` when that table says nothing. A group that
+`[dependency-groups]` does not declare stops the build with the message that uv
+gives for the same file.
+
+`select` overrides both. It names each member and the list of extras and groups
+of that member, so a member that needs a different set than the others reaches
+it through `select` and not through these two.
 
 ## A stale `uv.lock` stops the build
 
@@ -149,8 +177,20 @@ dependencies than the lock file resolved. pyproject.toml adds
 ['typing-extensions']. Run `uv lock` and build again.
 ```
 
-Run `uv lock`, and build again. `ddrn/PACKAGING-FACTS.md` gives what the
-comparison covers, and the two edits that pass it.
+A workspace that grew a member gets the other message. `uv.nix` lists the
+directories of the workspace during the evaluation, because a directory that
+`uv.lock` never named is in no store path, and the planner reads
+`[tool.uv.workspace] members` over that listing:
+
+```
+ddrn_venv._uvlock.LockError: uv.lock is stale: it resolved a different set of
+workspace members. the workspace adds ['ws-extra']. Run `uv lock` and build
+again.
+```
+
+Run `uv lock`, and build again. `ddrn/PACKAGING-FACTS.md` gives what each
+comparison covers, the one edit that passes it, and what each glob of
+`[tool.uv.workspace] members` means.
 
 ## A smaller environment, for one deployment only
 

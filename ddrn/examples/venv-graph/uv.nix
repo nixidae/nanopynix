@@ -35,8 +35,29 @@
   #
   # **`uv.lock` records none of these three decisions.** `uv sync` takes them
   # on its command line, and this argument is the same decision. `null` means
-  # every workspace member, with no extra and no group.
+  # every workspace member, with `extras` and `groups` below deciding the rest.
   select ? null,
+  # Which extras of each member to enable, when `select` says nothing.
+  #
+  # **uv keeps no default for an extra in `pyproject.toml`**, and it reads
+  # `DefaultExtras::default()` in `sync.rs` with the project left unread. So
+  # `null` here is `uv sync` with no flag, which takes no extra.
+  #
+  # `"all"` is `uv sync --all-extras`, and it reads the keys of
+  # `[project.optional-dependencies]` of each member.
+  # `[ "docs" "test" ]` names them, for every member, the way `--extra` does.
+  extras ? null,
+  # Which dependency groups of each member to enable, when `select` says
+  # nothing.
+  #
+  # **uv does keep a default for a group.** `default_dependency_groups` of
+  # `crates/uv/src/commands/project/mod.rs` reads `tool.uv.default-groups` of
+  # the project, and it gives `[ "dev" ]` when that table says nothing. So
+  # `null` here is `uv sync` with no flag, and it is **not** "no group at all".
+  # That table also takes the literal `"all"`.
+  #
+  # `"all"` is `uv sync --all-groups`. `[ "docs" ]` names them.
+  groups ? null,
   # The wheel installer that every graph bootstraps with. It comes out of the
   # same lock file as everything else, so one file pins the whole build.
   # `projects/README.md` gives the `uv add` command that puts it there.
@@ -98,6 +119,18 @@ let
   # here are package names, and not the directories that
   # `[tool.uv.workspace] members` holds.
   members = document.manifest.members or [ projectName ];
+
+  # **A member that the lock file never saw reaches no comparison of
+  # `[package.metadata]`**, because `declarations` below is built from the lock
+  # file. `./workspace.nix` walks the tree instead, and it gives the
+  # `pyproject.toml` of every directory that holds one. `ddrn_venv._workspace`
+  # reads `[tool.uv.workspace] members` out of that listing and answers which
+  # directories are members. **The walk decides nothing**, so no glob and no
+  # rule of uv is in the Nix language.
+  workspace = import ./workspace.nix {
+    inherit lib;
+    root = project;
+  };
 
   # **`tool.uv` is a setting of the project, and uv copies none of it into the
   # lock file.** So this reads the setting where uv keeps it, rather than
@@ -431,11 +464,22 @@ let
     # The default takes every member, with no extra and no group, which is
     # what `uv sync --all-packages` takes. A caller that wants one member of a
     # workspace names that member alone.
-    uvSelect = if select != null then select else lib.genAttrs members (_: [ ]);
+    # **`null` travels, and the planner decides.** Which extras a member has is
+    # in its `pyproject.toml`, and which groups uv takes by default is in
+    # `tool.uv.default-groups` of that same file. `ddrn_venv._workspace` reads
+    # both out of the listing below, so no rule of uv is in this file.
+    uvSelect = select;
+    uvExtras = extras;
+    uvGroups = groups;
 
     # The `pyproject.toml` of each member, so that the planner can refuse a
     # lock file that the project has grown past.
     uvDeclarations = declarations;
+
+    # The `pyproject.toml` of every directory under the workspace, so that the
+    # planner can refuse a lock file that the workspace has grown a member
+    # past. `./workspace.nix` walks, and `ddrn_venv._workspace` decides.
+    uvWorkspace = workspace;
 
     # **The roots of the environment come out of the resolution**, so this list
     # adds nothing to them. A caller that wants one more package than the lock

@@ -23,6 +23,11 @@ from ddrn_venv._freshness import from_declaration, from_metadata, groups_of
 
 LOCKS = Path(__file__).resolve().parent / "fixtures/locks"
 
+#: The workspace of two members, which `test_workspace.py` also reads. Its lock
+#: file is the one with a `[manifest] members` table.
+WORKSPACE = Path(__file__).resolve().parent.parent / "projects/workspace"
+
+
 #: What `trivial.lock` resolved from. Its one member declares one dependency.
 TRIVIAL = """
 [project]
@@ -355,6 +360,83 @@ dependencies = ["arpeggio>=3"]
         lock = Lock.read(str(LOCKS / "trivial.lock"))
         with pytest.raises(LockError, match=re.escape("uv.lock is stale")):
             check_freshness(lock, write(tmp_path, "trivial", text))
+
+
+class TestTheMembersOfAWorkspace:
+    """The other half of a stale lock file, which no declaration reaches.
+
+    `uv.nix` builds one declaration for each package that the lock file holds,
+    so a member directory that the lock file never saw is in no declaration.
+    `workspace.nix` lists every directory of the tree that holds a
+    `pyproject.toml`, `ddrn_venv._workspace` decides which of them are members,
+    and `check_members` compares that set with `[manifest] members`. uv makes
+    the same comparison, and it calls the difference
+    `SatisfiesResult::MismatchedMembers`.
+
+    `test_workspace_discovery.py` holds the rules that build the set. These
+    tests are the comparison alone.
+    """
+
+    def workspace(self, tmp_path: Path, members: dict[str, str], root: str | None = "workspace-root") -> dict[str, str]:
+        """A listing, in the shape that `workspace.nix` hands over."""
+        text = "" if root is None else f'[project]\nname = "{root}"\nversion = "0.1.0"\n'
+        text += '\n[tool.uv.workspace]\nmembers = ["packages/*"]\n'
+        tree = {"": text}
+        tree.update({f"packages/{name}": f'[project]\nname = "{name}"\nversion = "0.1.0"\n' for name in members})
+        written: dict[str, str] = {}
+        for relative, body in tree.items():
+            directory = tmp_path / relative
+            directory.mkdir(parents=True, exist_ok=True)
+            path = directory / "pyproject.toml"
+            path.write_text(body, encoding="utf-8")
+            written[relative] = str(path)
+        return written
+
+    def test_the_same_members_pass(self, tmp_path: Path) -> None:
+        lock = Lock.read(str(WORKSPACE / "uv.lock"))
+        check_freshness(lock, {}, self.workspace(tmp_path, {"ws-cli": "", "ws-core": ""}))
+
+    def test_no_listing_turns_the_comparison_off(self) -> None:
+        """`tests/sealed.nix` gives no project, so it gives no listing."""
+        lock = Lock.read(str(WORKSPACE / "uv.lock"))
+        check_freshness(lock, {}, {})
+
+    def test_a_new_member_is_stale(self, tmp_path: Path) -> None:
+        lock = Lock.read(str(WORKSPACE / "uv.lock"))
+        listing = self.workspace(tmp_path, {"ws-cli": "", "ws-core": "", "ws-extra": ""})
+        with pytest.raises(LockError, match=re.escape("the workspace adds ['ws-extra']")):
+            check_freshness(lock, {}, listing)
+
+    def test_a_member_that_the_workspace_dropped_is_stale(self, tmp_path: Path) -> None:
+        lock = Lock.read(str(WORKSPACE / "uv.lock"))
+        with pytest.raises(LockError, match=re.escape("the lock file still holds ['ws-cli']")):
+            check_freshness(lock, {}, self.workspace(tmp_path, {"ws-core": ""}))
+
+    def test_the_name_is_normalised_on_both_sides(self, tmp_path: Path) -> None:
+        listing = self.workspace(tmp_path, {"WS.CLI": "", "ws_core": ""}, root="Workspace_Root")
+        lock = Lock.read(str(WORKSPACE / "uv.lock"))
+        check_freshness(lock, {}, listing)
+
+    def test_one_member_that_is_a_project_compares_two_empty_sets(self, tmp_path: Path) -> None:
+        """**uv writes no `[manifest] members` for a workspace of one project.**
+
+        `LockTarget::members` of `crates/uv/src/commands/project/lock_target.rs`
+        clears the list in that one case. A reader that did not clear the same
+        list would call every single project stale.
+        """
+        lock = Lock.read(str(LOCKS / "trivial.lock"))
+        assert lock.members == ()
+        check_freshness(lock, {}, self.workspace(tmp_path, {}, root="trivial"))
+
+    def test_one_member_under_a_virtual_root_keeps_the_list(self, tmp_path: Path) -> None:
+        """The same rule asks that the root be a project, and this one is not.
+
+        So uv writes the member into `[manifest] members`, and a lock file that
+        holds none of it is stale.
+        """
+        lock = Lock.read(str(LOCKS / "trivial.lock"))
+        with pytest.raises(LockError, match=re.escape("the workspace adds ['solo']")):
+            check_freshness(lock, {}, self.workspace(tmp_path, {"solo": ""}, root=None))
 
 
 class TestAPin:

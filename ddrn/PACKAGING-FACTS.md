@@ -661,13 +661,9 @@ same case, and it calls it `allow_missing_package_metadata`. A reader cannot
 tell such a file from a member that declares nothing, so the check compares
 neither.
 
-**Two edits pass this check, and each one has its own cause.** A marker-only
-edit passes because uv simplifies every marker before it compares. A new member
-of a workspace passes because `uv.nix` builds one declaration for each package
-that `uv.lock` holds, so a member that the lock file never saw reaches no
-comparison. uv finds that one with `SatisfiesResult::MismatchedMembers`, which
-reads `[tool.uv.workspace].members`. That table holds a glob, so a reader of it
-would walk the directory of the workspace during the evaluation.
+**A marker-only edit passes this check**, because uv simplifies every marker
+before it compares. That is the one gap that stays, and `uv lock --check` is
+the command for it.
 
 `ddrn/examples/venv-graph/tests/test_freshness.py` holds one test for each rule
 above, against the lock files that uv wrote in `tests/fixtures/locks`. The seam
@@ -679,6 +675,125 @@ ddrn_venv._uvlock.LockError: uv.lock is stale: 'pure-app' declares different
 dependencies than the lock file resolved. pyproject.toml adds
 ['typing-extensions']. Run `uv lock` and build again.
 ```
+
+### A workspace can grow a member, and no declaration reaches that one
+
+**The comparison above reads one declaration for each package of the lock
+file**, so a member directory that `uv.lock` never saw reaches no comparison at
+all. uv finds that one, and it calls the difference
+`SatisfiesResult::MismatchedMembers`. The two sides of it are
+`[tool.uv.workspace] members` of the file system, and `[manifest] members` of
+the lock file.
+
+**Only the evaluator reads a directory that is not in the store, so the walk is
+in Nix and every rule is in Python.**
+`ddrn/examples/venv-graph/workspace.nix` lists the `pyproject.toml` of each
+directory under the workspace and decides nothing: it reads no glob, it opens
+no file, and it holds no rule of uv. `ddrn_venv._workspace` takes that listing
+and answers which directories are members, with `fnmatch` of the standard
+library for each glob component. `ddrn_venv._freshness.check_members` compares
+the answer with `[manifest] members`.
+
+That split is the argument of the lab applied once more, and it is the reason
+`**`, `[a-z]` and `[!x]` all work: each one is a case of `fnmatch`, and not a
+new branch of the Nix language.
+
+**uv writes an empty `[manifest] members` for a workspace of one member that is
+a project.** `LockTarget::members`
+(`crates/uv/src/commands/project/lock_target.rs`) clears the list in that one
+case, and the comment there gives the reason: such a workspace mismatches on
+the member itself. So every single project has an empty list, and a reader that
+did not clear the same list would call every single project stale.
+
+**Five rules decide what counts as a member, and each one comes from
+`collect_members_only` of `crates/uv-workspace/src/workspace.rs`:**
+
+| rule | what this reader does |
+| --- | --- |
+| The root is a member when it declares `[project]`, and uv adds it before it expands one glob. | adds the root name; a root with no `[project]` is `Workspace::is_non_project` |
+| An `exclude` glob takes a directory out. | expands `exclude`, and drops each match |
+| `tool.uv.managed = false` takes a directory out. | skips it |
+| A directory with no `pyproject.toml` is no member. | it is not in the listing, so it is skipped |
+| A duplicate directory is read once. | takes the unique list |
+
+**Two cases turn the comparison off, and each one gives `None`.** A false alarm
+stops a build that is correct, which is worse than the gap that the comparison
+closes:
+
+| the case | why this reader cannot answer it |
+| --- | --- |
+| a glob that holds `**` inside a component | the `glob` crate raises `recursive wildcards must form a single path component`, so uv reads no such workspace |
+| a `pyproject.toml` with no `[project]`, or one that TOML cannot read | uv raises `MissingProject`, and the build that follows fails for its own reason |
+
+### What each glob of `[tool.uv.workspace] members` means
+
+`Pattern::new` of `glob-0.3.4/src/lib.rs` gives the whole token set, and uv
+calls that crate with `MatchOptions::new()`:
+
+| the form | what it is |
+| --- | --- |
+| `?` | `AnyChar`, one character |
+| `*` | `AnySequence`, any characters of one component |
+| `**` | `AnyRecursiveSequence`, zero or more whole components |
+| `[abc]`, `[a-c]` | `AnyWithin` |
+| `[!abc]` | `AnyExcept` |
+| `{a,b}` | **not alternation.** No token holds it, so both braces are literal characters |
+
+`**` forms a whole component or the crate refuses the pattern: `a/**b`,
+`a/bc**`, `a/*****` and `a**b` each give
+`recursive wildcards must form a single path component`, and the tests of the
+crate name all four. It matches zero or more levels, it matches directories
+only, and `Paths::next` returns the base directory as well when the pattern
+ends in it, so `packages/**` names `packages`.
+
+**`packages/**` is a pattern that uv refuses for most trees, and that is a
+measured fact and not an opinion.** `**` names every directory at every depth,
+so the `src` of a member becomes a member with no `pyproject.toml`. Over
+`projects/workspace` with that one edit:
+
+```console
+$ uv lock --check --offline --python <the interpreter>
+error: Workspace member `.../packages/ws-cli/src` is missing a `pyproject.toml`
+       (matches: `packages/**`)
+```
+
+This reader accepts that workspace, because such a directory is not in the
+listing at all. It is a lock file that uv cannot write, so a build of it fails
+for its own reason. **`packages/*` is the form that a workspace writes**, and
+the reader answers it exactly.
+
+### Two boundaries of the walk, and what each one costs
+
+`workspace.nix` does not descend into `.git`, `.jj`, `node_modules`,
+`__pycache__`, `.venv` and eight more names, and it follows no symbolic link.
+uv reaches both, so a member behind one is not found here.
+
+The reason is the cost of the walk, measured: this repository holds **1902
+directories**, and a complete recursive `builtins.readDir` of all of them adds
+**0.3 s** to an evaluation that costs 5.0 s to import `lib` at all.
+
+```console
+$ nix eval --impure --json --expr 'let walk = dir: ...; in walk /path'
+```
+
+The seam was proved end to end, and uv agreed on each tree. A copy of
+`projects/workspace` took a fourth member directory and a fourth entry in
+`[tool.uv.workspace] members`, with no `uv lock` after it:
+
+```
+ddrn_venv._uvlock.LockError: uv.lock is stale: it resolved a different set of
+workspace members. the workspace adds ['ws-extra']. Run `uv lock` and build
+again.
+```
+
+```console
+$ uv lock --check --offline --python <the interpreter>
+error: The lockfile at `uv.lock` needs to be updated, but `--check` was provided.
+```
+
+The same copy with `members = ["packages/*"]` in place of the two literal paths
+built the same derivation, `workspace-root.drv`, and `uv lock --check` over it
+resolved 14 packages and said nothing. The unchanged fixture did the same.
 
 ### A marker of an edge is not always a PEP 508 marker
 
@@ -1569,6 +1684,55 @@ editable node and `builtins.outputOf` gave a directory with no `bin/python`.
 `Plan.add` now refuses two different nodes under one name, and the editable node
 carries an `-editable` suffix. A silent replacement is the failure mode to
 avoid: the error it produced named neither node.
+
+The wheel installer is the second case, and the `groups` argument of `uv.nix`
+found it. `projects/pure-app` pins `installer` in the group `ddrn`, so
+`groups = [ "ddrn" ]` puts that wheel in the environment. The graph already held
+a node of the same name, which unpacks the wheel to bootstrap every install, and
+the refusal read:
+
+```
+ValueError: two different nodes are both called 'installer-1.0.1': a node of
+kind 'unpack' and a node of kind 'wheel'.
+```
+
+The bootstrap node now carries a `-bootstrap` suffix, and the environment then
+holds five `.dist-info` directories rather than four.
+
+**A rename of a node changes no output of this graph.** Every node is
+content-addressing, so the name of a derivation reaches the output path of
+nothing. The default `pure-app` built
+`/nix/store/2ppg8xs82055lxw8vg22a1zbbvjnmfjc-pure-app` before this rename and
+after it, although the root `.drv` moved from
+`j99cp3qrc4spr30w077yp6qw8ljr01ja` to `s4k36ain6j2h1iz11q1615b4aykf2ibm`. An
+input-addressed graph would have rebuilt every node and given a new environment.
+
+### `uv.lock` records no extra and no group, so `uv.nix` takes both
+
+`uv sync` decides on its command line which extras and which groups to install,
+and it writes none of that decision into the lock file. `uv.nix` takes the same
+decision as two arguments, and each one takes `null`, the literal `"all"`, or a
+list of names. The rules come from uv, and each one has a source:
+
+| what | uv says | `uv.nix` |
+| --- | --- | --- |
+| no extra | `sync.rs` reads `DefaultExtras::default()`, and it names the binding `_project` to say that it reads no project file | `extras = null` gives no extra |
+| every extra | `uv sync --all-extras` | `extras = "all"` reads `[project.optional-dependencies]` |
+| a default group | `default_dependency_groups` of `crates/uv/src/commands/project/mod.rs` reads `tool.uv.default-groups`, and gives `["dev"]` when the table says nothing | `groups = null` does the same |
+| every group | `uv sync --all-groups`, and `tool.uv.default-groups = "all"` | `groups = "all"` |
+| a named group | `uv sync --group ddrn` | `groups = [ "ddrn" ]` |
+
+**There is no `tool.uv.default-extras` for a project.** `DefaultExtras` exists,
+in `crates/uv-normalize/src/extra_name.rs`, and a PEP 723 script is what reads
+it. So a project that wants an extra by default has no place to write that, and
+`extras` of `uv.nix` is the only place.
+
+**uv validates the default group list, and not the fallback.**
+`default_dependency_groups` raises `MissingDefaultGroup` when
+`tool.uv.default-groups` names a group that `[dependency-groups]` does not
+declare. The `["dev"]` that it falls back to reaches no such check, so a project
+with no dependency group at all still locks. `ddrn_venv._workspace.groups_of`
+copies both halves of that behaviour.
 
 ### A workspace names its members twice, in two spellings
 

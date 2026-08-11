@@ -54,7 +54,13 @@
   # Which packages of `uvLock` to install, and which extras and which
   # dependency groups of each one. `uv.lock` records none of these three
   # decisions, so they are an argument.
-  uvSelect ? { },
+  uvSelect ? null,
+  # Which extras of each member to enable, and which dependency groups, when
+  # `uvSelect` is `null`. `./uv.nix` gives the whole rule at its `extras` and
+  # `groups` arguments, and `ddrn_venv._workspace` holds it. `null` on both is
+  # `uv sync` with no flag.
+  uvExtras ? null,
+  uvGroups ? null,
   # The tree of each package of `uvLock` that builds from a directory, keyed by
   # its normalised name, as `{ source, root, mode, subdirectory }`. **Only the
   # planner knows which of them this target installs**, because only the planner
@@ -80,6 +86,17 @@
   # `./uv.nix` reads a project, so it names one file for each member.
   # `tests/sealed.nix` gives no `uvLock` at all, so no comparison reaches it.
   uvDeclarations ? { },
+  # The `pyproject.toml` of every directory under the workspace, keyed by the
+  # path of that directory relative to the root.
+  #
+  # **`uvDeclarations` cannot find a member that the lock file never saw**,
+  # because the lock file is the list of what it compares. A directory that a
+  # `[tool.uv.workspace] members` glob names, and that `uv.lock` does not hold,
+  # is the other half of a stale lock file. `./workspace.nix` walks the tree to
+  # list it, and `ddrn_venv._workspace` decides which directories are members.
+  #
+  # An empty set turns that comparison off, and it is the default.
+  uvWorkspace ? { },
   # Each package to build from its source distribution, even when a wheel fits.
   # This is `tool.uv.no-binary-package`, which uv keeps in `pyproject.toml` and
   # writes into no lock file, so `./uv.nix` reads it from the project.
@@ -307,8 +324,11 @@ let
     uv = {
       lock = "${uvLock}";
       select = uvSelect;
+      extras = uvExtras;
+      groups = uvGroups;
       editables = uvEditables;
       declarations = uvDeclarations;
+      workspace = uvWorkspace;
     };
   };
 

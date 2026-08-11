@@ -41,12 +41,17 @@ module compares those three. It ignores:
 the honest boundary of a comparison that never raises a false alarm. uv itself
 is the tool for the whole answer, and `uv lock --check` is the command.
 
-**A new member of a workspace passes as well**, and this gap has a different
-cause. `uv.nix` builds one declaration for each package that `uv.lock` holds,
-so a member that the lock file never saw reaches no comparison. uv finds that
-one with `SatisfiesResult::MismatchedMembers`, which reads
-`[tool.uv.workspace].members` instead. That table holds a glob, and a reader of
-it would walk the directory of the workspace during evaluation.
+**A new member of a workspace needs a second comparison**, and `check_members`
+makes it. `uv.nix` builds one declaration for each package that `uv.lock`
+holds, so a member that the lock file never saw reaches no comparison of
+`[package.metadata]`. `workspace.nix` walks the tree during the evaluation, and
+`ddrn_venv._workspace` turns that listing into the member set. uv compares the
+same two sets, and it calls the difference
+`SatisfiesResult::MismatchedMembers`.
+
+**`ddrn_venv._workspace` answers `None` for a rule that reaches further than
+it does**, and the comparison is then off. That module names each such case. A
+false alarm would stop a build that is correct, which is worse than the gap.
 
 `groups_of` and `_tables` each carry the rule of uv that they follow, with the
 file of uv that states it. Every one of those rules came from that source, and
@@ -65,9 +70,12 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 
 from ddrn_venv._uvlock import LockError
+from ddrn_venv._workspace import members as members_of
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
+
+    from packaging.utils import NormalizedName
 
     from ddrn_venv._uvlock import Lock, Package
 
@@ -265,13 +273,68 @@ def _tables(document: Mapping[str, Any], metadata: Mapping[str, Any]) -> list[tu
     return pairs
 
 
-def check(lock: Lock, declarations: Mapping[str, str]) -> None:
+def check_members(lock: Lock, listing: Mapping[str, str] | None) -> None:
+    """Refuse a lock file that the workspace has grown a member past.
+
+    `listing` is what `workspace.nix` walked: the `pyproject.toml` of every
+    directory under the workspace, keyed by the path of that directory.
+    `ddrn_venv._workspace` holds every rule that turns the listing into a
+    member set, and it answers `None` for a rule that reaches further than it
+    does. `None` on either side turns the comparison off.
+
+    **uv writes an empty `[manifest] members` for a workspace of one member
+    that is a project.** `LockTarget::members` of
+    `crates/uv/src/commands/project/lock_target.rs` clears the list in that one
+    case, and it says why: a workspace of one member mismatches anyway, on the
+    member itself. So this reader clears the same list before it compares, and
+    a single project therefore compares an empty set with an empty set.
+    """
+    if not listing:
+        return
+
+    found = members_of(listing)
+    if found is None:
+        return
+
+    expected: set[NormalizedName] = {canonicalize_name(name) for name in found.names}
+    if len(expected) == 1 and found.root is not None:
+        expected = set()
+
+    recorded = {canonicalize_name(name) for name in lock.members}
+    if expected == recorded:
+        return
+
+    parts: list[str] = []
+    added = sorted(expected - recorded)
+    removed = sorted(recorded - expected)
+    if added:
+        parts.append(f"the workspace adds {added}")
+    if removed:
+        parts.append(f"the lock file still holds {removed}")
+    raise LockError(
+        f"uv.lock is stale: it resolved a different set of workspace members. "
+        f"{', and '.join(parts)}. Run `uv lock` and build again."
+    )
+
+
+def check(
+    lock: Lock,
+    declarations: Mapping[str, str],
+    listing: Mapping[str, str] | None = None,
+) -> None:
     """Refuse a lock file that the projects have grown past.
 
     `declarations` maps the name of a member to the store path of its
     `pyproject.toml`. An empty mapping turns the check off, which is what a
     lock document with no project behind it gives.
+
+    `listing` is what `check_members` takes, and it answers the half that
+    `declarations` cannot reach: a member directory that the lock file never
+    saw is in no declaration, because `uv.nix` builds one declaration for each
+    package that the lock file holds.
     """
+    check_members(lock, listing)
+
     by_name: dict[str, Package] = {package.name: package for package in lock.packages}
 
     for raw_name, path in sorted(declarations.items()):
