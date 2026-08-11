@@ -96,18 +96,23 @@ class Request:
     #: Each package that nixpkgs supplies instead of the index, by PEP 503
     #: name. The value holds the `version`, the `drv` and the `out` of a
     #: package that Nix instantiated outside the sandbox and did not build.
-    overrides: dict[str, dict[str, str]] = field(default_factory=dict[str, dict[str, str]])
+    #:
+    #: **The name of this field is not `overrides`, and that is deliberate.**
+    #: uv gives `override-dependencies` to a table that forces a version, and
+    #: uv2nix gives `overrides` to a build fixup. Neither is this. One word
+    #: carries one meaning in this repository.
+    from_nixpkgs: dict[str, dict[str, str]] = field(default_factory=dict[str, dict[str, str]])
 
     @classmethod
     def from_json(cls, inputs: dict[str, Any], roots: list[str]) -> Request:
         rows: list[dict[str, Any]] = inputs["artifacts"]
-        supplied: dict[str, dict[str, str]] = inputs.get("overrides", {})
+        supplied: dict[str, dict[str, str]] = inputs.get("fromNixpkgs", {})
         return cls(
             artifacts=[Artifact.from_json(row) for row in rows],
             roots=roots,
             installer=inputs["installer"],
             no_binary=frozenset(inputs.get("noBinary", [])),
-            overrides={canonicalize_name(name): entry for name, entry in supplied.items()},
+            from_nixpkgs={canonicalize_name(name): entry for name, entry in supplied.items()},
         )
 
 
@@ -316,12 +321,12 @@ def resolve(
         requirement = Requirement(package)
 
         # **nixpkgs answers first, and the index is not consulted at all.** The
-        # override names a package that Nix already built for this system, so
+        # entry names a package that Nix already built for this system, so
         # no wheel is chosen, no artefact is fetched and `auto-patchelf` never
         # runs. `ddrn/PACKAGING-FACTS.md` gives the reason to want this: a
         # manylinux wheel carries its own copy of every library it links
         # against, and nixpkgs links against the store.
-        supplied = request.overrides.get(canonicalize_name(requirement.name))
+        supplied = request.from_nixpkgs.get(canonicalize_name(requirement.name))
         if supplied is not None:
             name = plan.nixpkgs_node(
                 package=requirement.name,

@@ -327,7 +327,7 @@ as an argument. `ddrn/PACKAGING-FACTS.md` gives the whole finding.
 
 ```console
 $ nix build --file check-binary.nix \
-    --arg overrides '{ pyzmq = (import <nixpkgs> {}).python3Packages.pyzmq; }'
+    --arg fromNixpkgs '{ pyzmq = (import <nixpkgs> {}).python3Packages.pyzmq; }'
 ```
 
 Both environments run the same code, and the two reports differ in one line:

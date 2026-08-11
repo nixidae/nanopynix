@@ -1492,9 +1492,15 @@ wheels, because a rule that the order of the list satisfies is not a rule.
 ### A wheel of nixpkgs, in place of a wheel of the index
 
 Tier 4 answers the override question, and `projects/binary-app` is the proof.
-`uv.nix` takes an `overrides` argument, as
+`uv.nix` takes a `fromNixpkgs` argument, as
 `{ pyzmq = pkgs.python3Packages.pyzmq; }`. The planner then makes no wheel node
 for that name, and `Plan.nixpkgs_node` names the store path instead.
+
+**That argument is not called `overrides`, and the name is a decision.** uv
+gives `override-dependencies` to a table that forces a version, and uv2nix
+gives `overrides` to a build fixup of a package that does not build. Neither
+one is this, which replaces the artefact of a package with a store path that
+nixpkgs already built. One word carries one meaning in this repository.
 
 Both environments run the same code, and they differ in one line:
 

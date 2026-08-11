@@ -98,7 +98,7 @@
   #
   # **The version is the one that nixpkgs holds, and not the one that the lock
   # file pins.** Nothing reconciles the two, and the planner prints both.
-  overrides ? { },
+  fromNixpkgs ? { },
   venvName ? "demo-venv",
   # Overrides for the PEP 508 marker environment of the target.
   #
@@ -182,9 +182,9 @@ let
   # One entry for each package that nixpkgs supplies. It is the same shape that
   # `row` gives an artefact, plus the version that nixpkgs holds, which the
   # planner prints beside the version that the lock file pinned.
-  overrideRows = builtins.mapAttrs (
+  nixpkgsRows = builtins.mapAttrs (
     _: drv: (row { inherit drv; }) // { inherit (drv) version; }
-  ) overrides;
+  ) fromNixpkgs;
 
   # A string names a store path that this evaluation did not make, and only an
   # impure evaluation may do that. A derivation needs no such primop.
@@ -223,7 +223,7 @@ let
 
   baseInputs = {
     inherit roots installer noBinary;
-    overrides = overrideRows;
+    fromNixpkgs = nixpkgsRows;
     artifacts = map row entries;
     tools = {
       bash = "${pkgs.bash}";

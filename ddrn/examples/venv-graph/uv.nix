@@ -62,14 +62,14 @@
   markers ? { },
   # Each package that nixpkgs supplies instead of the index, as
   # `{ pyzmq = pkgs.python3Packages.pyzmq; }`. `./default.nix` gives the whole
-  # reason at its `overrides` argument, and the short one is this: a manylinux
+  # reason at its `fromNixpkgs` argument, and the short one is this: a manylinux
   # wheel carries a copy of every library that it links against, and a package
   # of nixpkgs links against the store.
   #
   # **The lock file still resolves the package.** The override decides where
   # the code comes from, and not whether the package is in the environment, so
   # the edges of `uv.lock` still name it and its dependencies still resolve.
-  overrides ? { },
+  fromNixpkgs ? { },
 }:
 
 let
@@ -413,7 +413,7 @@ let
       installer
       markers
       noBinary
-      overrides
+      fromNixpkgs
       uvEditables
       ;
 

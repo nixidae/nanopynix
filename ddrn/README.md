@@ -117,8 +117,8 @@ one build covers a backend that no menu holds.
 
 `binary-app` installs `pyzmq`, whose wheel holds compiled code, so its node
 runs `auto-patchelf`. It builds a second time with
-`overrides = { pyzmq = pkgs.python3Packages.pyzmq; }`, which takes the package
-from nixpkgs and makes no wheel node at all. **That override builds nothing**:
+`fromNixpkgs = { pyzmq = pkgs.python3Packages.pyzmq; }`, which takes the package
+from nixpkgs and makes no wheel node at all. **That package builds nothing**:
 the derivation keeps the identity that nixpkgs gave it, so the outer store
 substitutes the output from a cache.
 

@@ -14,7 +14,7 @@
   # Each package that nixpkgs supplies instead of the index. `run-uv.sh` builds
   # this file twice, once with none and once with `pyzmq`, and the two reports
   # differ in what the extension links against.
-  overrides ? { },
+  fromNixpkgs ? { },
 }:
 
 let
@@ -24,7 +24,7 @@ let
       nanopynixEnv
       project
       venvName
-      overrides
+      fromNixpkgs
       ;
   };
   venv = builtins.outputOf planner.outPath "out";

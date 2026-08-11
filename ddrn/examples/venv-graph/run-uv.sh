@@ -246,7 +246,7 @@ show store cat "$(build check-binary.nix)"
 echo
 echo "==> the same project, with pyzmq from nixpkgs"
 show store cat "$(build check-binary.nix \
-  --argstr venvName binary-nixpkgs --arg overrides "$nixpkgs_pyzmq")"
+  --argstr venvName binary-nixpkgs --arg fromNixpkgs "$nixpkgs_pyzmq")"
 
 # **A dependency that no index serves.** `uv.lock` records a commit of
 # `pypa/flit` and the subdirectory that holds `flit_core`, and it records no
