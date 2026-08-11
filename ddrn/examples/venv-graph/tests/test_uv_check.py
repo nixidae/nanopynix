@@ -73,6 +73,10 @@ def command(project: Path) -> Sequence[str]:
         UNUSED_ENV,
         "--no-link",
         "--print-out-paths",
+        # Nix prints the last lines of the log of a build that failed, and the
+        # default is 25. The diagnostic of this check is longer than that.
+        "--log-lines",
+        "100",
     ]
 
 
@@ -114,6 +118,11 @@ class TestWhatItCatches:
         assert code != 0
         assert "Run `uv lock` in the project, and build again." in output
 
+        # `--frozen` resolves nothing, so it finds no marker and says so. The
+        # refusal comes from `--check`, and this is the line that proves the
+        # two modes differ.
+        assert "only checked for validity" in output
+
     async def test_a_workspace_that_grew_a_member_is_a_refusal(self, tmp_path: Path) -> None:
         # `check_members` finds this one as well, so the two agree here. The
         # value of the case is that agreement: the backstop does not contradict
@@ -137,3 +146,9 @@ class TestWhatItCatches:
         code, output = await check(project)
         assert code != 0
         assert "Run `uv lock` in the project, and build again." in output
+
+        # A missing member is structural, so `--frozen` names it exactly. That
+        # is the whole reason the failure path asks uv a second time: `--check`
+        # resolves, and a sandbox has no index to resolve against, so it
+        # reports the package that it could not read.
+        assert "Missing workspace member `ws-extra`" in output

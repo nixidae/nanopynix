@@ -168,6 +168,22 @@ let
   #
   # `--python` names the interpreter of the environment, because uv finds none
   # in a sandbox and offers to download one.
+  #
+  # **`--check` is the only mode of `uv lock` that a derivation can read**,
+  # because the verdict of a derivation is the exit code of its builder.
+  # `LockMode` (`crates/uv/src/commands/project/lock.rs`) holds four modes, and
+  # each of the other three exits 0 over a lock file that is stale:
+  #
+  # | the mode | what it does | over a stale project |
+  # | --- | --- | --- |
+  # | `uv lock` | resolves, and writes `uv.lock` | writes a new file, exits 0 |
+  # | `--dry-run` | resolves, and writes nothing | prints the difference, exits 0 |
+  # | `--frozen` | reads the lock file, and resolves nothing | exits 2 for a missing member, and 0 for a marker |
+  # | `--check` | asserts the file would not change | exits 1 |
+  #
+  # `uv lock` is the worst of the three here: it would rewrite the copy of the
+  # lock file in the sandbox, and the build would then plan from the file that
+  # the graph was built from and never learn of the difference.
   lockCheck =
     pkgs.runCommand "uv-lock-check-${projectName}"
       {
@@ -190,14 +206,31 @@ let
           exit 0
         fi
 
+        # **`--frozen` names the cause, and it runs only after `--check`
+        # refused.** `--check` resolves the project again, and a sandbox has no
+        # index to resolve against, so it reports the package that it could not
+        # read rather than the difference that made it resolve. `--frozen`
+        # compares the lock file with the project and resolves nothing, so it
+        # names a structural difference exactly: a workspace member that the
+        # lock file does not hold, for one.
+        #
+        # It is a diagnostic and not the check. `--frozen` accepts a marker
+        # that `--check` refuses, and uv says so itself: "the lockfile was only
+        # checked for validity, not whether it is up-to-date". That warning is
+        # also the reason this runs on the failure path alone, because a
+        # successful build would otherwise print it every time.
+        echo >&2
+        echo "==> asking uv again, without a resolution, for the cause:" >&2
+        uv lock --frozen --offline --python ${python}/bin/python3 >&2 || true
+
         cat >&2 <<'MESSAGE'
 
-        uv refused the lock file of this project, and the message above is its own.
+        uv refused the lock file of this project, and the messages above are its own.
 
-        This is the `uvCheck` argument of `uv.nix`. uv ran with no network, so it
-        reports a package as unavailable when it wanted to resolve the project
-        again. **That is the refusal, and not a fault of the sandbox**: uv resolves
-        again only when `uv.lock` does not satisfy `pyproject.toml`.
+        This is the `uvCheck` argument of `uv.nix`. uv ran with no network, so
+        `--check` reports a package as unavailable when it wanted to resolve the
+        project again. **That is the refusal, and not a fault of the sandbox**: uv
+        resolves again only when `uv.lock` does not satisfy `pyproject.toml`.
 
         Run `uv lock` in the project, and build again.
         MESSAGE

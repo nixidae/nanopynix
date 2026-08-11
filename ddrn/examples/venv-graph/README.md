@@ -210,6 +210,14 @@ import ./uv.nix {
 }
 ```
 
+`--check` is the mode that asserts `uv.lock` would not change after a
+resolution, and it exits with an error when it would. That exit code is the
+verdict of the derivation. The other three modes of `uv lock` each exit 0 over
+a stale project, and plain `uv lock` would rewrite the copy of the lock file in
+the sandbox and hide the difference. When the check refuses, it asks uv once
+more with `--frozen`, which resolves nothing and names a structural cause such
+as `Missing workspace member ws-extra`.
+
 The check costs 27 ms and reaches no network, and it changes no output: the
 same project builds the same environment with the argument on and off. It costs
 one thing, which is why it is off by default: **the whole project tree enters

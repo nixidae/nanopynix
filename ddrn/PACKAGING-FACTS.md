@@ -818,6 +818,56 @@ With the empty cache of a sandbox it cannot resolve at all, so it reports the
 package it could not read. `uv.nix` prints its own paragraph after the failure,
 because the uv message names the network and the cause is the lock file.
 
+### `--check` is the one mode that a derivation can read
+
+The verdict of a derivation is the exit code of its builder, so a mode that
+exits 0 over a stale project is no gate. `LockMode`
+(`crates/uv/src/commands/project/lock.rs:289`) holds four, and three of them
+do:
+
+| the mode | what it does | over a project that grew a member |
+| --- | --- | --- |
+| `uv lock` | resolves, and writes `uv.lock` | writes a new file, exits 0 |
+| `--dry-run` | resolves, and writes nothing | prints the difference, exits 0 |
+| `--frozen` | reads the lock file, and resolves nothing | exits 2 here, and 0 for a marker |
+| `--check` | asserts the file would not change | exits 1 |
+
+The `--dry-run` and `--check` rows are measured, over a copy of
+`projects/workspace` with a fourth member and with the network up:
+
+```console
+$ uv lock --dry-run   # exit 0, uv.lock untouched
+$ uv lock --check     # exit 1, uv.lock untouched
+```
+
+`uv lock` is the worst of the three in a sandbox: it rewrites the copy of the
+lock file, so the build plans from the file that the graph came from and never
+learns of the difference. The doc comment of `--check`
+(`crates/uv-cli/src/lib.rs:3934`) states the behaviour that a gate needs:
+
+> Asserts that the `uv.lock` would remain unchanged after a resolution. If the
+> lockfile is missing or needs to be updated, uv will exit with an error.
+> Equivalent to `--locked`.
+
+**`--frozen` is a diagnostic, and uv says so itself.** It compares the lock
+file with the project and resolves nothing, so it names a structural difference
+exactly, and it needs no index:
+
+```
+error: The lockfile at `uv.lock` needs to be updated, but `--frozen` was
+       provided: Missing workspace member `ws-extra`.
+```
+
+Over the marker edit it exits 0, with this warning:
+
+```
+warning: The lockfile at `uv.lock` was only checked for validity, not whether
+it is up-to-date, because `--frozen` was provided; use `--check` instead
+```
+
+`uv.nix` runs `--frozen` after `--check` refused, and never before. The reason
+is that warning: a successful check would otherwise print it on every build.
+
 Two measurements say what the argument costs:
 
 - **The check changes no output.** `projects/pure-app` submitted the same root
