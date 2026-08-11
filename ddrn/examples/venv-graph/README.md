@@ -140,6 +140,7 @@ this.
 | `editableRoot` | what a PEP 660 editable redirects to. The default is the variable `$DDRN_EDITABLE_ROOT`, so one environment serves every tree |
 | `markers` | `platform_release` and `platform_version`, which no build can know |
 | `uvCheck` | `true` runs `uv lock --check` over the project before the planner runs. See below |
+| `application` | the one member to render as a program rather than an environment. See below |
 
 ## Extras and groups, the way `uv sync` takes them
 
@@ -166,6 +167,49 @@ gives for the same file.
 `select` overrides both. It names each member and the list of extras and groups
 of that member, so a member that needs a different set than the others reaches
 it through `select` and not through these two.
+
+## An environment, or one program
+
+The default output is a virtual environment, and a virtual environment holds
+every program of every member:
+
+```
+bin/activate  bin/markdown-it  bin/pygmentize  bin/python  bin/python3  bin/ws-cli
+```
+
+That is what you want in a development shell. It is not what you want in
+`environment.systemPackages` of a NixOS configuration, because `bin/python` of
+the environment then shadows the interpreter of the system, and `bin/ws-cli`
+arrives with five programs that your project does not ship.
+
+`application` names one member, and the output becomes the tree of that member
+over the same environment:
+
+```nix
+import ./uv.nix {
+  project = ./.;
+  application = "ws-cli";
+}
+```
+
+```
+bin/ws-cli -> /nix/store/...-workspace-app-env/bin/ws-cli
+```
+
+`pyproject.nix` calls this `util.mkApplication`, and it works the same way: the
+`$out` of the one package is the template of the shape, and each path of that
+template becomes a link into the environment. `nix-support` and
+`site-packages` are the two things that the template does not offer.
+
+**The closure does not shrink, and that is not what this is for.** Measured
+over `projects/workspace`: the application is 238229120 bytes over 31 store
+paths, and its environment is 238228600 bytes over 30. The application adds
+520 bytes and one path, which is itself. Every link names the environment, so
+the interpreter stays. What changes is what reaches the PATH of a user.
+
+An application is one member of the environment, so the selection has to
+install it. A name that no member answers stops the build, and the message
+names the members that the environment does hold.
 
 ## A stale `uv.lock` stops the build
 

@@ -119,6 +119,25 @@
   # The check itself costs 27 ms, measured over `projects/workspace` with a
   # cold cache.
   uvCheck ? false,
+  # The one member to render as an application, by package name, or `null` for
+  # the environment itself.
+  #
+  # **A virtual environment is not a program.** It carries `bin/python`,
+  # `bin/activate` and the console script of every member, so a NixOS
+  # configuration that puts one in `environment.systemPackages` shadows the
+  # interpreter of the system with the one of the environment. An application
+  # is the tree of one member, with each entry a link into that same
+  # environment:
+  #
+  #     application = "ws-cli";   ->   bin/ws-cli, and nothing else
+  #
+  # **The closure does not shrink**, because every link names a path inside the
+  # environment. What changes is what reaches the PATH of a user.
+  #
+  # `pyproject.nix` calls this `util.mkApplication`, and it takes the same two
+  # inputs: the environment for the content, and the `$out` of the one package
+  # for the shape.
+  application ? null,
 }:
 
 let
@@ -556,6 +575,7 @@ let
       installer
       markers
       noBinary
+      application
       fromNixpkgs
       python
       uvEditables

@@ -173,6 +173,36 @@ number of packages raised to the depth.
 | which backend builds an archive | `_sdist.py`, in the sandbox | the answer is inside the archive, and evaluation cannot read it |
 | how a node builds | `graph.nix` | a build step is a derivation, and only Nix writes one |
 | where an artefact comes from | `uv.nix` | a fetch is a fixed-output derivation, and only Nix writes one |
+| which shape the root takes | `Plan.root`, in the sandbox | the environment and the application are two nodes of one graph, and only the planner knows which node installed the member |
+
+## Two shapes of a result, and which one to install
+
+The root of the graph is a node of kind `venv` or a node of kind
+`application`, and the `application` argument of `uv.nix` decides.
+
+**A virtual environment holds every program of every member.** It carries
+`bin/python`, `bin/activate` and `pyvenv.cfg`, because `make-venv.py` writes a
+real one with `venv.EnvBuilder`. That is the shape for a development shell.
+
+**An application holds one program.** `make-application.py` walks the store
+path of the node that installed one member, and it links each path of that
+tree out of the environment. `nix-support` and `site-packages` are the two
+things it skips, and `pyproject.nix` skips the same two in
+`build/util/mk-application.py`. The output of `projects/workspace` with
+`application = "ws-cli"` holds one entry:
+
+```
+bin/ws-cli -> /nix/store/...-workspace-app-env/bin/ws-cli
+```
+
+That shape is the one for `environment.systemPackages` of a NixOS
+configuration. An environment there would put `bin/python` of the environment
+on the PATH of every user, in front of the interpreter of the system.
+
+**The closure does not shrink, and that is not the point.** The application is
+238229120 bytes over 31 store paths, and its environment is 238228600 bytes
+over 30. Every link names the environment, so the interpreter stays. What
+changes is the PATH surface.
 
 ## A smaller environment, and why it is usually larger
 

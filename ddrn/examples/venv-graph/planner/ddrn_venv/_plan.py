@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from nanopynix_bindings import expr as nix_expr, store as nix_store
+from packaging.utils import canonicalize_name
 
 import nanopynix
 
@@ -87,6 +88,9 @@ class Plan:
     nodes: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     members: list[str] = field(default_factory=list[str])
     installed: list[str] = field(default_factory=list[str])
+    #: The node of each member, by PEP 503 name. `application_node` reads
+    #: this to find the one member that the caller asked for.
+    by_package: dict[str, str] = field(default_factory=dict[str, str])
     #: The name of the node that every install step reads.
     installer: str = ""
     _seen: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
@@ -245,13 +249,60 @@ class Plan:
             }
         )
 
-    def member(self, name: str, label: str) -> None:
+    def application_node(self, name: str, *, venv: str, base: str) -> str:
+        """Add the node that links the programs of one member out of `venv`.
+
+        `base` is the node that installed that member, and it is the template
+        of the shape. `scripts/make-application.py` gives the two rules that
+        decide which paths of the template reach the output.
+        """
+        return self.add(
+            {
+                "name": name,
+                "kind": "application",
+                "platform": False,
+                "venv": venv,
+                "base": base,
+            }
+        )
+
+    def root(self, name: str, *, application: str | None = None) -> str:
+        """The node that the planner submits, which is one of two shapes.
+
+        **An environment holds every program of every member, and an
+        application holds one.** `uv.nix` gives the second shape through its
+        `application` argument, and `scripts/make-application.py` gives the
+        whole reason to want it: a virtual environment carries `bin/python`,
+        so a NixOS configuration that installs one shadows the interpreter of
+        the system.
+
+        The environment is a node either way. The application links out of it,
+        so both nodes are in the graph and only the root differs. The
+        environment then takes the `-env` suffix, because the application is
+        what the caller builds and it carries the name of the project.
+        """
+        if application is None:
+            return self.venv_node(name)
+
+        base = self.by_package.get(canonicalize_name(application))
+        if base is None:
+            held = ", ".join(sorted(self.by_package)) or "no member at all"
+            raise ValueError(
+                f"application names '{application}', and the environment holds {held}. "
+                "An application is one member of the environment, so the selection has to install it."
+            )
+        return self.application_node(name, venv=self.venv_node(f"{name}-env"), base=base)
+
+    def member(self, name: str, label: str, *, package: str) -> None:
         """Mark a node as a member of the environment, and not only a build input.
 
         `label` is the line that the manifest of the environment carries.
+        `package` is the distribution name, which `application_node` needs to
+        find the node of one member again.
         """
         self.members.append(name)
         self.installed.append(label)
+        self.by_package[canonicalize_name(package)] = name
 
     def document(self, *, root: str, system: str, python_version: str, inputs: dict[str, Any]) -> dict[str, Any]:
         """The whole document, ready for `graph.nix`."""

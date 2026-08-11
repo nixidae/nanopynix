@@ -109,6 +109,20 @@
   # before any node of the graph builds. `./uv.nix` builds the derivation, and
   # its `uvCheck` argument says what it costs.
   uvCheck ? null,
+  # The one member to render as an application, or `null` for the environment.
+  #
+  # **A virtual environment is not a program.** It carries `bin/python`,
+  # `bin/activate` and the console script of every member, so a NixOS
+  # configuration that puts one in `environment.systemPackages` shadows the
+  # interpreter of the system. An application is the tree of one member,
+  # pointing into that same environment, and `scripts/make-application.py`
+  # gives the two rules that decide what reaches it.
+  #
+  # `pyproject.nix` calls this `util.mkApplication`, and it does the same
+  # thing: it reads the `$out` of one package as the template of the shape.
+  # Here that template is the node that installed the package, which is a
+  # store path of this same graph.
+  application ? null,
   # Each package to build from its source distribution, even when a wheel fits.
   # This is `tool.uv.no-binary-package`, which uv keeps in `pyproject.toml` and
   # writes into no lock file, so `./uv.nix` reads it from the project.
@@ -283,7 +297,12 @@ let
   sdistPlannerDepth = 3;
 
   baseInputs = {
-    inherit roots installer noBinary;
+    inherit
+      roots
+      installer
+      noBinary
+      application
+      ;
     fromNixpkgs = nixpkgsRows;
     artifacts = map row entries;
     tools = {
@@ -313,6 +332,7 @@ let
       buildSdist = "${./scripts/build-sdist.sh}";
       buildLocal = "${./scripts/build-local.py}";
       makeVenv = "${./scripts/make-venv.py}";
+      makeApplication = "${./scripts/make-application.py}";
       planSdist = "${./scripts/plan-sdist.py}";
       # `graph.nix` builds the planner of a source distribution, and that
       # planner evaluates `graph.nix` again for the graph it submits.

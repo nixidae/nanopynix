@@ -228,6 +228,22 @@ show store cat "$(build check-workspace.nix \
   --argstr venvName workspace-core-sdist --arg expect "$every_member" \
   --arg fromSdist '["ws-core"]' --arg editableTree "$other_ws")"
 
+# **One member as a program, and not as an environment.** `uv sync` gives a
+# virtual environment, and a virtual environment carries `bin/python`,
+# `bin/activate` and the console script of every member. A NixOS configuration
+# that installs one therefore shadows the interpreter of the system.
+#
+# The `application` argument renders the tree of one member over that same
+# environment, so the output holds `bin/ws-cli` and nothing else.
+# `pyproject.nix` calls this `util.mkApplication`.
+#
+# **The closure does not shrink**, and the report says so: each entry of the
+# application is a link into the environment, so the environment and the
+# interpreter stay. What changes is what reaches the PATH of a user.
+echo
+echo "==> one member of that workspace, as an application"
+show store cat "$(build check-application.nix)"
+
 # **A wheel that holds compiled code, and the same package from nixpkgs.** The
 # first build takes the manylinux wheel that `uv.lock` pins, and
 # `auto-patchelf` rewrites its `RPATH` so the loader of this system can resolve

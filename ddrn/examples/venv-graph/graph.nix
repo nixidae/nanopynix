@@ -287,6 +287,20 @@ let
         members = builtins.concatStringsSep " " (map (name: "${built.${name}}") node.members);
         installed = builtins.concatStringsSep "\n" node.installed;
       }
+    else if node.kind == "application" then
+      # The programs of one package, linked out of the environment. The node
+      # of kind `venv` holds the environment, and the node that installed the
+      # package is the template of the shape. `make-application.py` gives the
+      # whole reason, and `pyproject.nix` gives the idea.
+      mk {
+        name = node.name;
+        args = [
+          "-c"
+          ''exec "${tool.python}/bin/python3" "${script.makeApplication}"''
+        ];
+        venv = "${built.${node.venv}}";
+        base = "${built.${node.base}}";
+      }
     else
       throw "unknown node kind '${node.kind}'";
 

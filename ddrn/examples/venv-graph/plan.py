@@ -373,7 +373,7 @@ def resolve(
                 drv=supplied["drv"],
                 out=supplied["out"],
             )
-            plan.member(name, f"{requirement.name}=={supplied['version']} (nixpkgs)")
+            plan.member(name, f"{requirement.name}=={supplied['version']} (nixpkgs)", package=requirement.name)
             # **The version of nixpkgs is not the version of the lock file**,
             # and this line is the only place that says so. A reader who wants
             # the pinned version has to drop the override.
@@ -395,7 +395,7 @@ def resolve(
         # derivation that runs `scripts/plan-sdist.py`, and that planner
         # submits the graph which builds this distribution.
         name = plan.artifact_node(chosen, chosen.kind)
-        plan.member(name, f"{chosen.package}=={chosen.version}")
+        plan.member(name, f"{chosen.package}=={chosen.version}", package=chosen.package)
         binary = " (binary)" if chosen.is_platform_wheel else ""
         print(f"plan: {package}: {chosen.filename} ({chosen.kind}){binary}", file=sys.stderr)
 
@@ -433,7 +433,7 @@ def resolve(
             # **One hook, and no archive between the tree and the wheel.** A
             # git checkout is a directory, so this is the whole build.
             name = plan.local_wheel_node(node)
-            plan.member(name, f"{project.name} (built from a tree)")
+            plan.member(name, f"{project.name} (built from a tree)", package=project.name)
             print(f"plan: {project.name}: build_wheel through {backend}{where}", file=sys.stderr)
             continue
 
@@ -449,12 +449,12 @@ def resolve(
                 backend=backend,
                 backend_path=backend_path,
             )
-            plan.member(name, f"{project.name} (from its own source distribution)")
+            plan.member(name, f"{project.name} (from its own source distribution)", package=project.name)
             print(f"plan: {project.name}: build_sdist through {backend}{where}, then build_wheel", file=sys.stderr)
             continue
 
         name = plan.editable_node(node, root=project.root)
-        plan.member(name, f"{project.name} (editable, from {project.root})")
+        plan.member(name, f"{project.name} (editable, from {project.root})", package=project.name)
         print(f"plan: {project.name}: editable through {backend}, reading {project.root}", file=sys.stderr)
 
     return plan
@@ -491,7 +491,10 @@ def main() -> int:
     request = Request.from_json(inputs, roots)
 
     plan = resolve(request, projects, target, uv)
-    root = plan.venv_node(env("DDRN_VENV_NAME"))
+    application: str | None = inputs.get("application")
+    root = plan.root(env("DDRN_VENV_NAME"), application=application)
+    if application is not None:
+        print(f"plan: application {application}, over the environment of the same members", file=sys.stderr)
 
     print(
         f"==> {len(plan.nodes)} nodes, {len(plan.members)} of them in the "
