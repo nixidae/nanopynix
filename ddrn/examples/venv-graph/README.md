@@ -143,6 +143,7 @@ this.
 | `markers` | `platform_release` and `platform_version`, which no build can know |
 | `uvCheck` | `true` runs `uv lock --check` over the project before the planner runs. See below |
 | `application` | which members to render as programs rather than an environment. One name, or a list. See below |
+| `mainProgram` | the program that `meta.mainProgram` of the `app` attribute names. The default is the sole name of `application`. See below |
 
 ## Extras and groups, the way `uv sync` takes them
 
@@ -227,13 +228,14 @@ nothing is the worse failure.
 ### The environment of the same arguments
 
 The result carries an `environment` attribute, which is this same project with
-no application. So one set of arguments gives both shapes:
+no application, and an `app` attribute, which is the application as a
+derivation. So one set of arguments gives every shape:
 
 ```nix
-let app = import ./uv.nix { project = ./.; application = "ws-cli"; };
+let target = import ./uv.nix { project = ./.; application = "ws-cli"; };
 in {
-  packages.default = app;          # bin/ws-cli, for a NixOS configuration
-  devShells.default = app.environment;   # bin/python, for a shell
+  packages.default = target.app;              # bin/ws-cli, and `nix run` finds it
+  devShells.default = target.environment;     # bin/python, for a shell
 }
 ```
 
@@ -243,6 +245,40 @@ suffix, so a user who installs both gets one environment and not two copies of
 it. It costs a second planner build, because the two planners differ in one
 variable, and no second environment: every node they submit is
 content-addressing and identical.
+
+### `app`, and why a wrapper is necessary
+
+`builtins.outputOf` gives a string, and a string carries no `meta`. So `nix
+run` over the application itself fails with `attribute 'type' does not exist`,
+and no hand-written attribute set repairs it: `nix run` reads `outPath` during
+evaluation, and a dynamic output has no path until the graph runs.
+
+`app` is a derivation whose whole content is one symbolic link to the
+application. `nix run` realises it and reads the result after, so `nix run`
+works. It costs 176 bytes and one store path, measured over
+`projects/workspace`. `ddrn/NIX-FACTS.md` gives every measurement.
+
+```console
+$ nix build --file ./uv.nix app --arg project /path/to/workspace \
+    --arg application '["ws-cli"]'
+$ ./result/bin/ws-cli
+```
+
+`meta.mainProgram` takes the sole name of `application`, which is right
+whenever the console script of a member carries the name of that member. **The
+build verifies the name rather than trust it.** A member whose entry point is
+called something else fails, and the message lists what the application holds:
+
+```
+uv.nix: the application holds no program called 'not-a-program'.
+It holds:
+ws-cli
+Name one of those with the 'mainProgram' argument of uv.nix.
+```
+
+`lib.getExe` gives the deferred placeholder rather than a path, because it
+interpolates `outPath` during evaluation. That placeholder is correct inside
+another derivation, and a shell cannot use it.
 
 ## A stale `uv.lock` stops the build
 

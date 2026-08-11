@@ -145,6 +145,22 @@
   # inputs: the environment for the content, and the `$out` of the one package
   # for the shape.
   application ? null,
+  # The program that `meta.mainProgram` of the `app` attribute names.
+  #
+  # **`builtins.outputOf` gives a string, and a string carries no `meta`.** So
+  # the `app` attribute of the result is a derivation whose whole content is one
+  # symbolic link to the application, and `meta.mainProgram` of that derivation
+  # is what this argument names. `ddrn/NIX-FACTS.md` gives the measurement,
+  # under "A dynamic output carries no `meta`".
+  #
+  # `null` takes the sole name of `application`, which is right whenever the
+  # console script of a member carries the name of that member. **The wrapper
+  # verifies the name rather than trust it**, so a package whose entry point is
+  # called something else fails the build and names what the application holds.
+  #
+  # An `application` of several members has no sole name, so `app` then carries
+  # no `mainProgram` unless this argument gives one.
+  mainProgram ? null,
 }@arguments:
 
 let
@@ -264,6 +280,62 @@ let
         Run `uv lock` in the project, and build again.
         MESSAGE
         exit 1
+      '';
+
+  # The names that `application` holds, as a list, whichever form it took.
+  applicationNames =
+    if application == null then
+      [ ]
+    else if builtins.isList application then
+      application
+    else
+      [ application ];
+
+  # The program that `app` names, or `null` when nothing decides one.
+  chosenProgram =
+    if mainProgram != null then
+      mainProgram
+    else if builtins.length applicationNames == 1 then
+      builtins.head applicationNames
+    else
+      null;
+
+  # **A derivation of the application, so that `meta` has somewhere to live.**
+  # `builtins.outputOf` gives a bare string, and a string carries no `meta`.
+  # Measured: `nix run` over that string fails with `attribute 'type' does not
+  # exist`, and an attribute set that names `outPath` and `drvPath` by hand
+  # fails with `path "/0a988..." is not in the Nix store`. This derivation is
+  # the only shape that works, and its whole content is one symbolic link to the
+  # application. Measured: it adds 176 bytes and one path to a closure of
+  # 238229120 bytes.
+  #
+  # **The output of this derivation is deferred, like every node of the graph.**
+  # Its input is the application, whose path no evaluation knows, so Nix cannot
+  # compute this path either. `nix run` realises the installable and then reads
+  # the result, so it works. `lib.getExe` interpolates `outPath` during
+  # evaluation, so it gives a placeholder: that placeholder is correct inside
+  # another derivation, and it is not a path that a shell can use.
+  #
+  # **The build verifies the program rather than trust the name.** A member
+  # usually installs a console script of its own name, and `mainProgram` above
+  # says what to do when it does not.
+  applicationWrapper =
+    pkgs.runCommand (if chosenProgram != null then chosenProgram else environmentName)
+      {
+        application = builtins.outputOf planner.outPath "out";
+        meta = lib.optionalAttrs (chosenProgram != null) { mainProgram = chosenProgram; };
+      }
+      ''
+        ${lib.optionalString (chosenProgram != null) ''
+          if [ ! -x "$application/bin/${chosenProgram}" ]; then
+            echo "uv.nix: the application holds no program called '${chosenProgram}'." >&2
+            echo "It holds:" >&2
+            ls -1 "$application/bin" >&2
+            echo "Name one of those with the 'mainProgram' argument of uv.nix." >&2
+            exit 1
+          fi
+        ''}
+        ln -s "$application" "$out"
       '';
 
   # **`tool.uv` is a setting of the project, and uv copies none of it into the
@@ -654,8 +726,12 @@ lib.throwIfNot (lockVersion == 1)
         # that ships one program and develops against the whole environment
         # writes the arguments once:
         #
-        #     app = import ./uv.nix { project = ./.; application = "ws-cli"; };
-        #     shell = app.environment;
+        #     target = import ./uv.nix { project = ./.; application = "ws-cli"; };
+        #     shell = target.environment;
+        #
+        # `app` is the same application as a derivation, for `nix run`, for
+        # `lib.getExe` and for `environment.systemPackages`. The comment on
+        # `applicationWrapper` above says why a wrapper is necessary.
         #
         # **It costs a second planner, and no second environment.** The two
         # planners differ in one variable, so Nix builds both. Every node that
@@ -664,6 +740,14 @@ lib.throwIfNot (lockVersion == 1)
         planner
         // {
           inherit lockCheck;
+          app =
+            if application == null then
+              throw (
+                "uv.nix: `app` is the application as a derivation, and this call names no application. "
+                + "Pass `application`, or build this result itself for the environment."
+              )
+            else
+              applicationWrapper;
           environment =
             if application == null then
               planner

@@ -1073,6 +1073,57 @@ The pytest run makes each of those a property of the machine that runs it,
 where it belongs. `ddrn/examples/venv-graph/tests/pytest.ini` keeps the run
 separate, and the `testpaths` of the repository does not name that directory.
 
+### A dynamic output carries no `meta`
+
+`builtins.outputOf` gives a string, and a string has no attributes. So every
+reader of `meta` refuses the output of a planner. Measured on 2026-08-11,
+against the application of `projects/workspace`:
+
+| what a consumer writes | what Nix says |
+| --- | --- |
+| `nix run --expr 'builtins.outputOf p "out"'` | `error: attribute 'type' does not exist` |
+| `nix run --expr '{ type = "app"; program = ...; }'` | `error: attribute '' should have type 'derivation'` |
+| `nix run --expr '{ type = "derivation"; outPath = ...; drvPath = p; }'` | `error: path "/0a988..." is not in the Nix store` |
+| `nix build --expr 'builtins.outputOf p "out"'` | the environment, as a store path |
+
+The third row is the interesting one. That attribute set gets past
+`meta.mainProgram`, and it then fails on the path: `nix run` reads `outPath`
+during evaluation, and `builtins.outputOf` gives the deferred placeholder
+`/0a988pgzhkniq4ghpd379bqdqdb05hlshkip1bh9xk6h0ap3y5a3` until the graph runs.
+No hand-written attribute set can answer this, because no evaluation knows the
+path.
+
+**A wrapper derivation is the shape that works.** Its input is the application,
+so its own output is deferred as well, and `nix run` still works: `nix run`
+realises the installable first and reads the result after. The whole content of
+the wrapper is one symbolic link.
+
+```console
+$ nix build --expr '(import ./uv.nix { ... application = ["ws-cli"]; }).app'
+/nix/store/67b8z8nw8j1jmpm34zk8hh2g64a1b789-ws-cli
+$ nix store ls --long /nix/store/67b8...-ws-cli
+lrwxrwxrwx 0  -> /nix/store/nm6v51ajg9rcbl8p6k8xjpwx4b3zb515-workspace-app
+```
+
+The application closure is 238229120 bytes, and the wrapper closure is
+238229296 bytes. So the wrapper costs 176 bytes and one path.
+
+**`lib.getExe` still gives a placeholder**, because it interpolates `outPath`
+during evaluation:
+
+```console
+$ nix eval --raw --expr 'lib.getExe (import ./uv.nix { ... }).app'
+/0g0zqixw2g9wxh1mi0ik0n83nzb4sx5vz0j41i5774c6k6m9a012/bin/ws-cli
+```
+
+That placeholder is correct inside another derivation, which is where
+`lib.getExe` usually goes. It is not a path that a shell can use.
+
+`ddrn/examples/venv-graph/uv.nix` builds the wrapper, and its `mainProgram`
+argument names the program. The build verifies that the application holds that
+program, so a member whose console script carries another name fails with a
+message that lists what the application does hold.
+
 ### nanopynix builds the whole graph, with no `nix` command
 
 The tests drive the example through the patched `nix` command. That command is

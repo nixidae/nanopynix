@@ -184,6 +184,55 @@ class Toolchain:
             [self.cli, "--store", str(self.store), "--extra-experimental-features", FEATURES, "store", "cat", path]
         )
 
+    async def list_files(self, path: str) -> str:
+        """Every entry under `path`, as `nix store ls --long` prints them.
+
+        The store is private, so the host cannot walk that directory itself. A
+        symbolic link prints with its target, which is what a test of the
+        application wrapper reads.
+        """
+        return await run(
+            [
+                self.cli,
+                "--store",
+                str(self.store),
+                "--extra-experimental-features",
+                FEATURES,
+                "store",
+                "ls",
+                "--long",
+                "--recursive",
+                path,
+            ]
+        )
+
+    def evaluation(self, expression: str) -> list[str]:
+        """The command that evaluates `expression`, and builds nothing.
+
+        A test that reads `meta` needs this. The store is still the private
+        one, because the expression names a path of it.
+        """
+        return [
+            self.cli,
+            "eval",
+            "--store",
+            str(self.store),
+            "--impure",
+            "--raw",
+            "--expr",
+            expression,
+            "--extra-experimental-features",
+            FEATURES,
+        ]
+
+    async def evaluate(self, expression: str) -> str:
+        """Evaluate `expression`, and give back what it printed."""
+        return await run(self.evaluation(expression))
+
+    async def evaluate_failing(self, expression: str) -> str:
+        """Evaluate `expression`, which must fail, and give back what it printed."""
+        return await run_failing(self.evaluation(expression))
+
 
 def environment_of(report: str) -> str:
     """The store path that a report names under its `environment` heading.

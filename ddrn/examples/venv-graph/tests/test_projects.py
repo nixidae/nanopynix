@@ -237,6 +237,89 @@ class TestTheApplication:
         assert "bin/packaged-app" in report
 
 
+#: The arguments that give `uv.nix` the application of the workspace. A test of
+#: `app` writes an expression, and not a command line, so it needs them here.
+WORKSPACE_APP = f'{{ project = {PROJECTS / "workspace"}; application = ["ws-cli"]; venvName = "workspace-app"; }}'
+
+
+def target(toolchain: Toolchain, extra: str = "") -> str:
+    """The `uv.nix` of the workspace application, as a Nix expression."""
+    arguments = f'{WORKSPACE_APP} // {{ nanopynixEnv = "{toolchain.env}"; {extra} }}'
+    return f"(import {UV} ({arguments}))"
+
+
+class TestTheApplicationAsADerivation:
+    """`app`, which is the shape that every reader of `meta` needs.
+
+    **`builtins.outputOf` gives a string, and a string carries no `meta`.** So
+    `nix run` refuses it, `lib.getExe` refuses it, and a NixOS module refuses
+    it. `uv.nix` wraps the application in a derivation that holds one symbolic
+    link, and `ddrn/NIX-FACTS.md` gives each measurement.
+    """
+
+    async def test_the_wrapper_names_the_program(self, toolchain: Toolchain) -> None:
+        # One member, so `mainProgram` takes the name of that member.
+        name = await toolchain.evaluate(f"{target(toolchain)}.app.meta.mainProgram")
+        assert name == "ws-cli"
+
+    async def test_the_wrapper_takes_the_name_of_the_program(self, toolchain: Toolchain) -> None:
+        # **The store path is named after the program, and not after the
+        # environment.** `nix build` writes `result/bin/ws-cli`, and a reader
+        # of the path sees which program it holds.
+        wrapper = await toolchain.build(
+            UV,
+            "app",
+            "--arg",
+            "project",
+            str(PROJECTS / "workspace"),
+            "--arg",
+            "application",
+            '["ws-cli"]',
+            "--argstr",
+            "venvName",
+            "workspace-app",
+        )
+        assert wrapper.endswith("-ws-cli"), wrapper
+
+        # **The whole content is one symbolic link.** So the closure grows by
+        # this path alone, and the application behind it stays one store path
+        # however many wrappers name it.
+        listing = await toolchain.list_files(wrapper)
+        assert listing.count("\n") == 0, listing
+        assert listing.split("->")[-1].strip().endswith("-workspace-app"), listing
+
+    async def test_a_program_that_the_application_does_not_hold(self, toolchain: Toolchain) -> None:
+        # **The build verifies the name rather than trust it.** A member that
+        # installs a console script of another name would otherwise give an
+        # `app` whose `mainProgram` names nothing, and `nix run` would fail
+        # with a message about a missing file.
+        report = await toolchain.build_failing(
+            UV,
+            "app",
+            "--arg",
+            "project",
+            str(PROJECTS / "workspace"),
+            "--arg",
+            "application",
+            '["ws-cli"]',
+            "--argstr",
+            "mainProgram",
+            "not-a-program",
+            "--argstr",
+            "venvName",
+            "workspace-app",
+        )
+        assert "holds no program called 'not-a-program'" in report
+        assert "ws-cli" in report
+
+    async def test_an_environment_has_no_application(self, toolchain: Toolchain) -> None:
+        # `app` of a call that names no application is a mistake, and not the
+        # environment under another name.
+        plain = f'(import {UV} {{ project = {PROJECTS / "workspace"}; nanopynixEnv = "{toolchain.env}"; }})'
+        refusal = await toolchain.evaluate_failing(f"{plain}.app")
+        assert "names no application" in refusal
+
+
 class TestBinaryApp:
     """A wheel that holds compiled code, and the same package from nixpkgs."""
 
