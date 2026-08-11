@@ -1095,23 +1095,112 @@ the two ways to name it as the lower layer each fail:
 | lower store | what happens |
 | --- | --- |
 | `daemon` | `the daemon is missing the 'realisation-with-path-not-hash' protocol feature, needed to support content-addressing derivations` |
-| `local?read-only=true` | `no such table: BuildTraceV3 (in '/nix/var/nix/db/db.sqlite')` |
+| `local?read-only=true` | `no such table: BuildTraceV3 (in '/nix/var/nix/db/db.sqlite')`, which the patch below removes |
 | `local` | untried: it would write to the store database of the machine |
 
 Both were measured on 2026-08-12, over `check-uv.nix` of `projects/pure-app`.
 The planner itself builds in the overlay. The failure arrives when the graph
 that the planner submitted registers its first output.
 
-**The second row is two defects, and the file names both.**
+**The second row is one defect, and the message says where.**
 `src/libstore/ca-specific-schema.sql` creates `BuildTraceV3`, and
 `src/libstore/local-store.cc:345` applies it under
 `if (!config->readOnly && upgradeDBSchema(...))`. So a read-only store never
-gets the table, and `local-store.cc:382` writes to it anyway.
+gets the table. `local-store.cc:378` then prepares four statements that name
+that table, under `Xp::CaDerivations` alone. SQLite refuses to prepare a
+statement over a table that is absent, so the store cannot open at all.
 
-**The error names the database of the lower store.** A build trace of a node
-that the upper layer built belongs in the state directory of the overlay, which
-`OverlayNamespace` gives it. That it reaches `/nix/var/nix/db/db.sqlite`
-instead is the defect to report.
+**The message is about preparation, and not about a write.** `creating
+statement` is the text of `SQLiteStmt::create`, which the constructor of
+`LocalStore` calls. So `/nix/var/nix/db/db.sqlite` is the database of the store
+that failed to open, which is the lower store. An earlier version of this file
+read that name as the target of a write, and that reading was wrong:
+`LocalOverlayStore::registerDrvOutputUnchecked`
+(`src/libstore/local-overlay-store.cc:82`) writes through `LocalStore::` on
+itself, which is the state directory of the overlay.
+
+### The patch that opens such a store
+
+`~/Code/ddnix`, change `mktswroz`, `fix(store): open a read-only store whose
+database has no build trace table`:
+
+- `LocalStore::State` holds `hasBuildTrace`. The constructor asks
+  `sqlite_master` whether `BuildTraceV3` exists, and prepares the four
+  statements only when the answer is yes.
+- `queryRealisationCore_` answers `std::nullopt` when the flag is false,
+  because a store with no table holds no build trace.
+- `registerDrvOutputUnchecked` and `deleteBuildTraces` raise an error that
+  names the store and says what to do.
+
+`tests/functional/read-only-build-trace.sh` proves it. The test creates a store
+with no `ca-derivations`, opens that store with `local?read-only=true` and
+`ca-derivations`, and reads a path. **The test was run against the code before
+the patch, and it failed with the same message as the probe:**
+`no such table: BuildTraceV3`. With the patch it passes. `meson test` of the
+`main`, `ca` and `dyn-drv` suites gives 167 Ok and 0 Fail with the patch, and
+the three unit suites give 3 Ok and 0 Fail.
+
+### The patch opens the store, and this host still cannot be a lower layer
+
+The patch removes the refusal, and it does not make the store of this machine a
+lower layer. Measured on 2026-08-12, with the patched Nix, over `check-uv.nix`
+of `projects/pure-app`:
+
+| lower store | what happens now |
+| --- | --- |
+| `daemon` | the store opens and the graph fails. `capture_logs` gives the reason: `the daemon is missing the 'realisation-with-path-not-hash' protocol feature`. The `InvalidPathError` that the caller sees names `pcre2-10.47`, and that path is valid on the host. **Read the log rather than the exception.** |
+| `local?read-only=true` | the store opens, and the view of it is stale |
+
+**A read-only store gives a stale view of a live store, and Nix documents
+this.** `read-only = true` opens SQLite with the `immutable` parameter
+(`local-store.cc:560`), and an immutable open ignores the write-ahead log. The
+warning on the `read-only` setting
+(`src/libstore/include/nix/store/local-store.hh:119`) says: "Do not use this
+unless the filesystem is read-only", and "can cause incorrect query results".
+
+The measurement, with a `db.sqlite-wal` of 154170432 bytes beside a `db.sqlite`
+of 111005696 bytes:
+
+```
+uri: local-overlay://
+old path (before the last checkpoint): True
+new path (after it): False
+new path exists on disk: True
+```
+
+The "new path" is a `ddrn-planner-env` that the daemon registered minutes
+before, and the last checkpoint of the host database was 28 minutes before
+that. A copy of that closure into the upper layer fails as well, with
+`fchmodat2 "/nix/store/...-nix-util-2.36.0pre-ddnix+2": Operation not
+permitted`: the copy tries to add a path that the lower layer already holds as
+bytes, and OverlayFS cannot copy up a directory that root owns.
+
+**So the lower store has to be `daemon`, and that needs a newer Nix on the
+machine.** `OverlayNamespace` mounts `lowerdir=/nix/store`
+(`nanopynix/namespace.py:339`), so the bytes always come from the store of the
+machine and the `lower_store` URI only supplies the metadata of those bytes. A
+separate store of the lab cannot take that place.
+
+### Three tests of this repository fail against Nix master, and did so before
+
+`pytest tests` inside `nanopynixMaster.shell` gives 2594 passed and 3 failed:
+
+| test | what differs |
+| --- | --- |
+| `test_settings_model_matches_registered_nix_settings` | Nix registers `build-hook-kill-timeout`, and the settings model does not hold it |
+| `test_optional_settings_models_match_their_surfaces` | the same setting |
+| `test_flake_metadata_matches_nix[local]` | `fingerprint`: pynix computes `b7a528f2…` and `nix flake metadata` gives `d4266f14…` |
+
+**Each one was proved pre-existing, and not proved by argument.** The build of
+`nanopynixMaster.nanopynix-bindings` was repeated from the commit below the
+patch of `~/Code/ddnix`, which gives
+`/nix/store/5a1j3c06jshc16rzcks5dril4b6nf98n-python3.14-nanopynix-bindings`
+rather than `qb5sbdwqiy3dxhav6lc9n1sm6fmpc76w`. The same three tests fail there.
+
+`jj file annotate` gives the origin of the first two: an upstream author added
+`build-hook-kill-timeout` to `worker-settings.hh` on 2026-07-28, and the pin of
+this repository carries that commit. The default band runs Nix 2.34, which has
+no such setting, so `pytest tests` passes there.
 
 ### A nested deriving path names the output of a submitted derivation
 
@@ -1285,17 +1374,13 @@ restricted allowlist refuses. A planner avoids the memo by giving the graph
 floating content-addressed outputs, so that no output path comes from a hash
 modulo the inputs.
 
-**A local-overlay store writes a build trace to the database of its lower
-store.** Measured: a graph built in the upper layer failed with `no such table:
-BuildTraceV3 (in '/nix/var/nix/db/db.sqlite')`, which is the store of the
-machine. The overlay holds a state directory of its own, and that is where the
-trace of a node that the upper layer built belongs.
-
 **A read-only local store skips the content-addressing migration, and then
-writes.** `src/libstore/local-store.cc:345` applies the schema under
-`if (!config->readOnly && ...)`, and `local-store.cc:382` inserts into
-`BuildTraceV3` with no such guard. So a read-only store that Nix accepts fails
-at the first build trace, with a message about a table rather than about the
-mode.
+cannot open.** `src/libstore/local-store.cc:345` applies the schema under
+`if (!config->readOnly && ...)`, and `local-store.cc:378` prepares four
+statements that name `BuildTraceV3` under `Xp::CaDerivations` alone. SQLite
+refuses to prepare a statement over a table that is absent, so such a store
+fails at the constructor, with a message about a table rather than about the
+mode. The section "An overlay store works" holds the patch that this lab wrote,
+and the functional test that proves it.
 
 None of these is reported upstream.
