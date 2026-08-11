@@ -386,6 +386,86 @@ lock file costs one fortieth of that, so the menu needs no filter and no
 budget. **The planner therefore reads a menu of every artefact of the lock,
 and it makes the choice.**
 
+### What the whole planner costs, measured and reproducible
+
+The table above measures a `writeText` file of 1838 `fetchurl` derivations, and
+that file is not the planner that this lab builds now. The planner also carries
+one planner for each source distribution, at each level of the recursion, and
+those did not exist when that measurement ran.
+
+`ddrn/examples/venv-graph/bench/measure.sh` measures the planner itself. It
+needs no network and it builds nothing, and `bench/README.md` gives the method.
+The project is `anthropic`, `boto3`, `jupyterlab` and `pandas`, which `uv`
+resolved to 111 packages:
+
+```console
+$ ddrn/examples/venv-graph/bench/measure.sh --cold
+```
+
+| what | value |
+| --- | --- |
+| packages in `uv.lock` | 111 |
+| `uv.lock` | 244918 bytes |
+| artefact rows | 715 (605 wheel, 110 sdist) |
+| the menu, `DDRN_INPUTS` | 253860 bytes |
+| instantiation into an empty store | 8.97 s |
+| instantiation, warm | 1.74 s |
+| paths in the closure of the `.drv` | 2043 |
+| of which `.drv` | 1811 |
+| closure size | 158730056 bytes |
+| bytes of `.drv` text | 119169562 |
+| `.drv` that carry a copy of the menu | 331, and 114646605 bytes of the above |
+
+**96% of the derivation text is the same menu, written 331 times.** There is
+one planner for each of the 110 source distributions at each of the three
+levels, and one outer planner, so 331 derivations each hold the whole 253860
+byte menu. That is what a menu of every artefact costs, and the cost is a
+property of the design and not a defect: a planner names an artefact through
+the string context of that text, so the text is what makes each `.drv` an input
+source.
+
+#### The row of an archive left the menu, and the menu is now one string
+
+The measurement above found the menu serialised 331 times, and not 4 times. The
+document of each planner carried the row of its own archive, so no two
+documents were equal and `builtins.toJSON` ran again for each one.
+
+`DDRN_SDIST_ROW` now carries that row, and `levelJson` is a list of the text of
+each level. A list is a memo, so the menu is serialised one time for each
+level. The row is a few hundred bytes.
+
+| `sdistPlannerDepth` | warm, before | warm, after |
+| --- | --- | --- |
+| 0 | 1.09 s | 1.13 s |
+| 1 | 1.97 s | 1.44 s |
+| 2 | 2.97 s | 1.97 s |
+| 3 | 3.83 s | 2.16 s |
+
+Measured by setting `sdistPlannerDepth` in `default.nix` to each value and
+instantiating twice, taking the second time. The cost of one level fell from
+0.93 s to 0.34 s, and the whole warm instantiation fell 41%, from 2.95 s to
+1.74 s. **The `.drv` files did not shrink**, because each planner still holds
+the menu that names its inputs; what went away is 27.9 MB of JSON that Nix
+wrote for each level and then threw away.
+
+The 0.34 s that each level still costs is the construction of 110 derivations
+and the hash of the text of each one. Nothing in that is redundant.
+
+**A content-addressed output is what proved the change safe.** The planner of
+each source distribution is a different derivation now, so its `.drv` path
+changed, and the submitted root of every project that holds a source
+distribution changed with it. The environment did not:
+
+```console
+$ ddrn/examples/venv-graph/run-uv.sh /tmp/ddrn-uv-compare   # before, and again after
+$ diff <(grep '^prefix' before.log) <(grep '^prefix' after.log)
+```
+
+Every one of the seven projects built to the same store path. A floating output
+takes its path from what the build wrote, so one path means one content. Under
+input addressing the path would have moved with the `.drv` of the planner, and
+a reader could not tell a rewritten plan from a rewritten environment.
+
 ### How uv2nix resolves, and what each step is for
 
 `lib/lock1.nix:50`, `resolveDependencies`. It takes the lock, a PEP 508

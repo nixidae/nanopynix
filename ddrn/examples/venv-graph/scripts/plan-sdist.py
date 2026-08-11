@@ -51,7 +51,12 @@ def main() -> int:
     # The archive itself. It is an input of this derivation, so it is present,
     # and the node that builds it needs no fetch.
     archive = env("DDRN_SDIST")
-    subject: dict[str, str] = inputs["sdist"]
+    # **The row of this archive travels apart from the menu, and that is a
+    # measurement and not a taste.** Every planner of one level reads the same
+    # menu, so `default.nix` serialises that menu one time for the level. A row
+    # inside the menu made each document different, and Nix then wrote a
+    # quarter of a megabyte of JSON for each of the planners.
+    subject: dict[str, str] = json.loads(env("DDRN_SDIST_ROW"))
     # **The project is not always at the top of the archive.** A URL source of
     # `uv.lock` names a subdirectory, and the archive of `pypa/hatch` holds more
     # than one project. The declaration to read, and the directory that the

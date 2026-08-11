@@ -357,18 +357,27 @@ let
         # that file an input source of this planner in the same way.
         DDRN_SDIST = if entry ? path then entry.path else entry.drv;
 
-        DDRN_INPUTS = builtins.toJSON (
-          (builtins.elemAt levels (depth - 1))
-          // {
-            # **A URL source names where its project lives inside the
-            # archive.** `uv.nix` puts `subdirectory` on the artefact, and the
-            # planner of this distribution reads the declaration there. An
-            # artefact of the index carries no such key.
-            sdist = {
-              inherit (entry) package version filename;
-            }
-            // pkgs.lib.optionalAttrs (entry ? subdirectory) { inherit (entry) subdirectory; };
+        # **The menu is the same for every planner of one level, so it is
+        # serialised once for that level and not once for each planner.**
+        # `levelJson` is a list, and a list is a memo, so `builtins.toJSON`
+        # runs one time for each level. It ran one time for each planner while
+        # the row below was part of this document, and the lock file of the
+        # benchmark then paid 27.9 MB of JSON for each level.
+        # `ddrn/PACKAGING-FACTS.md` holds both measurements.
+        DDRN_INPUTS = builtins.elemAt levelJson (depth - 1);
+
+        # **A URL source names where its project lives inside the archive.**
+        # `uv.nix` puts `subdirectory` on the artefact, and the planner of this
+        # distribution reads the declaration there. An artefact of the index
+        # carries no such key.
+        #
+        # This is the one part that differs between two planners of one level,
+        # and it is a few hundred bytes.
+        DDRN_SDIST_ROW = builtins.toJSON (
+          {
+            inherit (entry) package version filename;
           }
+          // pkgs.lib.optionalAttrs (entry ? subdirectory) { inherit (entry) subdirectory; }
         );
 
         args = [
@@ -388,6 +397,12 @@ let
   # this lab measured hold up to 98 source distributions. The recursive form
   # did not reach such a lock file.
   levels = builtins.genList inputsAt (sdistPlannerDepth + 1);
+
+  # **The same memo, over the text of each level.** Every planner of one level
+  # reads the same menu, so the JSON of that menu is one string for the level.
+  # A `builtins.toJSON` inside `sdistPlanner` would run one time for each
+  # planner instead, over a document of a quarter of a megabyte.
+  levelJson = map builtins.toJSON levels;
 
   # The inputs, with a planner for each source distribution, to `depth`
   # levels. This maps over the lock file and not over `baseInputs.artifacts`,
