@@ -33,183 +33,25 @@ time, and nothing after that, because the work directory holds the result.
 
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import anyio
 import pytest
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
+from toolchain import EXAMPLE, Toolchain, environment_of, work_directory
 
 pytestmark = pytest.mark.nix
 
 HERE = Path(__file__).resolve().parent
-EXAMPLE = HERE.parent
-REPO = EXAMPLE.parents[2]
 
-#: The features that the patched Nix needs to evaluate and to build a graph.
-FEATURES = "nix-command flakes ca-derivations dynamic-derivations"
-
-#: The feature that a **build** of a planner needs. Nix compares it in
-#: `DerivationBuildingGoal::tryToBuild`, which runs only after substitution
-#: failed, so a consumer that substitutes every output needs no such feature.
-#: This test builds everything, because its store is private and no cache has
-#: ever served it.
-SYSTEM_FEATURES = "builder-rpc-v0 recursive-nix"
-
-
-async def run(command: Sequence[str], **environ: str) -> str:
-    """Run `command`, and give back its standard output with no trailing space."""
-    result = await anyio.run_process(
-        list(command),
-        env={**os.environ, **environ},
-        check=False,
-        stderr=None,
-    )
-    if result.returncode != 0:
-        raise AssertionError(f"{command[0]} failed with {result.returncode}: {' '.join(command)}")
-    return result.stdout.decode().strip()
-
-
-async def run_failing(command: Sequence[str], **environ: str) -> str:
-    """Run `command`, require that it fails, and give back what it printed.
-
-    **The message of the failure is the thing under test**, so this one keeps
-    the standard error rather than let it reach the terminal. A build that
-    passed would be the defect here, so success raises.
-    """
-    result = await anyio.run_process(list(command), env={**os.environ, **environ}, check=False)
-    if result.returncode == 0:
-        raise AssertionError(f"{command[0]} was expected to fail, and it succeeded: {' '.join(command)}")
-    return (result.stdout + result.stderr).decode()
-
-
-class Toolchain:
-    """The patched Nix, the planner environment, and the store that holds both.
-
-    `run.sh` sets the same three things up, and this class is that script as a
-    fixture. The work directory survives the run, so a second run of this test
-    builds nothing.
-    """
-
-    def __init__(self, work: Path) -> None:
-        self.work = work
-        self.store = work / "store"
-        self.nix = ""
-        self.env = ""
-
-    @property
-    def cli(self) -> str:
-        return f"{self.nix}/bin/nix"
-
-    async def prepare(self) -> None:
-        self.work.mkdir(parents=True, exist_ok=True)
-        # `FLAKE_COMPATISH_DISABLE_OVERRIDES` makes this evaluation agree with
-        # a flake evaluation, the same way every CI workflow sets it.
-        environ = {"FLAKE_COMPATISH_DISABLE_OVERRIDES": "1"}
-        self.nix = await run(
-            [
-                "nix",
-                "build",
-                "--impure",
-                "--expr",
-                f"(import {REPO} {{ }}).nanopynixMaster.nix-cli",
-                "--no-link",
-                "--print-out-paths",
-                "--print-build-logs",
-            ],
-            **environ,
-        )
-        self.env = await run(
-            [
-                "nix",
-                "build",
-                "--impure",
-                "--expr",
-                f'(import {REPO} {{ }}).nanopynixMaster.pythonSet.mkVirtualEnv "ddrn-planner-env" {{ nanopynix = [ ]; }}',
-                "--no-link",
-                "--print-out-paths",
-                "--print-build-logs",
-            ],
-            **environ,
-        )
-
-        # `--no-check-sigs` is needed and is safe. Both inputs were built on
-        # this machine, so no cache signed them, and a chroot store refuses an
-        # unsigned path. The store is a private directory of this test.
-        self.store.mkdir(parents=True, exist_ok=True)
-        await run(
-            [
-                self.cli,
-                "copy",
-                "--to",
-                str(self.store),
-                "--no-check-sigs",
-                self.nix,
-                self.env,
-                "--extra-experimental-features",
-                "nix-command flakes",
-            ]
-        )
-
-    def command(self, attribute: str, *arguments: str) -> list[str]:
-        """The command that builds one attribute of `sealed.nix`."""
-        return [
-            self.cli,
-            "build",
-            "--store",
-            str(self.store),
-            "--file",
-            str(HERE / "sealed.nix"),
-            attribute,
-            # A string names a store path that this evaluation did not make,
-            # which only an impure evaluation may do. A caller that passes the
-            # derivation, as `nix/checks.nix` does, needs neither the flag nor
-            # `builtins.storePath`.
-            "--argstr",
-            "nanopynixEnv",
-            self.env,
-            "--impure",
-            *arguments,
-            "--no-link",
-            "--print-out-paths",
-            "--print-build-logs",
-            "--extra-experimental-features",
-            FEATURES,
-            "--system-features",
-            SYSTEM_FEATURES,
-        ]
-
-    async def build(self, attribute: str, *arguments: str) -> str:
-        """Build one attribute of `sealed.nix`, and give back its output path."""
-        return await run(self.command(attribute, *arguments))
-
-    async def build_failing(self, attribute: str, *arguments: str) -> str:
-        """Build one attribute that must fail, and give back what it printed."""
-        return await run_failing(self.command(attribute, *arguments))
-
-    async def cat(self, path: str) -> str:
-        return await run(
-            [self.cli, "--store", str(self.store), "--extra-experimental-features", FEATURES, "store", "cat", path]
-        )
-
-
-def environment_of(report: str) -> str:
-    """The store path that the report names as the environment it read."""
-    lines = report.splitlines()
-    return lines[lines.index("environment") + 1].strip()
+#: The expression that every test of this module builds. Each attribute of it
+#: is one planner or one check.
+SEALED = HERE / "sealed.nix"
 
 
 @pytest.fixture(scope="module")
 def work() -> Path:
-    """Where the patched Nix and the private store live, between runs."""
-    named = os.environ.get("DDRN_WORK")
-    if named:
-        return Path(named)
-    return Path(os.environ.get("TMPDIR", "/tmp")) / "ddrn-sealed-venv"
+    return work_directory("ddrn-sealed-venv")
 
 
 async def test_the_sealed_graph_builds_and_runs(work: Path, tmp_path: Path) -> None:
@@ -219,10 +61,10 @@ async def test_the_sealed_graph_builds_and_runs(work: Path, tmp_path: Path) -> N
     # **The planner submits a `.drv`, and not an environment.** Its own output
     # is the root of the graph that it registered, and nothing is downloaded
     # or built by that step.
-    root = await toolchain.build("planner")
+    root = await toolchain.build(SEALED, "planner")
     assert root.endswith("-sealed-venv.drv"), root
 
-    check = await toolchain.build("check")
+    check = await toolchain.build(SEALED, "check")
     report = await toolchain.cat(check)
 
     # The console script exists only if the installer that the planner
@@ -248,7 +90,7 @@ async def test_the_sealed_graph_builds_and_runs(work: Path, tmp_path: Path) -> N
         )
     )
 
-    other_check = await toolchain.build("check", "--arg", "editableTree", str(other))
+    other_check = await toolchain.build(SEALED, "check", "--arg", "editableTree", str(other))
     other_report = await toolchain.cat(other_check)
     assert "a tree that this test wrote a moment ago" in other_report
 
@@ -273,10 +115,10 @@ async def test_the_same_project_ships_as_a_source_distribution(work: Path) -> No
     toolchain = Toolchain(work)
     await toolchain.prepare()
 
-    root = await toolchain.build("sdistPlanner")
+    root = await toolchain.build(SEALED, "sdistPlanner")
     assert root.endswith("-sealed-sdist-venv.drv"), root
 
-    check = await toolchain.build("sdistCheck")
+    check = await toolchain.build(SEALED, "sdistCheck")
     report = await toolchain.cat(check)
 
     environment = environment_of(report)
@@ -318,10 +160,10 @@ async def test_a_project_below_the_top_of_a_tree_and_of_an_archive(work: Path) -
     toolchain = Toolchain(work)
     await toolchain.prepare()
 
-    root = await toolchain.build("nestedPlanner")
+    root = await toolchain.build(SEALED, "nestedPlanner")
     assert root.endswith("-sealed-nested-venv.drv"), root
 
-    check = await toolchain.build("nestedCheck")
+    check = await toolchain.build(SEALED, "nestedCheck")
     report = await toolchain.cat(check)
 
     assert "hello from the project below the top of its tree" in report
@@ -350,10 +192,10 @@ async def test_a_chain_of_three_planners_builds(work: Path) -> None:
     toolchain = Toolchain(work)
     await toolchain.prepare()
 
-    root = await toolchain.build("chainPlanner")
+    root = await toolchain.build(SEALED, "chainPlanner")
     assert root.endswith("-link-a-venv.drv"), root
 
-    check = await toolchain.build("chainCheck")
+    check = await toolchain.build(SEALED, "chainCheck")
     report = await toolchain.cat(check)
 
     # The module exists only if each of the three planners ran and each build
@@ -379,10 +221,10 @@ async def test_a_chain_of_four_planners_names_the_bound(work: Path) -> None:
     toolchain = Toolchain(work)
     await toolchain.prepare()
 
-    root = await toolchain.build("tooDeepPlanner")
+    root = await toolchain.build(SEALED, "tooDeepPlanner")
     assert root.endswith("-link-0-venv.drv"), root
 
-    output = await toolchain.build_failing("tooDeepVenv")
+    output = await toolchain.build_failing(SEALED, "tooDeepVenv")
 
     # The message has to name the file and the constant to change, because a
     # reader who meets it has a chain that this bound does not fit.

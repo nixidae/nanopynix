@@ -49,8 +49,9 @@ $ ./nix-patched/bin/nix copy --to "$store" --no-check-sigs \
 machine, so no cache signed them, and a chroot store refuses an unsigned path
 by default.
 
-`./run-uv.sh` does all of the above, and it builds the seven projects of
-`./projects`. Copy it rather than write these commands again.
+`./run-uv.sh` does all of the above, and it then builds two projects of
+`./projects`, one step at a time. Copy it rather than write these commands
+again. `tests/test_projects.py` builds all seven, and it is the gate.
 
 ## The two steps
 
@@ -79,7 +80,8 @@ directory of `uv.nix`, and not against the shell.
 under the prefix.** So a program of the environment does not run from the
 shell that built it: `bin/python` is a symbolic link to `/nix/store/...`,
 which the host resolves to its own store. Run such a check as a derivation.
-`./check-uv.nix` is the pattern, and every check of `run-uv.sh` uses it.
+`./check-uv.nix` is the pattern, and every `check-*.nix` of this directory
+uses it.
 
 From a Nix expression, `builtins.outputOf` is the same step:
 
@@ -337,10 +339,11 @@ message that `zipfile` raises, and the whole table.
 ## The tests
 
 ```console
-$ pytest ddrn/examples/venv-graph/tests -m "not nix"   # the decisions, one second
-$ pytest ddrn/examples/venv-graph/tests                # and the sealed graph
-$ ddrn/examples/venv-graph/run-uv.sh                   # seven real projects
-$ ddrn/examples/venv-graph/bench/measure.sh --cold     # what an evaluation costs
+$ pytest ddrn/examples/venv-graph/tests -m "not nix"       # the decisions, one second
+$ pytest ddrn/examples/venv-graph/tests -m "not network"   # and the sealed graph
+$ pytest ddrn/examples/venv-graph/tests                    # and the seven real projects
+$ ddrn/examples/venv-graph/run-uv.sh                       # two of them, step by step
+$ ddrn/examples/venv-graph/bench/measure.sh --cold         # what an evaluation costs
 ```
 
 These tests are not part of the suite of the repository. `tests/pytest.ini`

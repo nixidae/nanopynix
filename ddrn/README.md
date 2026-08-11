@@ -62,6 +62,7 @@ $ ddrn/examples/submitted-graph/run.sh  # the same, driven by nanopynix
 $ ddrn/examples/evaluated-graph/run.sh  # the evaluator in the sandbox, patched Nix
 $ ddrn/examples/venv-graph/run.sh       # a Python environment, as a graph
 $ ddrn/examples/venv-graph/run-uv.sh    # the same, from a real uv.lock
+$ pytest ddrn/examples/venv-graph/tests # every project, as the gate
 ```
 
 **To point this at a project of your own, read
@@ -69,7 +70,9 @@ $ ddrn/examples/venv-graph/run-uv.sh    # the same, from a real uv.lock
 one environment, what your `pyproject.toml` needs in it, and every argument
 that `uv.nix` takes.
 
-**`run-uv.sh` builds seven projects that `uv` itself wrote.**
+**Seven projects hold the lock files that `uv` itself wrote.**
+`ddrn/examples/venv-graph/tests/test_projects.py` builds every one of them, and
+`run-uv.sh` builds two of them one step at a time.
 `ddrn/examples/venv-graph/projects/README.md` gives the command for each one,
 and `uv.nix` reads their `uv.lock`. That file makes no packaging decision: it
 makes one `fetchurl` for every artefact of every package, and the planner
@@ -85,15 +88,15 @@ the cost.
 **The lock file does not record the form of a local install either**, and uv
 writes two of them. `uv sync` builds a PEP 660 editable, and `uv build` writes
 the source distribution that an index serves. `fromSdist` of `uv.nix` is that
-decision, and `run-uv.sh` builds `packaged-app` both ways. The release form is
+decision, and the tests build `packaged-app` both ways. The release form is
 two PEP 517 hooks, so it is two nodes: `build_sdist` writes the archive, and
 `build_wheel` reads it. The environment then holds the code, and it follows no
 tree of the user.
 
 `workspace` holds two members under one lock file, and each member is an
 editable of its own directory. **`uv.lock` records no selection either**, so
-the caller names the members to install: `run-uv.sh` builds every member, and
-then one member of the two, from that one lock file. One more build ships
+the caller names the members to install: the tests build every member, and then
+one member of the two, from that one lock file. One more build ships
 `ws-core` as an archive and leaves `ws-cli` editable, so the two forms compose.
 
 **`uv.nix` reads all seven source kinds that `uv.lock` writes**, and three of

@@ -461,6 +461,9 @@ $ ddrn/examples/venv-graph/run-uv.sh /tmp/ddrn-uv-compare   # before, and again 
 $ diff <(grep '^prefix' before.log) <(grep '^prefix' after.log)
 ```
 
+`run-uv.sh` built all seven projects on that date, and it builds two of them
+now. `tests/test_projects.py` builds the seven, and it is the gate.
+
 Every one of the seven projects built to the same store path. A floating output
 takes its path from what the build wrote, so one path means one content. Under
 input addressing the path would have moved with the `.drv` of the planner, and
@@ -1253,8 +1256,8 @@ of what the user runs. It is a different number, and the whole of it is the
 interpreter.
 
 The subject is `projects/pure-app`, whose environment holds `rich` and its two
-dependencies. `run-uv.sh` built it into a private store, and the method is one
-command:
+dependencies. `tests/test_projects.py` builds it into a private store, and the
+method is one command:
 
 ```console
 $ nix --store "$store" path-info -r --json <the environment>
@@ -1519,7 +1522,7 @@ and then asks for exactly two parts.
 graph that `lock.json` uses. `projects/pure-app` is the first project, and
 `uv` itself wrote every file of it. `projects/README.md` gives each command.
 
-`run-uv.sh` builds two projects. `pure-app` has a virtual root and every
+Two projects hold the comparison below. `pure-app` has a virtual root and every
 artefact of it is a pure wheel. `packaged-app` installs itself through
 `hatchling`, and one of its dependencies builds from a source distribution.
 

@@ -292,10 +292,14 @@ whole table of what each interpreter keeps, and the command that measured it.
 | the decisions | each packaging rule, with no Nix | `pytest ddrn/examples/venv-graph/tests -m "not nix"` |
 | the graph | the same code through a sealed build | `pytest ddrn/examples/venv-graph/tests` |
 | the ATerm writer | it agrees with Nix itself | `pytest ddrn/tests` |
-| seven real projects | end to end, from lock files that uv wrote | `ddrn/examples/venv-graph/run-uv.sh` |
+| seven real projects | end to end, from lock files that uv wrote | `pytest ddrn/examples/venv-graph/tests -m network` |
 
 The sealed suite reaches no index: every artefact is a derivation of this
-repository. `run-uv.sh` needs a network, because its artefacts come from PyPI.
+repository. The `network` mark names the tests whose artefacts come from PyPI,
+so a failure of one of those may be an outage of an index.
+
+`ddrn/examples/venv-graph/run-uv.sh` builds two of the seven, one step at a
+time. It is the demonstration, and the pytest run above is the gate.
 
 ## Keeping this document current
 
