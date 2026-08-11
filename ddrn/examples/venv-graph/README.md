@@ -139,6 +139,7 @@ this.
 | `fromSdist` | each member to install from its own source distribution, rather than as a PEP 660 editable |
 | `editableRoot` | what a PEP 660 editable redirects to. The default is the variable `$DDRN_EDITABLE_ROOT`, so one environment serves every tree |
 | `markers` | `platform_release` and `platform_version`, which no build can know |
+| `uvCheck` | `true` runs `uv lock --check` over the project before the planner runs. See below |
 
 ## Extras and groups, the way `uv sync` takes them
 
@@ -191,6 +192,32 @@ again.
 Run `uv lock`, and build again. `ddrn/PACKAGING-FACTS.md` gives what each
 comparison covers, the one edit that passes it, and what each glob of
 `[tool.uv.workspace] members` means.
+
+### Ask uv itself, with `uvCheck = true`
+
+Those two comparisons are the ones that a build reaches, and `Lock::satisfies`
+of uv holds 21. A marker on one dependency passes both, because uv simplifies a
+marker against `requires-python` and a reader that compared the text would call
+an ordinary lock file stale.
+
+`uvCheck = true` runs `uv lock --check` over your project, in a derivation that
+the planner waits for:
+
+```nix
+import ./uv.nix {
+  project = ./.;
+  uvCheck = true;
+}
+```
+
+The check costs 27 ms and reaches no network, and it changes no output: the
+same project builds the same environment with the argument on and off. It costs
+one thing, which is why it is off by default: **the whole project tree enters
+the store**, so every edit of every file makes a new check. Without the
+argument, this file reads `pyproject.toml` and `uv.lock` and nothing else.
+
+`nix build --file ./uv.nix lockCheck --arg project ./.` runs the check alone,
+and builds no graph.
 
 ## A smaller environment, for one deployment only
 

@@ -96,6 +96,29 @@
   # the code comes from, and not whether the package is in the environment, so
   # the edges of `uv.lock` still name it and its dependencies still resolve.
   fromNixpkgs ? { },
+  # Whether uv itself checks the lock file, in a derivation of its own, before
+  # the planner runs.
+  #
+  # **The planner is the check, and this is the backstop.** `_freshness`
+  # compares the lock file with the `pyproject.toml` of each member, and with
+  # the directories of the workspace. `Lock::satisfies` of uv holds 21 ways for
+  # a lock file to be stale, and those two comparisons are the ones a build
+  # reaches. This argument runs `uv lock --check` over the project and gives
+  # the other nineteen.
+  #
+  # It costs two things, so it is off by default:
+  #
+  # - **The whole project tree enters the store.** The rest of this file reads
+  #   two files of the project, so an edit of any other file changes nothing.
+  #   With this argument on, every edit of every file makes a new store path
+  #   and a new check.
+  # - **uv builds a package to read a dynamic version.** A project with
+  #   `dynamic = ["version"]` needs its backend, and the check has no network,
+  #   so uv fails for a reason that is not a stale lock file.
+  #
+  # The check itself costs 27 ms, measured over `projects/workspace` with a
+  # cold cache.
+  uvCheck ? false,
 }:
 
 let
@@ -131,6 +154,55 @@ let
     inherit lib;
     root = project;
   };
+
+  # **uv reads the lock file, in a derivation that the planner waits for.**
+  # This is the `uvCheck` argument, and the whole project tree is the input.
+  # Every other read of this file names one file, so the tree is here and
+  # nowhere else.
+  #
+  # `--offline` is what makes the check honest. A sandbox has no network, so uv
+  # would fail on a connection either way, and the flag makes uv say so at once
+  # rather than wait for a timeout. **A refusal offline is still a refusal**: uv
+  # reaches the network only when `Lock::satisfies` gave a reason to resolve
+  # again, so a lock file that satisfies the project never downloads.
+  #
+  # `--python` names the interpreter of the environment, because uv finds none
+  # in a sandbox and offers to download one.
+  lockCheck =
+    pkgs.runCommand "uv-lock-check-${projectName}"
+      {
+        nativeBuildInputs = [ pkgs.uv ];
+        source = builtins.path {
+          path = project;
+          name = "${projectName}-source";
+        };
+      }
+      ''
+        cp -r "$source" project
+        chmod -R u+w project
+        cd project
+
+        export HOME="$PWD"
+        export UV_CACHE_DIR="$PWD/.uv-cache"
+
+        if uv lock --check --offline --python ${python}/bin/python3; then
+          echo "uv agrees that uv.lock is current" > "$out"
+          exit 0
+        fi
+
+        cat >&2 <<'MESSAGE'
+
+        uv refused the lock file of this project, and the message above is its own.
+
+        This is the `uvCheck` argument of `uv.nix`. uv ran with no network, so it
+        reports a package as unavailable when it wanted to resolve the project
+        again. **That is the refusal, and not a fault of the sandbox**: uv resolves
+        again only when `uv.lock` does not satisfy `pyproject.toml`.
+
+        Run `uv lock` in the project, and build again.
+        MESSAGE
+        exit 1
+      '';
 
   # **`tool.uv` is a setting of the project, and uv copies none of it into the
   # lock file.** So this reads the setting where uv keeps it, rather than
@@ -481,6 +553,10 @@ let
     # past. `./workspace.nix` walks, and `ddrn_venv._workspace` decides.
     uvWorkspace = workspace;
 
+    # The backstop, which is off by default. `null` puts no store path in the
+    # planner, so the project tree stays out of the store.
+    uvCheck = if uvCheck then lockCheck else null;
+
     # **The roots of the environment come out of the resolution**, so this list
     # adds nothing to them. A caller that wants one more package than the lock
     # file resolves puts a PEP 508 requirement here.
@@ -499,8 +575,17 @@ in
 lib.throwIfNot (lockVersion == 1)
   "uv.nix: ${lockFile} says version ${builtins.toJSON lockVersion}, and this reader accepts 1"
   (
-    lib.throwIf (lib.subtractLists localNames fromSdist != [ ]) (
-      "uv.nix: fromSdist names ${builtins.toJSON (lib.subtractLists localNames fromSdist)}, "
-      + "and ${lockFile} holds no local package of that name. It holds ${builtins.toJSON localNames}."
-    ) planner
+    lib.throwIf (lib.subtractLists localNames fromSdist != [ ])
+      (
+        "uv.nix: fromSdist names ${builtins.toJSON (lib.subtractLists localNames fromSdist)}, "
+        + "and ${lockFile} holds no local package of that name. It holds ${builtins.toJSON localNames}."
+      )
+      (
+        # **`lockCheck` is here whatever `uvCheck` says**, and Nix evaluates it
+        # only when something asks for it. So `nix build --file ./uv.nix
+        # lockCheck` runs uv over the project and builds no graph, and the
+        # project tree still enters no store path of a build that never names
+        # this attribute.
+        planner // { inherit lockCheck; }
+      )
   )

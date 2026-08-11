@@ -164,6 +164,7 @@ number of packages raised to the depth.
 | decision | where | why not the other half |
 | --- | --- | --- |
 | whether the lock file is current | `_freshness.py`, in the sandbox | the comparison needs the lock file and the declaration together, and only the planner reads the lock file |
+| whether uv agrees that it is current | `uv lock --check`, in a derivation of its own | `Lock::satisfies` holds 21 rules, and the reader implements the two that a build reaches. The `uvCheck` argument gives the rest, and it costs the whole project tree as an input |
 | which directories exist | `workspace.nix`, at evaluation | a member that the lock file never named is in no store path, so only the evaluator finds it. **That file lists, and decides nothing** |
 | which directories are members | `_workspace.py`, in the sandbox | the rule is a glob of uv, and `fnmatch` reads a glob |
 | which extras and groups a member installs | `_workspace.py`, in the sandbox | the default is `tool.uv.default-groups` of each `pyproject.toml`, and the store path of that file arrives beside the lock file |

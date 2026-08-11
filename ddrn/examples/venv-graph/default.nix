@@ -97,6 +97,18 @@
   #
   # An empty set turns that comparison off, and it is the default.
   uvWorkspace ? { },
+  # A derivation that runs `uv lock --check` over the project, or `null`.
+  #
+  # **This is a backstop, and the planner is the check.** `_freshness` compares
+  # the lock file with each `pyproject.toml`, and `Lock::satisfies` of uv holds
+  # 21 ways for a lock file to be stale. The planner implements the ones that a
+  # build reaches. This derivation asks uv itself, so the ones that the planner
+  # does not implement stop the build as well.
+  #
+  # The value is an input of the planner and nothing reads it, so uv answers
+  # before any node of the graph builds. `./uv.nix` builds the derivation, and
+  # its `uvCheck` argument says what it costs.
+  uvCheck ? null,
   # Each package to build from its source distribution, even when a wheel fits.
   # This is `tool.uv.no-binary-package`, which uv keeps in `pyproject.toml` and
   # writes into no lock file, so `./uv.nix` reads it from the project.
@@ -516,7 +528,15 @@ derivation (
     DDRN_INPUTS = builtins.toJSON inputs;
 
     DDRN_VENV_NAME = venvName;
-
+  }
+  // pkgs.lib.optionalAttrs (uvCheck != null) {
+    # **Nothing reads this, and that is the whole design.** A store path in an
+    # environment variable of a derivation is an input of that derivation, so
+    # Nix builds `uvCheck` before it runs this planner, and a refusal of uv
+    # stops the build here.
+    DDRN_UV_CHECK = "${uvCheck}";
+  }
+  // {
     args = [
       "-c"
       (plannerScript ./plan.py)

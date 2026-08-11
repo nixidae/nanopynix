@@ -795,6 +795,50 @@ The same copy with `members = ["packages/*"]` in place of the two literal paths
 built the same derivation, `workspace-root.drv`, and `uv lock --check` over it
 resolved 14 packages and said nothing. The unchanged fixture did the same.
 
+### uv itself is the backstop, and a sandbox can run it
+
+The two comparisons above are the ones that a build reaches, and
+`Lock::satisfies` holds 21. The `uvCheck` argument of `uv.nix` runs
+`uv lock --check --offline` over the whole project, in a `runCommand` that the
+planner waits for, so the other nineteen stop the build as well.
+
+**A refusal with no network is still a refusal.** uv reaches the network only
+when `Lock::satisfies` gave it a reason to resolve again, so a lock file that
+satisfies the project downloads nothing. Measured over `projects/workspace`
+with an empty cache directory:
+
+| the tree | what uv did | how long |
+| --- | --- | --- |
+| unchanged | `Resolved 14 packages in 1ms`, exit 0 | 27 ms |
+| one member added to `members` | `No solution found`, with the hint `Packages were unavailable because the network was disabled`, exit 1 | — |
+
+**The message differs with the cache, and the verdict does not.** With a warm
+cache uv resolves again and says `The lockfile at uv.lock needs to be updated`.
+With the empty cache of a sandbox it cannot resolve at all, so it reports the
+package it could not read. `uv.nix` prints its own paragraph after the failure,
+because the uv message names the network and the cause is the lock file.
+
+Two measurements say what the argument costs:
+
+- **The check changes no output.** `projects/pure-app` submitted the same root
+  derivation `s4k36ain6j2h1iz11q1615b4aykf2ibm-pure-app.drv` with the argument
+  on and with it off, and built
+  `/nix/store/2ppg8xs82055lxw8vg22a1zbbvjnmfjc-pure-app` either way.
+- **It raises no false alarm.** All seven projects of
+  `ddrn/examples/venv-graph/projects` pass it, and each of the seven holds a
+  source kind that the ones before it do not.
+
+The price is the input. The rest of `uv.nix` reads `pyproject.toml` and
+`uv.lock`, so an edit of any other file changes no derivation. The check takes
+the whole tree, so every edit makes a new store path and a new check. The
+argument is off by default for that reason.
+
+**It closes the marker gap, which is measured too.** A copy of
+`projects/workspace` took `; sys_platform == 'darwin'` on the `rich` dependency
+of `ws-cli`, with no `uv lock` after it. The planner accepted that tree and
+built an environment of 14 nodes that still holds `rich` on Linux.
+`uv lock --check` refused the same tree.
+
 ### A marker of an edge is not always a PEP 508 marker
 
 **uv encodes a conflict into the `extra` of a marker, and it says so.** The doc

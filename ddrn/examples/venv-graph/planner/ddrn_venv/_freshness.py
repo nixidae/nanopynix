@@ -39,7 +39,10 @@ module compares those three. It ignores:
 
 **A marker-only edit therefore passes this check.** That is a gap, and it is
 the honest boundary of a comparison that never raises a false alarm. uv itself
-is the tool for the whole answer, and `uv lock --check` is the command.
+is the tool for the whole answer, and `uv lock --check` is the command. The
+`uvCheck` argument of `uv.nix` runs that command, in a derivation that the
+planner waits for, and it closes this gap and the eighteen others of
+`Lock::satisfies` that this module does not implement.
 
 **A new member of a workspace needs a second comparison**, and `check_members`
 makes it. `uv.nix` builds one declaration for each package that `uv.lock`
