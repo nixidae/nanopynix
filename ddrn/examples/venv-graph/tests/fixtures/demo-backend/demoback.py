@@ -23,7 +23,9 @@ from __future__ import annotations
 import base64
 import gzip
 import hashlib
+import os
 import re
+import shlex
 import subprocess
 import sys
 import sysconfig
@@ -50,6 +52,12 @@ def project() -> dict[str, str]:
     with Path("pyproject.toml").open("rb") as handle:
         table = tomllib.load(handle)["project"]
     return {"name": table["name"], "version": table["version"]}
+
+
+def _table() -> dict[str, list[str]]:
+    """What `[tool.demoback]` of the project says, or nothing."""
+    with Path("pyproject.toml").open("rb") as handle:
+        return tomllib.load(handle).get("tool", {}).get("demoback", {})
 
 
 def _record_line(name: str, data: bytes) -> str:
@@ -112,10 +120,32 @@ def _compile() -> dict[str, bytes]:
 
     suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
     include = sysconfig.get_paths()["include"]
+
+    # **The two variables are what `customize_compiler` of
+    # `setuptools._distutils` reads, and this backend reads the same two.**
+    # `../../../graph.nix` writes them out of the `buildTools` argument, and it
+    # gives the reason that `NIX_CFLAGS_COMPILE` is not one of them.
+    flags = shlex.split(os.environ.get("CPPFLAGS", ""))
+    link = shlex.split(os.environ.get("LDFLAGS", ""))
+    # Which libraries the extension links against. A backend of a real project
+    # reads a declaration for this, and so does this one.
+    libraries = [f"-l{name}" for name in _table().get("libraries", [])]
+
     built: dict[str, bytes] = {}
     for source in sources:
         target = source.with_name(f"{source.stem}{suffix}")
-        command = ["cc", "-shared", "-fPIC", f"-I{include}", str(source), "-o", str(target)]
+        command = [
+            "cc",
+            "-shared",
+            "-fPIC",
+            f"-I{include}",
+            *flags,
+            str(source),
+            *link,
+            *libraries,
+            "-o",
+            str(target),
+        ]
         print(f"demoback: {' '.join(command)}", file=sys.stderr)
         subprocess.run(command, check=True)  # noqa: S603 -- every argument is a path of this build
         built[str(target.relative_to(root))] = target.read_bytes()

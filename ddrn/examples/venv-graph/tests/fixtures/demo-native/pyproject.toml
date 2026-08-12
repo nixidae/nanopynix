@@ -5,3 +5,8 @@ build-backend = "demoback"
 [project]
 name = "demo-native"
 version = "1.0.0"
+
+# Which libraries the extension links against. `demoback` reads this table,
+# and it finds each library through `LDFLAGS` of the node.
+[tool.demoback]
+libraries = ["z"]

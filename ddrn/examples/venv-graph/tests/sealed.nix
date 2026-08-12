@@ -247,7 +247,15 @@ let
       editables = { };
     };
 
-  nativePlanner = native { demo-native = [ pkgs.stdenv.cc ]; };
+  # `zlib.dev` holds the header and `zlib` holds the library, and a node runs
+  # no setup hook that would follow `.dev` on its own.
+  nativePlanner = native {
+    demo-native = [
+      pkgs.stdenv.cc
+      pkgs.zlib.dev
+      pkgs.zlib
+    ];
+  };
   nativeVenv = builtins.outputOf nativePlanner.outPath "out";
 
   nativeNoToolsPlanner = native { };
@@ -266,8 +274,10 @@ let
           echo "environment"
           printf '  %s\n' "${nativeVenv}"
 
-          # The import fails when the wheel holds no compiled module, so this
-          # line exists only if `cc` ran inside the build of the archive.
+          # **This line proves three things.** The import fails when the
+          # wheel holds no compiled module, so `cc` ran. The module names the
+          # version of zlib, so `CPPFLAGS` found the header and `LDFLAGS`
+          # found the library.
           echo "from C"
           printf '  %s\n' "$("${nativeVenv}/bin/python" -c 'import demonative; print(demonative.greet())')"
 

@@ -228,7 +228,7 @@ class TestAProjectThatHoldsCCode:
 
     `fixtures/demo-native` is the archive that needs it. The backend compiles
     every `.c` of the project, so the wheel holds a module that no pure Python
-    build could write.
+    build could write, and that module links `zlib`.
     """
 
     async def test_the_compiler_reaches_the_one_package_that_names_it(self, toolchain: Toolchain) -> None:
@@ -241,6 +241,12 @@ class TestAProjectThatHoldsCCode:
         # The import of the compiled module is what makes this line, so the
         # line exists only if `cc` ran inside the build of the archive.
         assert "hello from C, which gives 42" in report
+
+        # **The module links a library that the node does not hold either.**
+        # `zlib.h` reaches the build through `CPPFLAGS`, and `libz` reaches the
+        # link through `LDFLAGS`. `ddrn/PACKAGING-FACTS.md` gives the reason
+        # that `NIX_CFLAGS_COMPILE` is neither of the two.
+        assert "links zlib " in report
 
         # **The wheel says which interpreter it is for, and the file name of
         # the module says it again.** `sysconfig` gives the backend the suffix
