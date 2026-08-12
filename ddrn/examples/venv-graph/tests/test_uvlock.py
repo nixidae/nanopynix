@@ -191,6 +191,46 @@ class TestConflicts:
             resolve_lock(lock("conflicts"), ENVIRONMENT, {"conflicts": ["extra-a", "extra-b"]})
 
 
+class TestAWorkspaceMemberThatIsNotSelected:
+    """A conflict of a member that `select` left out constrains nothing.
+
+    **`select` names the members to install, and a member it leaves out may
+    declare conflicting extras of its own.** Those extras reach no
+    environment, so they can decide nothing about the members that `select`
+    did name. A reader that asked the selection about every package of every
+    declaration refused such a workspace, and it named the selection as the
+    fault.
+    """
+
+    HEAD = (
+        'version = 1\nrequires-python = ">=3.12"\n'
+        'conflicts = [[ { package = "a", extra = "x" }, { package = "a", extra = "y" } ]]\n'
+        '\n[manifest]\nmembers = ["a", "b"]\n'
+    )
+    BODY = (
+        '\n[[package]]\nname = "a"\nversion = "0.1.0"\nsource = { editable = "a" }\n'
+        "\n[package.optional-dependencies]\nx = []\ny = []\n"
+        '\n[[package]]\nname = "b"\nversion = "0.1.0"\nsource = { editable = "b" }\n'
+    )
+
+    def workspace(self) -> Lock:
+        return Lock.parse(tomllib.loads(self.HEAD + self.BODY))
+
+    def test_selecting_the_other_member_alone_resolves(self) -> None:
+        resolved = resolve_lock(self.workspace(), ENVIRONMENT, {"b": []})
+        assert sorted(labels(resolved)) == ["b"]
+
+    def test_selecting_both_members_still_takes_one_branch(self) -> None:
+        resolved = resolve_lock(self.workspace(), ENVIRONMENT, {"a": ["x"], "b": []})
+        assert sorted(labels(resolved)) == ["a", "b"]
+
+    def test_selecting_both_branches_of_the_named_member_is_still_refused(self) -> None:
+        # The declaration constrains the member that the selection names, and
+        # this change does not reach that.
+        with pytest.raises(LockError, match="more than one branch"):
+            resolve_lock(self.workspace(), ENVIRONMENT, {"a": ["x", "y"], "b": []})
+
+
 class TestEnvironment:
     """The three assertions that a lock file makes about its target."""
 
@@ -410,11 +450,14 @@ class TestErrors:
             filter_conflicts(parsed, {"a": ["x"]})
 
     def test_a_conflict_of_a_package_that_the_selection_leaves_out(self) -> None:
-        # The selection has to say what it takes for each package that a
-        # conflict declaration names, because the declaration is the reason
-        # that a choice exists at all.
-        with pytest.raises(LockError, match="and the selection does not"):
-            filter_conflicts(lock("conflicts"), {"other": []})
+        # A package that the selection does not name enables no extra and no
+        # group, so its conflict declaration constrains nothing and the
+        # declaration is left alone. `TestAWorkspaceMemberThatIsNotSelected`
+        # holds the case that this exists for.
+        filtered = filter_conflicts(lock("conflicts"), {"other": []})
+        package = next(item for item in filtered.packages if item.name == "conflicts")
+        assert sorted(package.optional_dependencies) == ["extra-a", "extra-b"]
+        assert sorted(package.dev_dependencies) == ["group-c"]
 
 
 class TestThePackageIdentity:

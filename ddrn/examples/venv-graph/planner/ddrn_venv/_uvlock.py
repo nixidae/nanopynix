@@ -856,8 +856,20 @@ def _conflict_name(item: Mapping[str, str]) -> str:
 
 
 def _selection(spec: Mapping[str, Sequence[str]], package: str) -> set[str]:
+    """What the selection enables for `package`, and nothing when it omits it.
+
+    **A package that the selection does not name enables no extra and no
+    group**, so a conflict declaration about that package constrains nothing.
+    This is the same answer as a selection that names the package and takes no
+    branch of the declaration, and `filter_conflicts` leaves both alone.
+
+    A workspace is the case that needs it. `select` names the members to
+    install, and a member that it leaves out may still declare conflicting
+    extras of its own. Those extras reach no environment, so they can decide
+    nothing about the members that `select` did name.
+    """
     wanted = canonicalize_name(package)
     for name, choices in spec.items():
         if canonicalize_name(name) == wanted:
             return set(choices)
-    raise LockError(f"a conflict declaration names '{package}', and the selection does not")
+    return set()
