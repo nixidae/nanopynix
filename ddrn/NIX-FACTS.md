@@ -203,6 +203,57 @@ table fills lazily and holds no entry for a closure path that nothing touched.
 does nothing. `isAllowed` means the path is in `inputPaths`, or this builder
 added it. So the operation reaches no further than `IsValidPath` does.
 
+### The allowlist stops an import from derivation, and the setting does not
+
+The root evaluation of `ddrn/examples/venv-graph/uv.nix` does no import from
+derivation. Measured on 2026-08-12, with `--option
+allow-import-from-derivation false`: every one of the seven projects gives its
+`env.drvPath`, and so do `app`, `shell` and `lockCheck`. The default of
+`nanopynixEnv`, which imports this whole repository, gives it as well, and a
+whole build under the same option succeeds. `builtins.outputOf` is what makes
+this work: `nix eval --raw ... app` prints the placeholder
+`/0cnf5h68fly83gkk6rv5g269qddvls2pb6pqk4q15b7a3ncqmhfd`, and not a store path,
+so nothing is built to name the application.
+
+**The planner runs a second evaluator, and the option of the first one does not
+reach it.** `ddrn_venv._plan.submit` builds `nix_expr.EvalState(store)` over
+`graph.nix` inside the sandbox. Two things keep the two evaluators apart:
+
+- `EvalState` holds `const EvalSettings & settings`
+  (`src/libexpr/include/nix/expr/eval.hh:403`), and the check reads that
+  reference (`src/libexpr/primops.cc:118`). The only global `evalSettings` is
+  `extern EvalSettings evalSettings` of **libcmd**
+  (`src/libcmd/include/nix/cmd/common-eval-args.hh:37`), which belongs to the
+  command line program.
+- `PyEvalState` owns `nix::EvalSettings evalSettings{_readOnlyMode}`
+  (`nanopynix-bindings/src/py_eval.hh:34`), one for each evaluator, and
+  `NixEvalSettings.allow_import_from_derivation` is a live field of that
+  instance.
+
+So an evaluator that forbids the import and an evaluator that permits it can
+run in one process, and the planner is a separate process in any case.
+
+**The allowlist is what stops the nested evaluator, and it stops it whatever
+the setting says.** Measured with a temporary `builtins.readFile (derivation
+{ ... })` in `graph.nix`, forced with `builtins.seq`, and the option left at
+its default of `true`:
+
+```
+venv-planner>            37|   ifdProbe = builtins.readFile (derivation {
+venv-planner>        error: Operation 9 not allowed inside derivation
+```
+
+Operation 9 is `BuildPaths`
+(`src/libstore/include/nix/store/worker-protocol.hh:238`). The code path of the
+import reads the setting first and calls `store->buildPaths` after
+(`src/libexpr/primops.cc:118` and the lines below it), so the refusal comes
+from the store and not from the evaluator.
+
+**To permit an import inside a planner, add a build operation to
+`validOperations`.** No setting does it. That is the guard against a build that
+is not reproducible, which is the reason the allowlist exists, and
+`RestrictedBuilder` already asserts closure membership and substitutes nothing.
+
 ## Submission, and what the daemon checks
 
 **`SubmitOutput` accepts an `Opaque` deriving path only.**
