@@ -101,6 +101,16 @@ let
     src = ./demo-tool;
   };
 
+  # **A project that holds C code, for the `buildTools` argument.**
+  # `../../default.nix` gives every node `coreutils`, `unzip`, `tar`, `gzip`
+  # and the interpreter, and no compiler. A build of this archive therefore
+  # fails until the caller names one, and `../sealed.nix` builds it both ways.
+  nativeSdist = mkSdist {
+    pname = "demo-native";
+    version = "1.0.0";
+    src = ./demo-native;
+  };
+
   # **An archive that holds two projects, for the URL source of `uv.lock`.**
   # uv writes `source = { url = "…", subdirectory = "backend" }` when the
   # archive that a URL names holds the project below its top. The archive of
@@ -304,6 +314,32 @@ let
     }
   ];
 
+  # The menu of the graph that compiles. It holds the installer, the backend
+  # that every fixture builds through, and the one archive that ships C code.
+  nativeArtifacts = [
+    {
+      package = "installer";
+      inherit (pkgs.python3Packages.installer) version;
+      filename = installerWheel.name;
+      kind = "wheel";
+      drv = installerWheel;
+    }
+    {
+      package = "demo-backend";
+      version = "1.0.0";
+      filename = demoBackend.name;
+      kind = "wheel";
+      drv = demoBackend;
+    }
+    {
+      package = "demo-native";
+      version = "1.0.0";
+      filename = nativeSdist.name;
+      kind = "sdist";
+      drv = nativeSdist;
+    }
+  ];
+
   # The menu of the graph that covers the two sources which name a place. It is
   # `artifacts` plus the nested archive, and `../sealed.nix` gives that graph a
   # nested tree as well.
@@ -327,6 +363,7 @@ in
     mkSdist
     artifacts
     chainArtifacts
+    nativeArtifacts
     nestedArtifacts
     installerWheel
     ;

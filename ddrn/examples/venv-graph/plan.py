@@ -58,6 +58,7 @@ from ddrn_venv import (
     Target,
     build_requirements,
     build_system,
+    build_tools_from,
     check_freshness,
     choose,
     env,
@@ -105,6 +106,13 @@ class Request:
     #: uv2nix gives `overrides` to a build fixup. Neither is this. One word
     #: carries one meaning in this repository.
     from_nixpkgs: dict[str, dict[str, str]] = field(default_factory=dict[str, dict[str, str]])
+    #: The store paths that each package needs to build, by PEP 503 name.
+    #:
+    #: **This is what one build gets, and not what every build gets.** A source
+    #: distribution that holds C code needs a compiler, and `graph.nix` gives a
+    #: node the tools of its own package alone. `default.nix` gives the reason
+    #: at its `buildTools` argument.
+    build_tools: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
 
     @classmethod
     def from_json(cls, inputs: dict[str, Any], roots: list[str]) -> Request:
@@ -116,6 +124,7 @@ class Request:
             installer=inputs["installer"],
             no_binary=frozenset(inputs.get("noBinary", [])),
             from_nixpkgs={canonicalize_name(name): entry for name, entry in supplied.items()},
+            build_tools=build_tools_from(inputs),
         )
 
 
@@ -342,7 +351,7 @@ def resolve(
     uv: UvProject | None = None,
 ) -> Plan:
     """Turn the lock file into the graph that builds the environment."""
-    plan = Plan()
+    plan = Plan(build_tools=request.build_tools)
     artifacts = request.artifacts
 
     # **The installer bootstraps, and it does so by unpacking.** Every other

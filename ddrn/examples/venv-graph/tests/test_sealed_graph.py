@@ -27,6 +27,8 @@ What one run proves:
    one link more makes `graph.nix` throw with the name of that constant.
 7. The application becomes a derivation that carries `meta.mainProgram`, and
    the build of it refuses a program that the application does not hold.
+8. A source distribution that holds C code builds when, and only when, the
+   caller names a compiler at the `buildTools` argument.
 
 **This test builds the patched Nix.** That takes about 20 minutes the first
 time, and nothing after that, because the work directory holds the result.
@@ -214,6 +216,54 @@ async def test_a_chain_of_four_planners_names_the_bound(toolchain: Toolchain) ->
     # reader who meets it has a chain that this bound does not fit.
     assert "link_c-1.0.0.tar.gz needs a planner" in output
     assert "sdistPlannerDepth" in output
+
+
+class TestAProjectThatHoldsCCode:
+    """`buildTools`, which is what a node gets and what no other node gets.
+
+    **A node of the graph carries no compiler.** `../graph.nix` gives every
+    node `coreutils`, `unzip`, `tar`, `gzip` and the interpreter, so a
+    compiler in that list would enter the closure of every pure Python wheel
+    as well. `buildTools` of `../default.nix` names one for one package.
+
+    `fixtures/demo-native` is the archive that needs it. The backend compiles
+    every `.c` of the project, so the wheel holds a module that no pure Python
+    build could write.
+    """
+
+    async def test_the_compiler_reaches_the_one_package_that_names_it(self, toolchain: Toolchain) -> None:
+        root = await toolchain.build(SEALED, "nativePlanner")
+        assert root.endswith("-sealed-native-venv.drv"), root
+
+        check = await toolchain.build(SEALED, "nativeCheck")
+        report = toolchain.cat(check)
+
+        # The import of the compiled module is what makes this line, so the
+        # line exists only if `cc` ran inside the build of the archive.
+        assert "hello from C, which gives 42" in report
+
+        # **The wheel says which interpreter it is for, and the file name of
+        # the module says it again.** `sysconfig` gives the backend the suffix
+        # of this build, and a wheel that claimed `py3-none-any` would install
+        # a binary under a tag that means "any interpreter, any platform".
+        lines = report.splitlines()
+        module = lines[lines.index("the module") + 1].strip()
+        assert module.startswith("_speedup."), module
+        assert module.endswith(".so"), module
+
+    async def test_a_build_that_names_no_compiler(self, toolchain: Toolchain) -> None:
+        # **The outer planner still builds.** It registers the graph and
+        # submits it, and no compiler is needed for that. The failure arrives
+        # in the node that runs the backend.
+        root = await toolchain.build(SEALED, "nativeNoToolsPlanner")
+        assert root.endswith("-sealed-native-venv.drv"), root
+
+        output = await toolchain.build_graph_failing(SEALED, "nativeNoToolsPlanner")
+
+        # **The message names the program, and not a directory.** The backend
+        # runs `cc`, and the node holds no directory that carries one, so the
+        # interpreter raises where the compiler would have run.
+        assert "No such file or directory: 'cc'" in output
 
 
 class TestTheApplicationAsADerivation:

@@ -21,6 +21,7 @@ from ._freshness import (
 from ._plan import (
     LocalNode as LocalNode,
     Plan as Plan,
+    build_tools_from as build_tools_from,
     nix_string as nix_string,
     open_restricted_store as open_restricted_store,
     submit as submit,
@@ -73,6 +74,7 @@ __all__ = [
     "Target",
     "build_requirements",
     "build_system",
+    "build_tools_from",
     "check_freshness",
     "choose",
     "env",

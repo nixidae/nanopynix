@@ -1,0 +1,7 @@
+[build-system]
+requires = ["demo-backend"]
+build-backend = "demoback"
+
+[project]
+name = "demo-native"
+version = "1.0.0"

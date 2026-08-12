@@ -80,6 +80,18 @@ class LocalNode:
         }
 
 
+def build_tools_from(inputs: dict[str, Any]) -> dict[str, list[str]]:
+    """The store paths that each package needs to build, by PEP 503 name.
+
+    `default.nix` takes the list at its `buildTools` argument, and it writes
+    the store path of each entry. **The name is canonicalised here, and not in
+    `graph.nix`.** A distribution name has more than one spelling, and
+    `packaging` holds the rule that makes two spellings one name.
+    """
+    given: dict[str, list[str]] = inputs.get("buildTools", {})
+    return {canonicalize_name(name): list(roots) for name, roots in given.items()}
+
+
 @dataclass
 class Plan:
     """The graph that a planner decided, in the shape `graph.nix` takes."""
@@ -95,7 +107,20 @@ class Plan:
     by_package: dict[str, str] = field(default_factory=dict[str, str])
     #: The name of the node that every install step reads.
     installer: str = ""
+    #: The store paths that each package needs to build, by PEP 503 name.
+    #: `build_tools_from` reads the value out of the inputs of the planner.
+    build_tools: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
     _seen: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
+
+    def tools_for(self, package: str) -> dict[str, Any]:
+        """The `buildTools` key of the node that builds `package`, or nothing.
+
+        **A package with no entry gets no key at all.** A node is the name of a
+        store path, so an empty key would change the output path of every node
+        of every graph that this repository has already built.
+        """
+        roots = self.build_tools.get(canonicalize_name(package))
+        return {"buildTools": roots} if roots else {}
 
     def add(self, entry: dict[str, Any]) -> str:
         """Add one node, and return its name.
@@ -162,6 +187,10 @@ class Plan:
                 raise ValueError(f"{artifact.filename}: a node of kind '{kind}' needs a backend")
             entry["backend"] = backend
             entry["backendPath"] = backend_path or []
+            # **Only a node that runs a build gets a tool.** A wheel is
+            # already built, so the node that installs one needs no compiler
+            # and takes no dependency on one.
+            entry |= self.tools_for(artifact.package)
         return self.add(entry)
 
     def editable_node(self, node: LocalNode, *, root: str) -> str:
@@ -171,7 +200,7 @@ class Plan:
         the other two forms do not have. Both of those hold the code, so
         nothing redirects to a tree of the user.
         """
-        return self.add(node.entry("editable", "editable") | {"root": root})
+        return self.add(node.entry("editable", "editable") | {"root": root} | self.tools_for(node.name))
 
     def local_wheel_node(self, node: LocalNode) -> str:
         """Add the node that builds a wheel out of a tree, and installs it.
@@ -182,7 +211,7 @@ class Plan:
         source of `uv.lock` takes the same route, because `uv` installs one
         that way and not as an editable.
         """
-        return self.add(node.entry("local-wheel", "from-tree"))
+        return self.add(node.entry("local-wheel", "from-tree") | self.tools_for(node.name))
 
     def local_sdist_node(self, node: LocalNode) -> str:
         """Add the node that builds the source distribution of a local project.
@@ -192,7 +221,7 @@ class Plan:
         archive that an index would serve. It installs nothing;
         `local_build_node` reads the archive and builds the wheel.
         """
-        return self.add(node.entry("local-sdist", "sdist"))
+        return self.add(node.entry("local-sdist", "sdist") | self.tools_for(node.name))
 
     def local_build_node(self, *, name: str, archive: str, backend: str, backend_path: list[str]) -> str:
         """Add the node that builds a wheel out of a local source distribution.
@@ -213,6 +242,7 @@ class Plan:
                 "backend": backend,
                 "backendPath": backend_path,
             }
+            | self.tools_for(name)
         )
 
     def nixpkgs_node(self, *, package: str, version: str, drv: str, out: str) -> str:

@@ -24,6 +24,9 @@ import base64
 import gzip
 import hashlib
 import re
+import subprocess
+import sys
+import sysconfig
 import tarfile
 import tomllib
 import zipfile
@@ -54,18 +57,35 @@ def _record_line(name: str, data: bytes) -> str:
     return f"{name},sha256={digest},{len(data)}"
 
 
+def _platform_tag() -> str:
+    """The tag of a wheel that holds a binary of this interpreter.
+
+    **A wheel that carries a binary may not say `py3-none-any`.** That tag
+    means "any interpreter, any platform", and a compiled module runs on
+    neither. `sysconfig` names the interpreter and the platform of the build,
+    and `packaging` is not on the path of a node that runs this backend.
+    """
+    version = f"{sys.version_info.major}{sys.version_info.minor}"
+    platform = re.sub(r"[^\w\d]+", "_", sysconfig.get_platform())
+    return f"cp{version}-cp{version}-{platform}"
+
+
 def _write(directory: str, members: dict[str, bytes], dist: dict[str, str]) -> str:
+    binary = any(item.endswith(".so") for item in members)
+    tag = _platform_tag() if binary else "py3-none-any"
+    purelib = "false" if binary else "true"
+
     dist_info = f"{escape(dist['name'])}-{escape(dist['version'])}.dist-info"
     members[f"{dist_info}/METADATA"] = (
         f"Metadata-Version: 2.1\nName: {dist['name']}\nVersion: {dist['version']}\n\nBuilt by demoback.\n"
     ).encode()
     members[f"{dist_info}/WHEEL"] = (
-        b"Wheel-Version: 1.0\nGenerator: demoback\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
-    )
+        f"Wheel-Version: 1.0\nGenerator: demoback\nRoot-Is-Purelib: {purelib}\nTag: {tag}\n"
+    ).encode()
     record = "\n".join(_record_line(item, data) for item, data in sorted(members.items()))
     members[f"{dist_info}/RECORD"] = f"{record}\n{dist_info}/RECORD,,\n".encode()
 
-    name = f"{escape(dist['name'])}-{escape(dist['version'])}-py3-none-any.whl"
+    name = f"{escape(dist['name'])}-{escape(dist['version'])}-{tag}.whl"
     with zipfile.ZipFile(Path(directory, name), "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for item, data in sorted(members.items()):
             info = zipfile.ZipInfo(item, date_time=ZIP_EPOCH)
@@ -75,13 +95,44 @@ def _write(directory: str, members: dict[str, bytes], dist: dict[str, str]) -> s
     return name
 
 
+def _compile() -> dict[str, bytes]:
+    """Compile every `.c` of the project, and give back what the wheel holds.
+
+    **A project with no C file compiles nothing, and needs no compiler.** Each
+    fixture beside this one is that case, so this hook costs them nothing.
+
+    `cc` comes from the `buildTools` argument of `../../../default.nix`, and
+    from nowhere else. A node of the graph carries no compiler by default, so
+    the error below is the one that a caller who forgot the argument reads.
+    """
+    root = Path("src")
+    sources = sorted(root.rglob("*.c"))
+    if not sources:
+        return {}
+
+    suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
+    include = sysconfig.get_paths()["include"]
+    built: dict[str, bytes] = {}
+    for source in sources:
+        target = source.with_name(f"{source.stem}{suffix}")
+        command = ["cc", "-shared", "-fPIC", f"-I{include}", str(source), "-o", str(target)]
+        print(f"demoback: {' '.join(command)}", file=sys.stderr)
+        subprocess.run(command, check=True)  # noqa: S603 -- every argument is a path of this build
+        built[str(target.relative_to(root))] = target.read_bytes()
+    return built
+
+
 def _sources() -> dict[str, bytes]:
     """Every module of the project, keyed by its path inside the wheel.
 
     The layout is `src/`, which is the one that the fixtures use.
     """
     root = Path("src")
-    return {str(path.relative_to(root)): path.read_bytes() for path in sorted(root.rglob("*.py"))}
+    # A `.pyi` is the interface of a compiled module, which a type checker
+    # reads and an interpreter does not. It ships beside the module.
+    found = sorted(path for pattern in ("*.py", "*.pyi") for path in root.rglob(pattern))
+    modules = {str(path.relative_to(root)): path.read_bytes() for path in found}
+    return modules | _compile()
 
 
 def build_wheel(
@@ -123,8 +174,12 @@ def build_sdist(
             f"Metadata-Version: 2.1\nName: {dist['name']}\nVersion: {dist['version']}\n\nBuilt by demoback.\n"
         ).encode(),
     }
-    for path in sorted(Path("src").rglob("*.py")):
-        members[str(path)] = path.read_bytes()
+    # **The archive ships the source, and not the build of it.** A `.c` file
+    # is a member and a `.so` file is not: the wheel that a consumer builds
+    # out of this archive compiles its own.
+    for pattern in ("*.py", "*.pyi", "*.c"):
+        for path in sorted(Path("src").rglob(pattern)):
+            members[str(path)] = path.read_bytes()
 
     name = f"{root}.tar.gz"
     with (

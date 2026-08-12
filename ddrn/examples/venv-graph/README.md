@@ -182,6 +182,7 @@ this.
 | `python` | the interpreter that the environment runs. See below |
 | `fromNixpkgs` | `{ pyzmq = pkgs.python3Packages.pyzmq; }` takes a package from nixpkgs instead of the index, and the graph builds no wheel for that name |
 | `fromSdist` | each member to install from its own source distribution, rather than as a PEP 660 editable |
+| `buildTools` | `{ psutil = [ pkgs.stdenv.cc ]; }` gives one package what its build needs. See below |
 | `editableRoot` | what a PEP 660 editable redirects to. The default is the variable `$DDRN_EDITABLE_ROOT`, so one environment serves every tree |
 | `markers` | `platform_release` and `platform_version`, which no build can know |
 | `uvCheck` | `true` runs `uv lock --check` over the project before the planner runs. See below |
@@ -378,6 +379,54 @@ network.
 `lib.getExe` gives the deferred placeholder rather than a path, because it
 interpolates `outPath` during evaluation. That placeholder is correct inside
 another derivation, and a shell cannot use it.
+
+## A package that needs a compiler
+
+**A node of the graph carries no compiler**, and `graph.nix` says why: every
+node gets `coreutils`, `unzip`, `tar`, `gzip` and the interpreter, so a
+compiler in that list would enter the closure of every pure Python wheel as
+well.
+
+A wheel needs no compiler, and this is the common case: the index serves a
+wheel for almost every package, and the planner chooses one by the PEP 425
+tags of the target. A source distribution that holds C code is the case that
+needs one, and `buildTools` names it for that package alone:
+
+```nix
+target = import ./uv.nix {
+  inherit pkgs;
+  project = ./.;
+  buildTools = {
+    psutil = [ pkgs.stdenv.cc ];
+    lxml = [
+      pkgs.stdenv.cc
+      pkgs.libxml2.dev
+      pkgs.libxslt.dev
+    ];
+  };
+};
+```
+
+Each entry is a store path, and the node that builds that package reads it in
+four ways:
+
+| variable | what the entry gives |
+| --- | --- |
+| `PATH` | `bin` of the entry, in front of the base path |
+| `NIX_CFLAGS_COMPILE` | `-isystem` for `include` of the entry |
+| `NIX_LDFLAGS` | `-L` for `lib` of the entry |
+| `PKG_CONFIG_PATH` | `lib/pkgconfig` of the entry |
+
+A directory that the entry does not hold costs nothing, so an entry that is
+only a program adds no flag that matters.
+
+**Name each output that the build reads.** A node runs no `stdenv`, so no
+setup hook follows `.dev` for you.
+
+**The compiler is a build input, and it reaches no environment.**
+`ddrn/PACKAGING-FACTS.md` measures this: the environment of a package that
+compiled holds 25 store paths, and 23 of them are the interpreter. Neither the
+wrapper of the compiler nor `binutils` is one of them.
 
 ## A directory that is not a uv project stops it first
 

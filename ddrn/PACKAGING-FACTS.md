@@ -2291,6 +2291,72 @@ $ py=$(nix build --file . pkgs.python313 --no-link --print-out-paths)
 $ export UV_PYTHON_DOWNLOADS=never UV_PYTHON="$py/bin/python3.13"
 ```
 
+## A package that compiles, and what its compiler costs
+
+### A node of the graph holds no compiler, and one argument gives it one
+
+`graph.nix` gives every node `coreutils`, `unzip`, `tar`, `gzip` and the
+interpreter, and no more. A source distribution that holds C code therefore
+fails inside its backend, where the interpreter looks for `cc`:
+
+```
+> demoback: cc -shared -fPIC -I/nix/store/…-python3-3.14.6/include/python3.14 …
+> FileNotFoundError: [Errno 2] No such file or directory: 'cc'
+```
+
+Measured on 2026-08-12, with `pytest ddrn/examples/venv-graph/tests/test_sealed_graph.py`.
+`tests/fixtures/demo-native` is the archive that produces it, and
+`TestAProjectThatHoldsCCode` asserts the message.
+
+**The list stays short because a compiler in it would reach every node.** A
+wheel is already built, so the node that installs one needs no compiler, and
+the index serves a wheel for almost every package. `buildTools` of
+`default.nix` names one for the package that needs it:
+
+```nix
+buildTools = {
+  psutil = [ pkgs.stdenv.cc ];
+};
+```
+
+The planner attaches the list to the node that builds that package, and to no
+other node. **The canonicalisation of the name happens in Python**, with
+`packaging.utils.canonicalize_name`, so `graph.nix` looks nothing up and
+matches no spelling.
+
+### The compiler is a build input, and it reaches no environment
+
+| store object | closure | paths |
+| --- | ---: | --- |
+| `python3` | 219013232 | 23 |
+| `sealed-native-venv` | 219054112 | 25 |
+
+The environment costs 40880 bytes and two paths over its interpreter, and
+those two are the install of the package and the environment itself. The
+compiled module is 15824 bytes of that.
+
+By name, the closure of the environment holds `glibc`, `gcc-lib`, `libgcc` and
+`xgcc-libgcc`, and the closure of `python3` holds the same four. **It holds no
+`gcc-wrapper` and no `binutils`.** So the argument buys a build step and adds
+nothing that a user of the environment carries.
+
+Measured on 2026-08-12, with `nix path-info --closure-size` over the private
+store of the test, and a comparison of the two path lists by name. The two
+stores hold two revisions of nixpkgs, so a comparison by store path answers
+nothing here and a comparison by name answers the question.
+
+### The wheel says which interpreter it is for
+
+The fixture backend reads `sysconfig`, and it writes
+`demo_native-1.0.0-cp314-cp314-linux_x86_64.whl` with `Root-Is-Purelib: false`
+when the wheel holds a `.so`, and `py3-none-any` with `Root-Is-Purelib: true`
+when it does not. The module arrives as
+`_speedup.cpython-314-x86_64-linux-gnu.so`, which is `EXT_SUFFIX` of the
+interpreter that built it.
+
+**A wheel that carries a binary may not say `py3-none-any`.** That tag means
+"any interpreter, any platform", and a compiled module runs on neither.
+
 ## PEP 751, and what `packaging` already does with it
 
 PEP 751 gives one lock file format that more than one tool writes. uv 0.12.1

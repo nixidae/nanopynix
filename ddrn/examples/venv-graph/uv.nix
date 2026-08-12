@@ -112,6 +112,11 @@
   # the code comes from, and not whether the package is in the environment, so
   # the edges of `uv.lock` still name it and its dependencies still resolve.
   fromNixpkgs ? { },
+  # What one package needs to build, by package name, as
+  # `{ psutil = [ pkgs.stdenv.cc ]; }`. `./default.nix` gives the whole reason
+  # at its `buildTools` argument, and the short one is this: a source
+  # distribution that holds C code needs a compiler, and no other node does.
+  buildTools ? { },
   # Whether uv itself checks the lock file, in a derivation of its own, before
   # the planner runs.
   #
@@ -729,6 +734,7 @@ let
       noBinary
       application
       fromNixpkgs
+      buildTools
       python
       uvEditables
       ;

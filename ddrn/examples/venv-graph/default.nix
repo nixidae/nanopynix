@@ -142,6 +142,33 @@
   # **The version is the one that nixpkgs holds, and not the one that the lock
   # file pins.** Nothing reconciles the two, and the planner prints both.
   fromNixpkgs ? { },
+  # What one package needs to build, by package name, as
+  # `{ psutil = [ pkgs.stdenv.cc ]; }`.
+  #
+  # **A wheel needs nothing here, and a source distribution that holds C code
+  # needs a compiler.** `graph.nix` gives every node `coreutils`, `unzip`,
+  # `tar`, `gzip` and the interpreter, and no more: a compiler in that list
+  # would enter the closure of every pure Python wheel as well.
+  #
+  # Each entry is a store path, and it reaches the node in four ways:
+  #
+  #   PATH                 `bin` of the entry, in front of the base path.
+  #   NIX_CFLAGS_COMPILE   `-isystem` for `include` of the entry.
+  #   NIX_LDFLAGS          `-L` for `lib` of the entry.
+  #   PKG_CONFIG_PATH      `lib/pkgconfig` of the entry.
+  #
+  # A directory that the entry does not hold costs nothing, so an entry that
+  # is only a program adds no flag that matters.
+  #
+  # **Name each output that the build reads.** A node of this graph runs no
+  # `stdenv`, so no setup hook follows `.dev` for you:
+  # `[ pkgs.stdenv.cc pkgs.zlib.dev pkgs.zlib ]` gives the compiler, the
+  # headers and the library.
+  #
+  # **The tools reach the node of that package alone.** A build that needs the
+  # compiler of another package is a build whose declaration is wrong, and the
+  # failure names the package that has to declare it.
+  buildTools ? { },
   # The interpreter that the environment runs, and that every install step
   # uses. **This is the whole runtime closure of an environment**, and
   # `ddrn/PACKAGING-FACTS.md` measures it: 219 MB of the 238 MB that the
@@ -304,6 +331,10 @@ let
       application
       ;
     fromNixpkgs = nixpkgsRows;
+    # Each entry becomes the store path of the package. The string carries its
+    # context, so the planner takes a dependency on every one of them, and
+    # `builtins.storePath` in `graph.nix` then finds each in the sandbox.
+    buildTools = pkgs.lib.mapAttrs (_: roots: map (root: "${root}") roots) buildTools;
     artifacts = map row entries;
     tools = {
       bash = "${pkgs.bash}";

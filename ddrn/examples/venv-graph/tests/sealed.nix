@@ -222,6 +222,66 @@ let
     ];
   };
 
+  # **A source distribution that holds C code, and the argument that builds
+  # it.** `default.nix` gives a node `coreutils`, `unzip`, `tar`, `gzip` and
+  # the interpreter, and no compiler: a compiler in that list would enter the
+  # closure of every pure Python wheel as well. `buildTools` names one for the
+  # one package that needs it.
+  #
+  # The two planners below differ in that argument alone, and each proves one
+  # half of the rule:
+  #
+  #   nativePlanner        names the compiler, and the build gives a wheel that
+  #                        holds a compiled module.
+  #   nativeNoToolsPlanner names nothing, and the build fails inside the
+  #                        backend, where `cc` is not on the path.
+  native =
+    tools:
+    import ../. {
+      inherit pkgs nanopynixEnv;
+      artifacts = fixtures.nativeArtifacts;
+      roots = [ "demo-native" ];
+      installer = "installer";
+      venvName = "sealed-native-venv";
+      buildTools = tools;
+      editables = { };
+    };
+
+  nativePlanner = native { demo-native = [ pkgs.stdenv.cc ]; };
+  nativeVenv = builtins.outputOf nativePlanner.outPath "out";
+
+  nativeNoToolsPlanner = native { };
+  nativeNoToolsVenv = builtins.outputOf nativeNoToolsPlanner.outPath "out";
+
+  nativeCheck = derivation {
+    name = "sealed-native-check";
+    system = pkgs.stdenv.hostPlatform.system;
+    builder = "${pkgs.bash}/bin/bash";
+
+    args = [
+      "-c"
+      ''
+        set -eu
+        {
+          echo "environment"
+          printf '  %s\n' "${nativeVenv}"
+
+          # The import fails when the wheel holds no compiled module, so this
+          # line exists only if `cc` ran inside the build of the archive.
+          echo "from C"
+          printf '  %s\n' "$("${nativeVenv}/bin/python" -c 'import demonative; print(demonative.greet())')"
+
+          # The file name carries the ABI of this interpreter, which the
+          # backend read out of `sysconfig`. A wheel that claimed
+          # `py3-none-any` would install a binary under a tag that means
+          # "any interpreter, any platform".
+          echo "the module"
+          printf '  %s\n' "$("${nativeVenv}/bin/python" -c 'import demonative._speedup as m; import os; print(os.path.basename(m.__file__))')"
+        } > "$out"
+      ''
+    ];
+  };
+
   # **A chain of source distributions, and the bound that `default.nix` sets.**
   # Each link of `fixtures.chainArtifacts` declares the next one as its build
   # backend, so a build of one link needs a planner for the link below it.
@@ -323,6 +383,11 @@ in
     chainPlanner
     chainVenv
     chainCheck
+    nativePlanner
+    nativeVenv
+    nativeCheck
+    nativeNoToolsPlanner
+    nativeNoToolsVenv
     tooDeepPlanner
     tooDeepVenv
     appPlanner
