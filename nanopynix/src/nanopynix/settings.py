@@ -22,6 +22,7 @@ from pydantic_settings import BaseSettings, EnvSettingsSource, PydanticBaseSetti
 from nanopynix._fork import process_is_forked
 from nanopynix._typechecking import BEARTYPING, no_runtime_type_check
 from nanopynix.exceptions import SettingNotLiveError, SettingOutOfScopeError
+from nanopynix.libstore import DEFAULT_EXPERIMENTAL_FEATURES as DEFAULT_EXPERIMENTAL_FEATURES
 
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import Iterator, Mapping, Sequence
@@ -29,13 +30,10 @@ if TYPE_CHECKING or BEARTYPING:
     from pydantic.fields import FieldInfo
 
 
-DEFAULT_EXPERIMENTAL_FEATURES = (
-    "flakes",
-    "nix-command",
-    "ca-derivations",
-    "dynamic-derivations",
-    "recursive-nix",
-)
+# **``DEFAULT_EXPERIMENTAL_FEATURES`` lives in :mod:`nanopynix.libstore`**, and
+# this module re-exports it. ``init_libstore`` is the one function that every
+# consumer calls, and it needs the tuple; this module costs a tree of pydantic
+# models that such a consumer does not read.
 DEFAULT_LINE_EDITORS = ("emacs", "nano", "vim", "kak", "hx")
 type SettingsSurface = Literal["global", "eval", "fetch", "flake"]
 

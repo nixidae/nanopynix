@@ -14,6 +14,13 @@ a ledger. That is deliberate, and it is the difference from
 module is a judgement, and whether a name the package already binds should
 appear in the list it publishes is not.
 
+**The package builds its surface on demand, so ``vars()`` is not the set.**
+``nanopynix/__init__.py`` gives each name a module and imports that module at
+the first read, so a fresh package binds almost nothing. ``_EXPORTS`` and
+``_SUBMODULES`` are what the package promises, and they are what these tests
+derive from. ``test_every_exported_name_exists`` reads every name, which is
+also the one test that runs the whole ``__getattr__``.
+
 **What this file does not check.** Whether a name deserves to be public. That
 is the judgement ``tests/AGENTS.md`` names as out of reach for a meta test.
 Adding an export to make a test pass is the wrong direction here: the question
@@ -55,6 +62,19 @@ def _bound_public_names(module: ModuleType) -> set[str]:
     }
 
 
+def _promised_names() -> set[str]:
+    """Every name the package promises, whether or not anything read it yet.
+
+    ``_EXPORTS`` maps a name to the module that defines it, and ``_SUBMODULES``
+    holds the four that a caller reaches as an attribute. Together they are the
+    surface, and ``vars(nanopynix)`` is only the part of it that has been read.
+    """
+    # Reading the two private names is the point: they are what this file
+    # gates, and no public accessor should exist for a mapping that only a
+    # test and `__getattr__` read.
+    return set(nanopynix._EXPORTS) | set(nanopynix._SUBMODULES)
+
+
 def _exception_classes(module: ModuleType) -> set[str]:
     """Exception classes the module defines itself, not ones it imports."""
     return {
@@ -71,9 +91,9 @@ def test_the_derived_sets_are_not_empty() -> None:
     that matched nothing would make each of them pass by checking nothing.
     That silent no-op is what every test in this directory guards against.
     """
-    bound = _bound_public_names(nanopynix)
-    assert len(bound) >= _MINIMUM_EXPORTS, f"only {len(bound)} public names on nanopynix; the filter is wrong"
-    assert "NixError" in bound, "a known export is missing from the derived set; the filter is wrong"
+    promised = _promised_names()
+    assert len(promised) >= _MINIMUM_EXPORTS, f"only {len(promised)} names promised; the mapping is wrong"
+    assert "NixError" in promised, "a known export is missing from the derived set; the filter is wrong"
     assert len(_exception_classes(exceptions)) >= _MINIMUM_EXPORTS // 4
 
 
@@ -88,17 +108,36 @@ def test_the_future_flag_is_not_an_export() -> None:
     assert _FUTURE_FLAG not in _bound_public_names(nanopynix)
 
 
-def test_every_public_name_the_package_binds_is_exported() -> None:
-    missing = sorted(_bound_public_names(nanopynix) - set(nanopynix.__all__))
+def test_every_public_name_the_package_promises_is_exported() -> None:
+    missing = sorted(_promised_names() - set(nanopynix.__all__))
+    assert not missing, (
+        f"{len(missing)} public name(s) are promised by the nanopynix package but absent from "
+        "__all__. Add each one to __all__, or take it out of _EXPORTS if it is not meant to be "
+        f"public: {missing}"
+    )
+
+
+def test_every_public_name_the_package_binds_is_promised() -> None:
+    """An eager import in ``__init__.py`` must join the mapping as well.
+
+    A name that the module binds at import time is public and reachable, and
+    ``_EXPORTS`` would not hold it. Then ``__dir__`` and every reader of the
+    mapping would miss it, while ``from nanopynix import X`` kept working.
+    """
+    missing = sorted(_bound_public_names(nanopynix) - _promised_names())
     assert not missing, (
         f"{len(missing)} public name(s) are bound on the nanopynix package but absent from "
-        "__all__. Add each one to __all__, or stop importing it at the top level if it is not "
-        f"meant to be public: {missing}"
+        f"_EXPORTS, so nothing that reads the mapping can see them: {missing}"
     )
 
 
 def test_every_exported_name_exists() -> None:
-    """The other direction: a typo in ``__all__`` breaks ``import *`` alone."""
+    """The other direction: a typo in ``__all__`` breaks ``import *`` alone.
+
+    **This is also the test that runs the whole ``__getattr__``.** Reading
+    every name imports every module that the package promises, so a mapping
+    that names the wrong module, or a name that moved, fails here.
+    """
     absent = sorted(name for name in nanopynix.__all__ if not hasattr(nanopynix, name))
     assert not absent, f"nanopynix.__all__ names {len(absent)} thing(s) the package does not bind: {absent}"
 

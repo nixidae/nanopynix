@@ -20,6 +20,25 @@ not a convenience.
 .. autofunction:: nanopynix.init_libstore
 ```
 
+## The libstore surface, on its own
+
+`nanopynix.libstore` holds `init_libstore` and the names that go with it. It
+imports the compiled bindings and no other module of nanopynix, so a consumer
+that opens a store and reads a path pays for the extension alone.
+
+The `nanopynix` package builds its whole public surface on demand, and the
+first name that a caller reads decides what loads. A caller that wants the
+store alone says so, with
+`from nanopynix.libstore import init_libstore, open_store`.
+
+Measured as the best of five runs of a fresh interpreter: 0.053 s for this
+module, and 0.834 s for `nanopynix.rpc`.
+
+```{eval-rst}
+.. automodule:: nanopynix.libstore
+   :members:
+```
+
 ## Name the process
 
 `set_manager_title` renames the current process, so `ps` and `top` show the

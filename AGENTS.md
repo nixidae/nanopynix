@@ -242,6 +242,18 @@ Follow these rules:
   function or in a method. A lazy import is permitted only when it is necessary
   to break a circular import cycle. To break such a cycle, first try to move
   the shared types to a neutral module.
+- **A module `__getattr__` of PEP 562 is not a lazy import, and the rule above
+  does not reach it.** `nanopynix/__init__.py` gives one name to each module
+  of its public surface and imports that module at the first read of the name.
+  The function runs one time for each name, and not at each call, and it puts
+  what it read into `globals()`. An eager surface cost every consumer 0.848 s,
+  and issue #122 holds the measurement. Write such a `__getattr__` for a
+  re-export only, put every name in an `if TYPE_CHECKING:` block beside it, and
+  gate the pair. `tests/meta/test_public_surface.py` and
+  `tests/nanopynix/test_import_surface.py` are those gates.
+- **A consumer that needs the store alone imports `nanopynix.libstore`.** That
+  module imports `nanopynix_bindings` and no other module of nanopynix, so it
+  needs no `__getattr__` and it cannot grow one. Keep it that way.
 - Use this import order:
   1. `from __future__ import annotations`
   2. imports of the standard library
