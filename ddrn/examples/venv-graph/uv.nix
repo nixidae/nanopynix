@@ -94,7 +94,11 @@
   #
   # A `directory` source and a git source take neither form. uv installs both
   # of those as a wheel, so this reader does too.
-  fromSdist ? [ ],
+  #
+  # **`null` reads `[tool.ddrn] from-sdist` of the project**, the way `select`,
+  # `extras` and `groups` read the project for their own decision. A list
+  # replaces that table, and `[ ]` is therefore "no member ships an archive".
+  fromSdist ? null,
   venvName ? null,
   # The interpreter that the environment runs. `./default.nix` gives the whole
   # reason at its `python` argument, and the short one is this: the interpreter
@@ -111,6 +115,10 @@
   # **The lock file still resolves the package.** The override decides where
   # the code comes from, and not whether the package is in the environment, so
   # the edges of `uv.lock` still name it and its dependencies still resolve.
+  #
+  # **The project declares the same thing in `[tool.ddrn.from-nixpkgs]`**, with
+  # the attribute name as a string, and this argument replaces the declaration
+  # of each package that it names.
   fromNixpkgs ? { },
   # What one package needs to build, by package name, as
   # `{ psutil = [ pkgs.stdenv.cc ]; }`. `./default.nix` gives the whole reason
@@ -448,12 +456,12 @@ let
   # target does not install is not a mistake: one lock file resolves to more
   # than one environment, so a table that covers the workspace names packages
   # that a single member never builds.
-  declaredTools = pyproject.tool.ddrn."build-tools" or { };
+  ddrn = pyproject.tool.ddrn or { };
 
   # One attribute of `pkgs`, named by a dotted string, or a message that says
-  # which package asked for it.
-  toolOf =
-    package: name:
+  # which table and which package asked for it.
+  attributeOf =
+    table: package: name:
     let
       parts = lib.splitString "." name;
     in
@@ -461,17 +469,38 @@ let
       lib.getAttrFromPath parts pkgs
     else
       throw (
-        "uv.nix: [tool.ddrn.build-tools] of ${projectName} gives '${package}' the build tool "
+        "uv.nix: [tool.ddrn.${table}] of ${projectName} gives '${package}' the name "
         + "'${name}', and nixpkgs holds no attribute of that name. Each value names an "
         + "attribute of the nixpkgs that this call takes, and a dot walks into it."
       );
 
-  declaredBuildTools = lib.mapAttrs (package: names: map (toolOf package) names) declaredTools;
+  declaredBuildTools = lib.mapAttrs (package: names: map (attributeOf "build-tools" package) names) (
+    ddrn."build-tools" or { }
+  );
 
   # **The argument wins for the package that it names, and for no other one.**
   # A caller who overrides `cffi` on the command line keeps the declaration of
   # every other package, which is what a per-package override means.
   chosenBuildTools = declaredBuildTools // buildTools;
+
+  # **Which package comes from nixpkgs rather than the index, in that same
+  # table.** The reason is the one that `./default.nix` gives at its
+  # `fromNixpkgs` argument: a manylinux wheel carries a copy of every library
+  # that it links against, and a package of nixpkgs links against the store.
+  #
+  #     [tool.ddrn.from-nixpkgs]
+  #     pyzmq = "python3Packages.pyzmq"
+  declaredFromNixpkgs = lib.mapAttrs (package: name: attributeOf "from-nixpkgs" package name) (
+    ddrn."from-nixpkgs" or { }
+  );
+
+  chosenFromNixpkgs = declaredFromNixpkgs // fromNixpkgs;
+
+  # **Which member ships an archive rather than a redirect.** `null` reads the
+  # project, and a list replaces what the project says. This is the shape that
+  # `select`, `extras` and `groups` already take, for the same reason: the
+  # project holds a default, and the caller of one build overrides it.
+  chosenFromSdist = if fromSdist != null then fromSdist else ddrn."from-sdist" or [ ];
 
   # The three source kinds that mean "a directory of this workspace, and not an
   # artefact of an index". `ddrn_venv._uvlock.LOCAL_SOURCES` lists the same
@@ -576,7 +605,7 @@ let
             # decisions that uv already made, so this reader follows them
             # rather than install every directory the same way.
             mode =
-              if lib.elem package.name fromSdist then
+              if lib.elem package.name chosenFromSdist then
                 "sdist"
               else if package.source ? directory then
                 "wheel"
@@ -787,12 +816,12 @@ let
       markers
       noBinary
       application
-      fromNixpkgs
       python
       uvEditables
       ;
 
     buildTools = chosenBuildTools;
+    fromNixpkgs = chosenFromNixpkgs;
 
     artifacts = lib.concatMap artifactsOf document.package;
 
@@ -844,9 +873,9 @@ checkProject (
   lib.throwIfNot (lockVersion == 1)
     "uv.nix: ${lockFile} says version ${builtins.toJSON lockVersion}, and this reader accepts 1"
     (
-      lib.throwIf (lib.subtractLists localNames fromSdist != [ ])
+      lib.throwIf (lib.subtractLists localNames chosenFromSdist != [ ])
         (
-          "uv.nix: fromSdist names ${builtins.toJSON (lib.subtractLists localNames fromSdist)}, "
+          "uv.nix: fromSdist names ${builtins.toJSON (lib.subtractLists localNames chosenFromSdist)}, "
           + "and ${lockFile} holds no local package of that name. It holds ${builtins.toJSON localNames}."
         )
         (

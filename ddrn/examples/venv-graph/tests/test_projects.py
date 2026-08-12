@@ -459,6 +459,15 @@ class TestAPackageThatCompiles:
         assert any(name.startswith("libffi-") for name in closure), closure
 
 
+async def declaring(tmp_path: Path, project: str, table: str) -> Path:
+    """A copy of one project, with `table` added to its `pyproject.toml`."""
+    shutil.copytree(PROJECTS / project, tmp_path, dirs_exist_ok=True)
+    declaration = anyio.Path(tmp_path / "pyproject.toml")
+    text = await declaration.read_text(encoding="utf-8")
+    await declaration.write_text(f"{text}\n{table}\n", encoding="utf-8")
+    return tmp_path
+
+
 class TestTheProjectDeclaresItsBuildTools:
     """`[tool.ddrn.build-tools]`, and the argument that overrides it.
 
@@ -514,6 +523,87 @@ class TestTheProjectDeclaresItsBuildTools:
         refusal = await toolchain.evaluate_failing(source)
         assert "[tool.ddrn.build-tools] of native-app gives 'psutil'" in refusal
         assert "'stdenv.cxx', and nixpkgs holds no attribute of that name" in refusal
+
+
+class TestTheProjectDeclaresTheOtherTwoDecisions:
+    """`[tool.ddrn.from-nixpkgs]` and `[tool.ddrn] from-sdist`.
+
+    **`[tool.ddrn]` is one table, and each key is one decision that `uv.lock`
+    does not record.** `tool.uv.no-binary-package` is the model: uv keeps a
+    setting of the project in `pyproject.toml`, and `uv.nix` reads it there
+    rather than invent an argument for the same decision.
+
+    | key | what it decides | how the argument overrides it |
+    | --- | --- | --- |
+    | `build-tools` | what one package needs to build | per package |
+    | `from-nixpkgs` | which package nixpkgs supplies | per package |
+    | `from-sdist` | which member ships an archive | the whole list |
+
+    `from-sdist` differs because it is a list and not a table, so `null` is
+    what asks the project. `select`, `extras` and `groups` already take that
+    shape.
+
+    **No project of `../projects` declares either key**, because two tests
+    build the same project both ways. So each test here writes the table into
+    a copy, and each one evaluates and builds nothing.
+    """
+
+    async def test_the_from_nixpkgs_table_and_the_argument_give_one_planner(
+        self, toolchain: Toolchain, tmp_path: Path
+    ) -> None:
+        """**Both calls read one tree**, so the `pyproject.toml` of the copy is
+        an input of both planners and the difference is the route alone.
+
+        The second assertion is what makes the first one mean something: a
+        table that nothing read would give equality as well.
+        """
+        tree = await declaring(tmp_path, "binary-app", '[tool.ddrn.from-nixpkgs]\npyzmq = "python3Packages.pyzmq"')
+        declared = await toolchain.evaluate(toolchain.source(UV, "drvPath", project=nix_string(tree)))
+        given = await toolchain.evaluate(
+            toolchain.source(
+                UV,
+                "drvPath",
+                project=nix_string(tree),
+                fromNixpkgs="{ pyzmq = (import <nixpkgs> {}).python3Packages.pyzmq; }",
+            )
+        )
+        assert declared == given
+
+        other = await toolchain.evaluate(
+            toolchain.source(
+                UV,
+                "drvPath",
+                project=nix_string(tree),
+                fromNixpkgs="{ pyzmq = (import <nixpkgs> {}).python3Packages.six; }",
+            )
+        )
+        assert declared != other
+
+    async def test_a_from_nixpkgs_value_that_names_no_attribute(self, toolchain: Toolchain, tmp_path: Path) -> None:
+        # The message names the table that holds the value, so a project with
+        # both tables learns which one to correct.
+        tree = await declaring(tmp_path, "binary-app", '[tool.ddrn.from-nixpkgs]\npyzmq = "python3Packages.pyzmqq"')
+        refusal = await toolchain.evaluate_failing(toolchain.source(UV, "drvPath", project=nix_string(tree)))
+        assert "[tool.ddrn.from-nixpkgs] of binary-app gives 'pyzmq'" in refusal
+
+    async def test_the_from_sdist_list_and_the_argument_give_one_planner(
+        self, toolchain: Toolchain, tmp_path: Path
+    ) -> None:
+        tree = await declaring(tmp_path, "packaged-app", '[tool.ddrn]\nfrom-sdist = ["packaged-app"]')
+        declared = await toolchain.evaluate(toolchain.source(UV, "drvPath", project=nix_string(tree)))
+        given = await toolchain.evaluate(
+            toolchain.source(UV, "drvPath", project=nix_string(tree), fromSdist='["packaged-app"]')
+        )
+        assert declared == given
+
+    async def test_an_empty_list_takes_the_declaration_away(self, toolchain: Toolchain, tmp_path: Path) -> None:
+        # `[ ]` is not "say nothing" here, and that is what `null` is for. A
+        # member that the project ships as an archive becomes an editable
+        # again, so the planner differs.
+        tree = await declaring(tmp_path, "packaged-app", '[tool.ddrn]\nfrom-sdist = ["packaged-app"]')
+        declared = await toolchain.evaluate(toolchain.source(UV, "drvPath", project=nix_string(tree)))
+        emptied = await toolchain.evaluate(toolchain.source(UV, "drvPath", project=nix_string(tree), fromSdist="[ ]"))
+        assert declared != emptied
 
 
 class TestTheSourcesThatNoIndexServes:

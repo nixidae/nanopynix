@@ -45,6 +45,38 @@ $ py=$(nix build --file . pkgs.python313 --no-link --print-out-paths)
 $ export UV_PYTHON_DOWNLOADS=never UV_PYTHON="$py/bin/python3.13"
 ```
 
+## What a project declares for `uv.nix`
+
+**`[tool.ddrn]` holds one key for each decision that `uv.lock` does not
+record and that the project answers the same way every time.** `[tool.uv]
+no-binary-package` is the model: uv keeps a setting of the project in
+`pyproject.toml`, and `uv.nix` reads it there rather than take the same
+decision twice.
+
+```toml
+[tool.ddrn]
+from-sdist = ["ws-core"]
+
+[tool.ddrn.build-tools]
+psutil = ["stdenv.cc"]
+
+[tool.ddrn.from-nixpkgs]
+pyzmq = "python3Packages.pyzmq"
+```
+
+| key | what it decides |
+| --- | --- |
+| `build-tools` | what one package needs to build. `native-app` below uses it |
+| `from-nixpkgs` | which package nixpkgs supplies rather than the index |
+| `from-sdist` | which member ships an archive rather than a redirect |
+
+Each value of the first two tables names an attribute of nixpkgs, and a dot
+walks into it. The argument of `uv.nix` with the same name overrides the
+table, so a build takes a different decision without an edit of the project.
+
+**Only `native-app` declares anything**, because two tests build the same
+project both ways and a declaration would decide for both.
+
 ## `pure-app`
 
 The first project. Every artefact of it is a pure Python wheel, so no node of

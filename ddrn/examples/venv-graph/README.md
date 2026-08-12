@@ -170,6 +170,40 @@ $ uv add --no-sync --group ddrn hatchling editables
 backend, and `ddrn/PACKAGING-FACTS.md` gives the reason that no lock file holds
 this.
 
+## What the project declares, and what the caller decides
+
+**Three of the arguments below have a `[tool.ddrn]` key, and the project is
+the better place for each one.** `[tool.uv] no-binary-package` is the model:
+uv keeps a setting of the project in `pyproject.toml`, and `uv.nix` reads it
+there rather than take the same decision twice.
+
+```toml
+[tool.ddrn]
+from-sdist = ["ws-core"]
+
+[tool.ddrn.build-tools]
+psutil = ["stdenv.cc"]
+
+[tool.ddrn.from-nixpkgs]
+pyzmq = "python3Packages.pyzmq"
+```
+
+| key | what it decides | how the argument overrides it |
+| --- | --- | --- |
+| `build-tools` | what one package needs to build | per package |
+| `from-nixpkgs` | which package nixpkgs supplies rather than the index | per package |
+| `from-sdist` | which member ships an archive rather than a redirect | the whole list, and `null` asks the project |
+
+Each value of the first two tables names an attribute of nixpkgs, and a dot
+walks into it. **That is a lookup and not a rule**: nothing globs, compares a
+version or evaluates a marker, and the planner still takes every packaging
+decision. A name that nixpkgs does not answer stops the evaluation and says
+which table and which package asked for it.
+
+The rest stays an argument, because it is a decision of the build and not of
+the project: `select`, `extras` and `groups` differ for each environment of one
+lock file, and `application` decides the shape of one output.
+
 ## The arguments you are most likely to want
 
 | argument | what it decides |
@@ -181,8 +215,8 @@ this.
 | `venvName` | the name of the environment. The default is the name of the project |
 | `python` | the interpreter that the environment runs. See below |
 | `fromNixpkgs` | `{ pyzmq = pkgs.python3Packages.pyzmq; }` takes a package from nixpkgs instead of the index, and the graph builds no wheel for that name |
-| `fromSdist` | each member to install from its own source distribution, rather than as a PEP 660 editable |
-| `buildTools` | `{ psutil = [ pkgs.stdenv.cc ]; }` gives one package what its build needs, and it replaces `[tool.ddrn.build-tools]` for that package. See below |
+| `fromSdist` | each member to install from its own source distribution, rather than as a PEP 660 editable. `null` reads the project |
+| `buildTools` | `{ psutil = [ pkgs.stdenv.cc ]; }` gives one package what its build needs. See below |
 | `editableRoot` | what a PEP 660 editable redirects to. The default is the variable `$DDRN_EDITABLE_ROOT`, so one environment serves every tree |
 | `markers` | `platform_release` and `platform_version`, which no build can know |
 | `uvCheck` | `true` runs `uv lock --check` over the project before the planner runs. See below |

@@ -2609,6 +2609,33 @@ for the same decision, so a user of it describes the project in two places and
 in two languages. `nix build --file uv.nix env --arg project ./.` now needs no
 second argument for a project that compiles.
 
+### Three decisions belong to the project, and three belong to the build
+
+`[tool.ddrn]` holds one key for each decision that `uv.lock` does not record
+and that the project answers the same way every time:
+
+| key | what it decides | how the argument overrides it |
+| --- | --- | --- |
+| `build-tools` | what one package needs to build | per package |
+| `from-nixpkgs` | which package nixpkgs supplies rather than the index | per package |
+| `from-sdist` | which member ships an archive rather than a redirect | the whole list |
+
+**`from-sdist` takes a different shape because it is a list.** A table merges
+per key, and a list cannot. So `fromSdist` of `uv.nix` defaults to `null`,
+which reads the project, and a list replaces the table. `select`, `extras` and
+`groups` already take that shape, for the same reason.
+
+**Three others stay an argument, and the reason is that they change for each
+build of one project.** `select`, `extras` and `groups` differ for each
+environment of one lock file, and `projects/workspace` builds two environments
+out of one file. `application` decides the shape of one output, and the same
+project ships as a program in one place and as an environment in another.
+
+Measured on 2026-08-12, over `projects/binary-app` and `projects/packaged-app`
+with the table written into a copy of each. `tests/test_projects.py`, in
+`TestTheProjectDeclaresTheOtherTwoDecisions`, holds the comparison: the table
+and the argument give one `.drv`, and a different value gives another one.
+
 ## PEP 751, and what `packaging` already does with it
 
 PEP 751 gives one lock file format that more than one tool writes. uv 0.12.1

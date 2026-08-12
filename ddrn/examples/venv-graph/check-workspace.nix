@@ -25,7 +25,10 @@
   # Each member to install from its own source distribution. `uv.nix` gives the
   # whole reason, and the short one is this: a member that ships as an archive
   # holds its own code, so it stops following the tree that the others read.
-  fromSdist ? [ ],
+  #
+  # `null` is the default of `uv.nix`, which reads `[tool.ddrn] from-sdist` of
+  # the project. A list here replaces that table.
+  fromSdist ? null,
 }:
 
 let
