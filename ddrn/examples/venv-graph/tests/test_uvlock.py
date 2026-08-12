@@ -24,9 +24,11 @@ from ddrn_venv import (
     Lock,
     LockError,
     Resolution,
+    build_requirements,
     filter_conflicts,
     resolve_lock,
 )
+from packaging.requirements import Requirement
 
 LOCKS = Path(__file__).resolve().parent / "fixtures/locks"
 
@@ -189,6 +191,29 @@ class TestConflicts:
         # pass a narrower selection.
         with pytest.raises(LockError, match="more than one branch"):
             resolve_lock(lock("conflicts"), ENVIRONMENT, {"conflicts": ["extra-a", "extra-b"]})
+
+
+class TestTheBuildSystemClosure:
+    """`build_requirements` pins what a PEP 517 backend needs to import.
+
+    **A backend needs its own dependencies, and PEP 517 says so.** The
+    frontend installs `requires` and what those need, so
+    `build-system.requires = ["hatchling"]` names one package of five.
+    """
+
+    def test_a_project_that_requires_nothing_needs_nothing(self) -> None:
+        # PEP 517 gives `setuptools` as the fallback for a project with no
+        # `[build-system]`, and `build_system` answers that. A project whose
+        # table is present and empty asks for nothing at all, and the closure
+        # of nothing is nothing.
+        assert build_requirements(lock("trivial"), ENVIRONMENT, []) == []
+
+    def test_a_backend_that_the_lock_file_does_not_hold_names_the_command(self) -> None:
+        # **`uv.lock` records no build system**, so a backend reaches it only
+        # as an ordinary package. The message gives the command that puts one
+        # there, because a reader who meets this has no other way to know.
+        with pytest.raises(LockError, match="uv add --group ddrn"):
+            build_requirements(lock("trivial"), ENVIRONMENT, [Requirement("hatchling")])
 
 
 class TestAWorkspaceMemberThatIsNotSelected:

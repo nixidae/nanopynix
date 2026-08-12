@@ -28,6 +28,7 @@ from ddrn_venv import (
     is_pyproject,
     read_pyproject,
     target_from_environ,
+    target_platforms,
     target_tags,
     wheel_rank,
 )
@@ -60,6 +61,16 @@ MARKERS = {
 
 #: The document that `default.nix` puts in `DDRN_TARGET`, as JSON.
 TARGET_DOCUMENT = {"markers": MARKERS, "pythonVersion": PYTHON_VERSION, "platform": PLATFORM}
+
+#: One row of `DDRN_INPUTS`, as `uv.nix` writes it for a wheel to fetch.
+ROW = {
+    "package": "demo",
+    "version": "1.0",
+    "filename": "demo-1.0-py3-none-any.whl",
+    "kind": "wheel",
+    "drv": "/nix/store/aaa-demo.drv",
+    "out": "/nix/store/bbb-demo",
+}
 
 PYPROJECT = b"""
 [build-system]
@@ -162,6 +173,22 @@ class TestTags:
         assert Tag("cp313", "abi3", "manylinux_2_28_x86_64") in accepted
         assert Tag("cp312", "abi3", "manylinux_2_28_x86_64") in accepted
         assert Tag("py3", "none", "any") in accepted
+
+    def test_a_linux_target_takes_every_manylinux_at_or_below_it(self) -> None:
+        # PEP 600: a `manylinux_2_Y` wheel runs against every glibc at or above
+        # 2.Y, so each version at or below the target fits and the newest one
+        # is the closest fit. `manylinux2014` is the legacy alias of 2.17.
+        platforms = target_platforms("linux_x86_64")
+        assert platforms[-1] == "linux_x86_64"
+        assert "manylinux2014_x86_64" in platforms
+        assert platforms.index("manylinux_2_28_x86_64") < platforms.index("manylinux_2_17_x86_64")
+
+    @pytest.mark.parametrize("platform", ["macosx_11_0_arm64", "win_amd64", "any"])
+    def test_a_platform_that_is_not_linux_travels_alone(self, platform: str) -> None:
+        # **`manylinux` is a Linux rule**, and this function states the target
+        # rather than describe the machine that runs it. A platform with no
+        # such rule needs no expansion.
+        assert target_platforms(platform) == [platform]
 
 
 class TestChoose:
@@ -326,6 +353,70 @@ class TestArtifact:
         plan = sdist("demo", "1.0", planner_drv="/nix/store/aaa-demo.drv", planner_out="/nix/store/bbb").as_plan()
         assert plan["plannerDrv"] == "/nix/store/aaa-demo.drv"
         assert plan["plannerOut"] == "/nix/store/bbb"
+
+    def test_a_subdirectory_travels_and_an_absent_one_does_not(self) -> None:
+        # `uv.lock` writes a subdirectory for a URL source, so one archive of
+        # the index may hold more than one project.
+        assert "subdirectory" not in sdist("demo", "1.0").as_plan()
+        assert sdist("demo", "1.0", subdirectory="packages/demo").as_plan()["subdirectory"] == "packages/demo"
+
+
+class TestTheRowThatTheNixHalfWrote:
+    """`Artifact.from_json` reads one row of `DDRN_INPUTS`.
+
+    **This is the boundary between the two halves.** `uv.nix` walks the lock
+    file and writes one row for each artefact, and the planner reads that row
+    here. A key that this method drops is a decision of the Nix half that never
+    reaches the plan, so each key is named rather than copied in bulk.
+
+    The Nix half writes `plannerDrv` and `plannerOut` in camel case, and this
+    method is where those two names become `planner_drv` and `planner_out`.
+    """
+
+    def test_the_four_required_keys_are_read(self) -> None:
+        read = Artifact.from_json({key: ROW[key] for key in ("package", "version", "filename", "kind")})
+        assert (read.package, read.version, read.kind) == ("demo", "1.0", "wheel")
+        assert read.drv == ""
+        assert read.marker is None
+
+    def test_every_optional_key_is_read(self) -> None:
+        row = {
+            **ROW,
+            "path": "/nix/store/ccc-demo.tar.gz",
+            "marker": "sys_platform == 'linux'",
+            "subdirectory": "packages/demo",
+            "plannerDrv": "/nix/store/ddd-planner.drv",
+            "plannerOut": "/nix/store/eee-planner",
+        }
+        read = Artifact.from_json(row)
+        assert read.path == "/nix/store/ccc-demo.tar.gz"
+        assert read.marker == "sys_platform == 'linux'"
+        assert read.subdirectory == "packages/demo"
+        assert read.planner_drv == "/nix/store/ddd-planner.drv"
+        assert read.planner_out == "/nix/store/eee-planner"
+
+    def test_a_row_becomes_a_plan_and_keeps_what_graph_nix_needs(self) -> None:
+        # The round trip is the contract: what `uv.nix` wrote reaches
+        # `graph.nix` again, under the names that `graph.nix` reads.
+        plan = Artifact.from_json(ROW).as_plan()
+        assert plan == {
+            "filename": "demo-1.0-py3-none-any.whl",
+            "package": "demo",
+            "version": "1.0",
+            "drv": "/nix/store/aaa-demo.drv",
+            "out": "/nix/store/bbb-demo",
+        }
+
+    def test_a_key_that_the_row_does_not_carry_is_not_an_error(self) -> None:
+        # `uv.nix` writes `marker` for an artefact of a fork alone, so most
+        # rows carry neither it nor `subdirectory`.
+        read = Artifact.from_json(ROW)
+        assert (read.subdirectory, read.planner_drv, read.planner_out, read.path) == ("", "", "", "")
+
+    def test_the_node_name_is_the_package_and_the_version(self) -> None:
+        # `graph.nix` keys a node by this name, and `test_plan_names.py` holds
+        # what happens when two different nodes claim one of them.
+        assert Artifact.from_json(ROW).node_name == "demo-1.0"
 
 
 class TestBuildSystem:
