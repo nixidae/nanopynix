@@ -152,13 +152,17 @@
   #
   # Each entry is a store path, and it reaches the node in four ways:
   #
-  #   PATH                 `bin` of the entry, in front of the base path.
-  #   NIX_CFLAGS_COMPILE   `-isystem` for `include` of the entry.
-  #   NIX_LDFLAGS          `-L` for `lib` of the entry.
-  #   PKG_CONFIG_PATH      `lib/pkgconfig` of the entry.
+  #   PATH             `bin` of the entry, in front of the base path.
+  #   CPPFLAGS         `-isystem` for `include` of the entry.
+  #   LDFLAGS          `-L` for `lib` of the entry.
+  #   PKG_CONFIG_PATH  `lib/pkgconfig` of the entry.
   #
   # A directory that the entry does not hold costs nothing, so an entry that
   # is only a program adds no flag that matters.
+  #
+  # **`NIX_CFLAGS_COMPILE` is not one of them, and `graph.nix` says why.** The
+  # wrapper of the compiler reads a name that carries the salt of its
+  # platform, and only a setup hook writes that name.
   #
   # **Name each output that the build reads.** A node of this graph runs no
   # `stdenv`, so no setup hook follows `.dev` for you:

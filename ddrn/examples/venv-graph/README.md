@@ -413,8 +413,8 @@ four ways:
 | variable | what the entry gives |
 | --- | --- |
 | `PATH` | `bin` of the entry, in front of the base path |
-| `NIX_CFLAGS_COMPILE` | `-isystem` for `include` of the entry |
-| `NIX_LDFLAGS` | `-L` for `lib` of the entry |
+| `CPPFLAGS` | `-isystem` for `include` of the entry |
+| `LDFLAGS` | `-L` for `lib` of the entry |
 | `PKG_CONFIG_PATH` | `lib/pkgconfig` of the entry |
 
 A directory that the entry does not hold costs nothing, so an entry that is
@@ -422,6 +422,20 @@ only a program adds no flag that matters.
 
 **Name each output that the build reads.** A node runs no `stdenv`, so no
 setup hook follows `.dev` for you.
+
+**`NIX_CFLAGS_COMPILE` would reach nothing here**, and that is a measurement
+rather than a taste. `ddrn/PACKAGING-FACTS.md` records it: the wrapper of the
+compiler reads a name that carries the salt of its platform, and only a setup
+hook writes that name. `CPPFLAGS` and `LDFLAGS` are what
+`setuptools._distutils` reads, and they need no hook.
+
+**`CPPFLAGS` also carries `-g0`, and that is 58% of the closure.** A `.so`
+with debug information names every include directory of its build, so the
+scan of the output makes the compiler, `glibc-dev` and the `dev` output of
+each library a reference of the environment. `stdenv` of nixpkgs strips a
+binary for the same reason. The measurement is `psutil` and `lxml` built from
+source: 545822056 bytes and 41 paths as first built, and 228729808 bytes and
+28 paths with the flag.
 
 **The compiler is a build input, and it reaches no environment.**
 `ddrn/PACKAGING-FACTS.md` measures this: the environment of a package that

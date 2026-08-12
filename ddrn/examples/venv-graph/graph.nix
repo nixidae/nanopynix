@@ -117,10 +117,18 @@ let
   # file looks nothing up, and it canonicalises no name: `packaging` does that,
   # in the half of this example that is Python.
   #
-  # **The four variables below are the ones that the wrappers of nixpkgs read.**
-  # A node of this graph runs no `stdenv`, so no setup hook collects an input
-  # and writes them. `cc-wrapper` reads `NIX_CFLAGS_COMPILE` and `NIX_LDFLAGS`
-  # from the environment, whether a hook wrote them or this file did.
+  # **`CPPFLAGS` and `LDFLAGS` are the variables, and `NIX_CFLAGS_COMPILE` is
+  # not.** `cc-wrapper` reads a name that carries the salt of its platform,
+  # `NIX_CFLAGS_COMPILE_x86_64_unknown_linux_gnu`, and it copies the plain name
+  # into that one only when `accumulateRoles` finds
+  # `NIX_CC_WRAPPER_TARGET_HOST_<salt>`. The setup hook of the wrapper exports
+  # that variable, and a node of this graph runs no setup hook. So a plain
+  # `NIX_LDFLAGS` here reaches nothing, and `ddrn/PACKAGING-FACTS.md` records
+  # the measurement that found it.
+  #
+  # `customize_compiler` of `setuptools._distutils` reads the two below, and
+  # appends each one. It reads `CFLAGS` as well, and **replaces** the value
+  # that `sysconfig` gives, so this file does not set that one.
   #
   # A directory that an entry does not hold costs nothing. `cc` ignores an
   # `-isystem` and an `-L` that name no directory, and `pkg-config` ignores
@@ -136,8 +144,15 @@ let
     else
       {
         PATH = "${join ":" (root: "${root}/bin")}:${basePath}";
-        NIX_CFLAGS_COMPILE = join " " (root: "-isystem ${root}/include");
-        NIX_LDFLAGS = join " " (root: "-L${root}/lib");
+        # **`-g0` keeps the compiler out of the runtime closure.** A `.so` with
+        # debug information records every include directory in its DWARF
+        # sections, so the scan of the output finds the compiler, `glibc-dev`
+        # and the `dev` output of each library, and each one enters the closure
+        # of the environment. `stdenv` of nixpkgs strips a binary for the same
+        # reason, and a node of this graph runs no `stdenv`.
+        # `ddrn/PACKAGING-FACTS.md` gives the measurement.
+        CPPFLAGS = "-g0 ${join " " (root: "-isystem ${root}/include")}";
+        LDFLAGS = join " " (root: "-L${root}/lib");
         PKG_CONFIG_PATH = join ":" (root: "${root}/lib/pkgconfig");
       };
 

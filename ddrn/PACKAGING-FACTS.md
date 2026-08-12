@@ -2345,6 +2345,81 @@ store of the test, and a comparison of the two path lists by name. The two
 stores hold two revisions of nixpkgs, so a comparison by store path answers
 nothing here and a comparison by name answers the question.
 
+### `NIX_CFLAGS_COMPILE` reaches nothing here, and `CPPFLAGS` does
+
+The first version of `buildTools` set `NIX_CFLAGS_COMPILE` and `NIX_LDFLAGS`,
+which is what a `mkDerivation` sets. `lxml` then failed at the link step:
+
+```
+lxml> ld.bfd: cannot find -lz: No such file or directory
+```
+
+`zlib` was in the list, so the variable reached nothing. `add-flags.sh` of the
+wrapper says why. It reads
+`NIX_CFLAGS_COMPILE_x86_64_unknown_linux_gnu`, and `mangleVarList` copies the
+plain name into that one for each role that `accumulateRoles` found:
+
+```bash
+accumulateRoles() {
+    declare -ga role_suffixes=()
+    if [ "${NIX_CC_WRAPPER_TARGET_HOST_x86_64_unknown_linux_gnu:-}" ]; then
+        role_suffixes+=('')
+    fi
+    ...
+}
+```
+
+**The setup hook of the wrapper exports that variable, and a node of this
+graph runs no setup hook.** So `role_suffixes` is empty, nothing is copied, and
+the salted variable stays empty.
+
+`CPPFLAGS` and `LDFLAGS` are what `customize_compiler` of
+`setuptools._distutils` reads, and it appends each one to the command that
+`sysconfig` gives. It reads `CFLAGS` as well and **replaces** that value, so
+`graph.nix` does not set `CFLAGS`.
+
+Read the source, and do not infer the rule from the name of a variable. This
+is the second time in this lab that a guess about a tool cost a build.
+
+### `-g0` is 58% of the closure of a package that compiles
+
+`projects` holds no package that compiles, so this measurement used a project
+of its own: `psutil` and `lxml`, both under `tool.uv.no-binary-package`, with
+`buildTools` naming `stdenv.cc` for the first and `stdenv.cc`, `libxml2`,
+`libxslt`, `zlib` and `pkg-config` for the second. Both built, and both import.
+
+| the environment | closure | paths |
+| --- | ---: | ---: |
+| as first built | 545822056 | 41 |
+| with `-g0` | 228729808 | 28 |
+
+Measured on 2026-08-12, with
+`nix path-info --closure-size` over the private store of the test.
+
+**A `.so` with debug information names every include directory of its build.**
+`strings` over `_psutil_linux.abi3.so` of the first row finds these, and the
+scan of the output makes each one a reference:
+
+```
+/nix/store/…-gcc-15.3.0/lib/gcc/x86_64-unknown-linux-gnu/15.3.0/include
+/nix/store/…-glibc-2.42-67-dev/include
+/nix/store/…-python3-3.14.6/include/python3.14
+```
+
+So the first row carried `gcc`, `glibc-dev`, `linux-headers`, the `dev` output
+of each library, and the four libraries that gcc itself needs: `gmp`, `isl`,
+`mpfr` and `libmpc`. `stdenv` of nixpkgs strips a binary and removes the same
+strings, and a node of this graph runs no `stdenv`.
+
+With `-g0`, the environment adds exactly five paths over its interpreter:
+
+```
+libxml2-2.15.3  libxslt-1.1.45  lxml-6.1.1  native-real  psutil-7.2.2
+```
+
+`libxml2` and `libxslt` are real: the `.so` of `lxml` links against both.
+Nothing of the compiler is there.
+
 ### The wheel says which interpreter it is for
 
 The fixture backend reads `sysconfig`, and it writes
