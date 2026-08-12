@@ -307,11 +307,114 @@ class TestASourceThatNamesAFile:
 
 
 class TestErrors:
-    """What the reader says when it cannot answer."""
+    """What the reader says when it cannot answer.
+
+    **Each message here is what a user reads when a lock file is wrong**, and a
+    message that no test reads is a message that nothing keeps true. A reader
+    of a lock file meets these in one of two ways: the file disagrees with
+    itself, or the selection asks for something that the file does not hold.
+
+    The documents below are the smallest ones that reach each answer. A
+    fixture from uv cannot reach most of them, because uv does not write a file
+    that disagrees with itself.
+    """
+
+    HEAD = 'version = 1\nrequires-python = ">=3.12"\n'
+    REGISTRY = '{ registry = "https://pypi.org/simple" }'
+
+    def entry(self, name: str, version: str, source: str | None = None) -> str:
+        """One `[[package]]` entry, of the registry unless another source is given."""
+        return f'\n[[package]]\nname = "{name}"\nversion = "{version}"\nsource = {source or self.REGISTRY}\n'
+
+    def document(self, body: str, head: str | None = None) -> Lock:
+        return Lock.parse(tomllib.loads((self.HEAD if head is None else head) + body))
 
     def test_a_selection_of_a_name_that_the_lock_does_not_hold(self) -> None:
         with pytest.raises(LockError, match="no such package"):
             resolve_lock(lock("trivial"), ENVIRONMENT, {"absent": []})
+
+    def test_a_selection_of_nothing_reaches_nothing(self) -> None:
+        # A caller that passes no root asks for an empty environment. The walk
+        # starts nowhere and ends there, and an empty answer is more likely a
+        # caller that built its selection wrongly than a request.
+        with pytest.raises(LockError, match="reached no package at all"):
+            resolve_lock(lock("trivial"), ENVIRONMENT, {})
+
+    def test_a_version_that_pep_440_does_not_read(self) -> None:
+        parsed = self.document(self.entry("a", "not a version"))
+        with pytest.raises(LockError, match="PEP 440 does not read it"):
+            _ = parsed.packages[0].id
+
+    def test_an_edge_that_names_an_entry_the_file_does_not_hold(self) -> None:
+        # Two entries of `a` make the name ambiguous, so the edge has to name a
+        # version and a source. It names a version that neither entry carries,
+        # and no entry answers it.
+        body = (
+            self.entry("a", "0.1.0")
+            + self.entry("a", "0.1.1")
+            + '\n[[package]]\nname = "b"\nversion = "0.1.0"\nsource = { editable = "." }\n'
+            + f'\n[[package.dependencies]]\nname = "a"\nversion = "0.9.9"\nsource = {self.REGISTRY}\n'
+        )
+        with pytest.raises(LockError, match="and the lock file holds no such package"):
+            resolve_lock(self.document(body), ENVIRONMENT, {"b": []})
+
+    def test_a_selection_that_reaches_two_entries_of_one_name(self) -> None:
+        # An environment installs one distribution for each name. Two edges of
+        # one name that both hold ask for a directory that cannot exist, and
+        # the edges decided this, so the reader states it rather than choose.
+        body = (
+            self.entry("a", "0.1.0")
+            + self.entry("a", "0.1.1")
+            + '\n[[package]]\nname = "b"\nversion = "0.1.0"\nsource = { editable = "." }\n'
+            + f'\n[[package.dependencies]]\nname = "a"\nversion = "0.1.0"\nsource = {self.REGISTRY}\n'
+            + f'\n[[package.dependencies]]\nname = "a"\nversion = "0.1.1"\nsource = {self.REGISTRY}\n'
+        )
+        with pytest.raises(LockError, match="more than one entry of one name"):
+            resolve_lock(self.document(body), ENVIRONMENT, {"b": []})
+
+    def test_a_resolution_marker_decides_between_two_entries_of_one_name(self) -> None:
+        # The other half of the answer below. A fork writes a
+        # `resolution-markers` on each entry, and the fork whose marker holds
+        # is the one that this environment takes.
+        body = (
+            '\n[[package]]\nname = "b"\nversion = "0.1.0"\nsource = { editable = "." }\n'
+            "resolution-markers = [ \"sys_platform == 'linux'\" ]\n"
+            '\n[[package]]\nname = "b"\nversion = "0.2.0"\nsource = { editable = "." }\n'
+            "resolution-markers = [ \"sys_platform == 'win32'\" ]\n"
+        )
+        resolved = resolve_lock(self.document(body), ENVIRONMENT, {"b": []})
+        assert labels(resolved) == {"b": "b-0.1.0"}
+
+    def test_a_root_of_a_name_that_two_entries_carry(self) -> None:
+        # `Lock.find` answers a name and no version, which is what a root is.
+        # Neither entry carries a resolution marker, so both take part in every
+        # fork and nothing decides. This is `Lock::find_by_markers` of uv, and
+        # uv raises here as well.
+        body = (
+            '\n[[package]]\nname = "b"\nversion = "0.1.0"\nsource = { editable = "." }\n'
+            '\n[[package]]\nname = "b"\nversion = "0.2.0"\nsource = { editable = "." }\n'
+        )
+        with pytest.raises(LockError, match="do not decide between them"):
+            resolve_lock(self.document(body), ENVIRONMENT, {"b": []})
+
+    def test_a_conflict_item_that_names_neither_an_extra_nor_a_group(self) -> None:
+        # Each item of a conflict declaration names a package and one of the
+        # two. An item that names the package alone constrains nothing, and it
+        # is more likely a file that was written by hand.
+        head = (
+            'version = 1\nrequires-python = ">=3.12"\n'
+            'conflicts = [[ { package = "a" }, { package = "a", extra = "x" } ]]\n'
+        )
+        parsed = self.document(self.entry("a", "0.1.0"), head=head)
+        with pytest.raises(LockError, match="names neither an extra nor a group"):
+            filter_conflicts(parsed, {"a": ["x"]})
+
+    def test_a_conflict_of_a_package_that_the_selection_leaves_out(self) -> None:
+        # The selection has to say what it takes for each package that a
+        # conflict declaration names, because the declaration is the reason
+        # that a choice exists at all.
+        with pytest.raises(LockError, match="and the selection does not"):
+            filter_conflicts(lock("conflicts"), {"other": []})
 
 
 class TestThePackageIdentity:
