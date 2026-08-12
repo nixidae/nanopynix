@@ -22,7 +22,12 @@ from typing import TYPE_CHECKING, Any
 from nanopynix_bindings import expr as nix_expr, store as nix_store
 from packaging.utils import canonicalize_name
 
-import nanopynix
+# **`nanopynix.libstore` and not `nanopynix`.** A planner opens a store,
+# initialises Nix and submits one output, and it needs no RPC engine. That
+# module imports `nanopynix_bindings` and nothing else of nanopynix, so it
+# costs 53 ms against 848 ms for the package. `ddrn/PACKAGING-FACTS.md`
+# measures what a planner spends its run on.
+from nanopynix.libstore import init_libstore
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -383,7 +388,7 @@ def open_restricted_store() -> nix_store.Store:
     if "out" in os.environ:
         raise RuntimeError(f"unexpected: out is set to {os.environ['out']!r}")  # noqa: SIM112 -- Nix names this variable in lower case
 
-    nanopynix.init_libstore()
+    init_libstore()
     nix_expr.init_libexpr()
     store = nix_store.open_store(remote)
     print(f"==> restricted store: {store.get_uri()}", file=sys.stderr)

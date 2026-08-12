@@ -532,9 +532,35 @@ first:
 **The cost is the public surface of `nanopynix/__init__.py`, and every consumer
 pays it.** That file re-exports `inproc`, `rpc`, `stores`, the settings models
 and the generated protocol, so one import loads the whole library. The number
-above is therefore not a fact about this lab. `pynix --version` costs 2.054 s,
-and `import nanopynix` is 0.818 s of that. Issue #122 holds the measurement of
-both consumers, and the three shapes that could remove the cost.
+above is therefore not a fact about this lab. Issue #122 holds the measurement.
+
+#### The surface became lazy, and the planner asks for the store alone
+
+`nanopynix/__init__.py` now maps each public name to the module that defines
+it, and PEP 562 gives a module a `__getattr__`, so the first read of a name
+imports that one module. `nanopynix.libstore` holds `init_libstore` and the
+store names, and it imports the compiled bindings and no other module of
+nanopynix.
+
+| import | before | after |
+| --- | ---: | ---: |
+| `python -c pass` | 0.017 s | 0.019 s |
+| `import nanopynix` | 0.848 s | 0.030 s |
+| `from nanopynix.libstore import init_libstore` | 0.848 s | 0.053 s |
+| `import nanopynix.rpc` | 0.848 s | 0.801 s |
+
+The planner reads `init_libstore` from `nanopynix.libstore`, so it pays 53 ms
+in place of 848 ms. Its decision work is still 25 ms, and the import is no
+longer 35 times that.
+
+**A consumer that reads a name from every module pays for every module.**
+`pynix` is one, and its start did not change: 2.09 s, of which `lsprotocol` is
+394 ms. Issue #107 covers what `pynix` itself asks for. The change moves the
+cost to the caller that asks for the name, and it removes no cost that a
+caller asked for.
+
+`tests/nanopynix/test_import_surface.py` gates this by what loads and not by
+how long it takes, because a ceiling in milliseconds measures the machine.
 
 One planner runs for each source distribution of a project, at each level of
 the recursion, so the cost multiplies with the count of source distributions
