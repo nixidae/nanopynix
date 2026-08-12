@@ -1459,6 +1459,40 @@ same 335 tests, with a warm store:
 The saving is the process for each build, and the `nix store cat` for each
 report: a chroot store is a plain directory tree, so a test opens the file.
 
+### A chroot store takes the daemon as a substituter, so no `nix copy` seeds it
+
+`run-uv.sh` builds the planner environment against the store of the machine and
+then copies it into the private chroot store, because that store starts empty
+and nothing has ever served the environment. `--extra-substituters daemon`
+removes the copy: the chroot store asks the daemon of the machine for every
+path, and the daemon holds the environment because this machine built it.
+
+`--option require-sigs false` goes with it. No cache signed a path that this
+machine built, and a chroot store refuses an unsigned path by default. It is
+the same reason that the copy passes `--no-check-sigs`.
+
+Measured on 2026-08-12, over `projects/pure-app`, from an empty directory:
+
+```console
+$ nix build --store "$PWD/store" --file ./uv.nix env \
+    --arg project .../projects/pure-app \
+    --impure --no-link --print-out-paths \
+    --extra-substituters daemon --option require-sigs false \
+    --extra-experimental-features 'nix-command flakes ca-derivations dynamic-derivations' \
+    --system-features 'builder-rpc-v0 recursive-nix'
+warning: the daemon is missing the 'realisation-with-path-not-hash' protocol feature, needed to support content-addressing derivations
+/nix/store/90mx650ayjnhh0ivf92kmjgpbymskkzm-pure-app
+```
+
+The store went from empty to 1.3 GB, and the result is the `env` wrapper: one
+symbolic link to `/nix/store/2ppg8xs82055lxw8vg22a1zbbvjnmfjc-pure-app`, whose
+`bin` holds `python`, `markdown-it` and `pygmentize`.
+
+**The warning is about the substituter, and not about the build.** Nix 2.34 on
+this machine cannot serve a realisation of a content-addressing derivation, so
+the daemon serves the ordinary paths and the client builds every node of the
+graph itself. That is what the private store is for.
+
 ## Upstream defects that this lab found
 
 **`SubmitStore::require` has no definition.** An undefined symbol.

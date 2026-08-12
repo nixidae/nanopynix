@@ -8,6 +8,45 @@ derivation is a **planner**: it runs in a sandbox, resolves the lock file with
 **Read `ddrn/ARCHITECTURE.md` first if you want to know why.** This file says
 how to use it.
 
+## The short way
+
+Build the patched Nix, and then build an environment. The second command starts
+from a store that holds nothing:
+
+```console
+$ repo=/path/to/npn-ddrn
+$ nix build --impure --expr "(import $repo { }).nanopynixMaster.nix-cli" \
+    --out-link ./nix-patched
+$ ./nix-patched/bin/nix build \
+    --store "$PWD/store" \
+    --file "$repo/ddrn/examples/venv-graph/uv.nix" env \
+    --arg project /path/to/my-project \
+    --impure --no-link --print-out-paths \
+    --extra-substituters daemon --option require-sigs false \
+    --extra-experimental-features 'nix-command flakes ca-derivations dynamic-derivations' \
+    --system-features 'builder-rpc-v0 recursive-nix'
+/nix/store/90mx650ayjnhh0ivf92kmjgpbymskkzm-pure-app
+```
+
+Three things make one command enough, and each has a section below:
+
+- **`env` is the environment as a derivation.** The result of `uv.nix` is the
+  planner, so a build of that result gives a `.drv` and a second build gives the
+  graph. `env` holds the second step.
+- **`nanopynixEnv` has a default**, which builds the planner environment out of
+  this repository. So no argument names it.
+- **`--extra-substituters daemon` seeds the private store**, so no `nix copy`
+  does. `--option require-sigs false` goes with it: this machine built the
+  patched nanopynix itself, no cache signed it, and a chroot store refuses an
+  unsigned path by default.
+
+Measured on 2026-08-12 over `projects/pure-app`: the command started with an
+empty directory and left a store of 1.3 GB, and `result` was one symbolic link
+to `/nix/store/2ppg8xs82055lxw8vg22a1zbbvjnmfjc-pure-app`.
+
+The rest of this file gives each step on its own, because a reader who wants to
+see the planner and the graph separately needs them apart.
+
 ## What it needs
 
 This example does not run under the Nix of this repository's pin. It needs the

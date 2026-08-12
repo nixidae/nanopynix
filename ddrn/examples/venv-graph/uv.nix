@@ -27,7 +27,23 @@
   pkgs ? import <nixpkgs> { },
   # A Python environment that has nanopynix, built against the patched Nix.
   # `./default.nix` says why a derivation here is pure and a string is not.
-  nanopynixEnv,
+  #
+  # **The default builds it out of this repository, so a caller passes no
+  # `--argstr nanopynixEnv`.** `run-uv.sh` and `tests/toolchain.py` still pass
+  # the value, because each of them builds the environment once and reuses it,
+  # and Nix never evaluates a default that a caller replaces.
+  #
+  # It costs 2.8 s of evaluation, measured on 2026-08-12 with `nix eval` over
+  # the `drvPath` of the same expression. That is the whole of this repository,
+  # so a copy of this file outside the checkout has to pass the argument.
+  #
+  # **An edit of this directory does not change the value.** The source filter
+  # of `nanopynixMaster` leaves `ddrn/` out, measured on 2026-08-12: an added
+  # line in `./README.md` gave the same `ddrn-planner-env.drv`. So an edit here
+  # rebuilds no planner environment.
+  nanopynixEnv ? (import ../../.. { }).nanopynixMaster.pythonSet.mkVirtualEnv "ddrn-planner-env" {
+    nanopynix = [ ];
+  },
   # The uv project to build. It holds `pyproject.toml` and `uv.lock`.
   project ? ./projects/pure-app,
   # Which packages of the lock file to install, and which extras and which

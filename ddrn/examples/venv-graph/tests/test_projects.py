@@ -341,6 +341,23 @@ class TestTheDevelopmentShell:
         assert await toolchain.evaluate(source, evaluator=toolchain.host_evaluator) == "true"
 
 
+class TestThePlannerEnvironmentArgument:
+    """`nanopynixEnv`, and the default that keeps it off the command line."""
+
+    async def test_a_call_that_names_no_planner_environment(self, toolchain: Toolchain) -> None:
+        # **This test writes the expression itself.** `Toolchain.source` gives
+        # `nanopynixEnv` to every call, which is the argument under test, so
+        # the helper cannot ask this question.
+        #
+        # The default builds the environment out of this repository, and this
+        # evaluates it rather than build it: the build is the 20 minute one
+        # that `toolchain.py` describes.
+        project = PROJECTS / "pure-app"
+        source = f'(import {UV} {{ project = "{project}"; }}).env.drvPath'
+        drv = await toolchain.evaluate(source, evaluator=toolchain.host_evaluator)
+        assert drv.endswith("-pure-app.drv"), drv
+
+
 class TestBinaryApp:
     """A wheel that holds compiled code, and the same package from nixpkgs."""
 
