@@ -148,6 +148,22 @@ echo
 echo "############ one member of a workspace, as an application ############"
 show store cat "$(build check-application.nix)"
 
+# **The same environment as a shell, and the editable tree that it reads.**
+# `shell` sets `DDRN_EDITABLE_ROOT` to the project, so an editable member
+# imports the tree that the user edits. This script prints the command rather
+# than run it, because a shell needs a terminal.
+echo
+echo "==> the same environment as a development shell:"
+cat <<COMMAND
+==>   $nix_patched/bin/nix develop --store $store \\
+==>     --file $here/uv.nix shell \\
+==>     --argstr nanopynixEnv $nanopynix_env \\
+==>     --arg project $here/projects/packaged-app \\
+==>     --impure \\
+==>     --extra-experimental-features '$features' \\
+==>     --system-features 'builder-rpc-v0 recursive-nix'
+COMMAND
+
 echo
 echo '==> tests/test_projects.py builds the other five projects, and every'
 echo "==> check of this directory. Run it with:"

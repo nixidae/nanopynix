@@ -346,6 +346,32 @@ let
       program = null;
     };
 
+  # **A development shell over that same environment.**
+  #
+  # `nix develop --file ./uv.nix shell` puts `bin` of the environment on the
+  # PATH, so `python`, `pytest` and the console script of every member run from
+  # the shell.
+  #
+  # **The shell sets `DDRN_EDITABLE_ROOT`, and that is what it is for.** A PEP
+  # 660 editable of this lab redirects to that variable rather than to a store
+  # path, so one environment serves every tree. Every `check-*.nix` of this
+  # directory sets the variable, because a derivation that reads an editable
+  # must. A shell that did not set it would give an environment whose editable
+  # members import nothing, and the message would name a directory called
+  # `/src`.
+  #
+  # `toString` gives the directory of this machine, and not the copy of it in
+  # the store. So the shell reads the tree that the user edits.
+  #
+  # `mkShellNoCC` is the shell with no C toolchain. Every package of the
+  # environment comes out of the lock file, and the graph built each one
+  # already, so a compiler in the shell adds a closure that nothing calls.
+  developmentShell = pkgs.mkShellNoCC {
+    name = "${environmentName}-shell";
+    packages = [ environmentWrapper ];
+    DDRN_EDITABLE_ROOT = toString project;
+  };
+
   # **`tool.uv` is a setting of the project, and uv copies none of it into the
   # lock file.** So this reads the setting where uv keeps it, rather than
   # invent an argument for the same decision. `no-binary-package` names each
@@ -735,11 +761,15 @@ lib.throwIfNot (lockVersion == 1)
         # writes the arguments once:
         #
         #     target = import ./uv.nix { project = ./.; application = "ws-cli"; };
-        #     shell = target.environment;
+        #     { packages.default = target.app; devShells.default = target.shell; }
         #
         # `app` is the same application as a derivation, for `nix run`, for
         # `lib.getExe` and for `environment.systemPackages`. `./application.nix`
         # says why a wrapper is necessary.
+        #
+        # `shell` is a development shell over the environment, and it sets
+        # `DDRN_EDITABLE_ROOT` to the project. `developmentShell` above says
+        # why that variable decides whether an editable member imports.
         #
         # `env` is the environment as a derivation, and it is what makes one
         # command enough:
@@ -769,6 +799,7 @@ lib.throwIfNot (lockVersion == 1)
             else
               applicationWrapper;
           env = environmentWrapper;
+          shell = developmentShell;
           environment = if environmentTarget == null then planner else environmentTarget;
         }
       )

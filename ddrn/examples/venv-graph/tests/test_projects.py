@@ -306,6 +306,41 @@ class TestTheEnvironmentAsADerivation:
         assert str(program.readlink()) == f"{environment}/bin/ws-cli"
 
 
+class TestTheDevelopmentShell:
+    """`shell`, which is the environment that a user works in.
+
+    **A shell of this lab has to set `DDRN_EDITABLE_ROOT`.** A PEP 660 editable
+    member redirects to that variable rather than to a store path, so one
+    environment serves every tree. Every `check-*.nix` of the example sets it,
+    and a shell that did not would give an environment whose editable members
+    import nothing.
+
+    **These tests evaluate, and they build nothing.** `mkShellNoCC` refuses to
+    build by design, so the derivation itself is the whole subject.
+    """
+
+    #: The project that these tests read. It installs itself as an editable, so
+    #: the variable decides whether `import packaged_app` answers.
+    PROJECT = str(PROJECTS / "packaged-app")
+
+    async def test_the_shell_names_the_tree_of_the_project(self, toolchain: Toolchain) -> None:
+        # **The value is the directory of this machine, and not the copy of it
+        # in the store.** So the shell reads the tree that the user edits.
+        source = toolchain.source(UV, "shell.DDRN_EDITABLE_ROOT", project=self.PROJECT)
+        assert await toolchain.evaluate(source, evaluator=toolchain.host_evaluator) == self.PROJECT
+
+    async def test_the_shell_instantiates_and_takes_the_name_of_the_environment(self, toolchain: Toolchain) -> None:
+        drv = await toolchain.drv_of(UV, "shell", evaluator=toolchain.host_evaluator, project=self.PROJECT)
+        assert drv.endswith("-packaged-app-shell.drv"), drv
+
+    async def test_the_shell_carries_the_environment(self, toolchain: Toolchain) -> None:
+        # `mkShell` puts `packages` at the front of `nativeBuildInputs`, so
+        # this reads the list that stdenv will put on the PATH.
+        target = toolchain.source(UV, project=self.PROJECT)
+        source = f"builtins.toJSON (builtins.elem {target}.env {target}.shell.nativeBuildInputs)"
+        assert await toolchain.evaluate(source, evaluator=toolchain.host_evaluator) == "true"
+
+
 class TestBinaryApp:
     """A wheel that holds compiled code, and the same package from nixpkgs."""
 

@@ -149,6 +149,17 @@ this.
 | `application` | which members to render as programs rather than an environment. One name, or a list. See below |
 | `mainProgram` | the program that `meta.mainProgram` of the `app` attribute names. The default is the sole name of `application`. See below |
 
+## The attributes that the result carries
+
+| attribute | what it is |
+| --- | --- |
+| the result itself | the planner. A build of it gives the root `.drv` of the graph, and a second build gives the environment |
+| `env` | that environment as a derivation, so one build reaches it. See below |
+| `shell` | a development shell over that environment, which sets `DDRN_EDITABLE_ROOT`. See below |
+| `app` | the application as a derivation, for `nix run`, for `lib.getExe` and for `environment.systemPackages`. See below |
+| `environment` | the same arguments with no application, which is the planner of the environment alone |
+| `lockCheck` | the `uv lock --check` derivation, whatever `uvCheck` says |
+
 ## Extras and groups, the way `uv sync` takes them
 
 `uv.lock` records which extra and which group each package declares, and it
@@ -232,14 +243,14 @@ nothing is the worse failure.
 ### The environment of the same arguments
 
 The result carries an `environment` attribute, which is this same project with
-no application, and an `app` attribute, which is the application as a
-derivation. So one set of arguments gives every shape:
+no application. `app`, `env` and `shell` are the three shapes that a consumer
+takes, and one set of arguments gives all of them:
 
 ```nix
 let target = import ./uv.nix { project = ./.; application = "ws-cli"; };
 in {
-  packages.default = target.app;              # bin/ws-cli, and `nix run` finds it
-  devShells.default = target.environment;     # bin/python, for a shell
+  packages.default = target.app;      # bin/ws-cli, and `nix run` finds it
+  devShells.default = target.shell;   # bin/python, and the editable tree
 }
 ```
 
@@ -269,6 +280,27 @@ this path alone.
 `env` is the environment whether the call names an application or not. So `app`
 and `env` of one call are the two halves of one project, and both reach the one
 environment that the section above describes.
+
+### `shell`, and the tree that an editable reads
+
+`shell` is a development shell over that same environment:
+
+```console
+$ nix develop --file ./uv.nix shell --arg project /path/to/project
+$ python -c 'import my_project'
+```
+
+**It sets `DDRN_EDITABLE_ROOT` to the project, and that is what it is for.** A
+PEP 660 editable member of this lab redirects to that variable rather than to a
+store path, so one environment serves every tree. Every `check-*.nix` of this
+directory sets the variable, because a derivation that reads an editable must.
+A shell that did not set it would give an environment whose editable members
+import nothing.
+
+The value is the directory of your machine, and not the copy of it in the
+store, so the shell reads the tree that you edit. `mkShellNoCC` builds it: every
+package comes out of the lock file, and the graph built each one already, so a
+compiler in the shell adds a closure that nothing calls.
 
 ### `app`, and why a wrapper is necessary
 

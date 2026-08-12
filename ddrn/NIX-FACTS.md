@@ -1366,6 +1366,25 @@ $ nix --store "$store" store ls --long /nix/store/jqygw70...-workspace-app-env
 lrwxrwxrwx 0  -> /nix/store/fnw2a8vvml2y7fcx2cnzzn2hs94lyjnk-workspace-app-env
 ```
 
+**A development shell takes that wrapper, and the symbolic link is no
+obstacle.** stdenv asks `-d "$pkg/bin"`, which follows a link, so `bin` of the
+environment reaches the PATH. `nix print-dev-env` is the way to read the answer
+without a terminal, and it also builds the graph. Measured on 2026-08-12, over
+`projects/packaged-app` in the private store of the tests:
+
+```console
+$ nix print-dev-env --store "$store" --file ./uv.nix shell \
+    --arg project "$PWD/projects/packaged-app" --impure ...
+DDRN_EDITABLE_ROOT='/home/.../ddrn/examples/venv-graph/projects/packaged-app'
+export DDRN_EDITABLE_ROOT
+... PATH=/nix/store/gyrrfcs...-packaged-app/bin:...
+$ nix --store "$store" store ls --long /nix/store/gyrrfcs...-packaged-app
+lrwxrwxrwx 0  -> /nix/store/a851fa0dqrjd1bshd2x6v02ck3mmr1n1-packaged-app
+```
+
+`DDRN_EDITABLE_ROOT` names the tree of the machine, so an editable member of
+the environment reads what the user edits.
+
 ### nanopynix builds the whole graph, with no `nix` command
 
 The tests drive the example through the patched `nix` command. That command is
