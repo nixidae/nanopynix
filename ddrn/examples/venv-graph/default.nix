@@ -327,77 +327,87 @@ let
   #: comes from.
   sdistPlannerDepth = 3;
 
-  baseInputs = {
-    inherit
-      roots
-      installer
-      noBinary
-      application
-      ;
-    fromNixpkgs = nixpkgsRows;
-    # Each entry becomes the store path of the package. The string carries its
-    # context, so the planner takes a dependency on every one of them, and
-    # `builtins.storePath` in `graph.nix` then finds each in the sandbox.
+  # **A caller that names no tool gets no key.** `Plan.tools_for` follows the
+  # same rule for a node, and the reason is the same: the document is the
+  # input of a derivation, so an empty key is a byte that every planner of
+  # every project carries for nothing.
+  #
+  # Each entry becomes the store path of the package. The string carries its
+  # context, so the planner takes a dependency on every one of them, and
+  # `builtins.storePath` in `graph.nix` then finds each in the sandbox.
+  buildToolPaths = pkgs.lib.optionalAttrs (buildTools != { }) {
     buildTools = pkgs.lib.mapAttrs (_: roots: map (root: "${root}") roots) buildTools;
-    artifacts = map row entries;
-    tools = {
-      bash = "${pkgs.bash}";
-      coreutils = "${pkgs.coreutils}";
-      unzip = "${pkgs.unzip}";
-      gnutar = "${pkgs.gnutar}";
-      gzip = "${pkgs.gzip}";
-      python = "${python}";
-      # The three below reach only a node that installs a binary wheel.
-      patchelf = "${pkgs.patchelf}";
-      # `pkgs.autoPatchelfHook` is a setup hook, and a graph node runs no setup
-      # hook. `pkgs.auto-patchelf` is the program that the hook calls.
-      autoPatchelf = "${pkgs.auto-patchelf}";
-      bintools = "${pkgs.stdenv.cc.bintools}";
-      gccLib = "${pkgs.stdenv.cc.cc.lib}";
-      # The three below reach only a node of kind `sdist`, which is a planner
-      # and needs what this derivation needs: an interpreter that has
-      # nanopynix, `packaging`, and the shared planner code.
-      plannerEnv = "${plannerEnvPath}";
-      packaging = "${pkgs.python3Packages.packaging}";
-      plannerLib = "${plannerLib}";
-    };
-    scripts = {
-      unpackWheel = "${./scripts/unpack-wheel.sh}";
-      installWheel = "${./scripts/install-wheel.sh}";
-      buildSdist = "${./scripts/build-sdist.sh}";
-      buildLocal = "${./scripts/build-local.py}";
-      makeVenv = "${./scripts/make-venv.py}";
-      makeApplication = "${./scripts/make-application.py}";
-      planSdist = "${./scripts/plan-sdist.py}";
-      # `graph.nix` builds the planner of a source distribution, and that
-      # planner evaluates `graph.nix` again for the graph it submits.
-      graphNix = "${./graph.nix}";
-    };
-    # The planner reads the `pyproject.toml` of each tree below, and resolves
-    # the backend that the tree asks for against the same lock file.
-    editables = pkgs.lib.mapAttrs (_: spec: {
-      source = "${spec.src}";
-      # **Only an editable install has a root.** The other two forms hold the
-      # code, so nothing redirects to a tree of the user and the value is empty.
-      root = spec.root or "";
-      mode = spec.mode or "editable";
-      subdirectory = spec.subdirectory or "";
-    }) editables;
-  }
-  // pkgs.lib.optionalAttrs (uvLock != null) {
-    # The lock file itself, as a store path. `builtins.toJSON` keeps the string
-    # context, so the file becomes an input source of every planner and is
-    # present in the sandbox.
-    uv = {
-      lock = "${uvLock}";
-      select = uvSelect;
-      extras = uvExtras;
-      groups = uvGroups;
-      editables = uvEditables;
-      declarations = uvDeclarations;
-      workspace = uvWorkspace;
-    };
   };
+
+  baseInputs =
+    buildToolPaths
+    // {
+      inherit
+        roots
+        installer
+        noBinary
+        application
+        ;
+      fromNixpkgs = nixpkgsRows;
+      artifacts = map row entries;
+      tools = {
+        bash = "${pkgs.bash}";
+        coreutils = "${pkgs.coreutils}";
+        unzip = "${pkgs.unzip}";
+        gnutar = "${pkgs.gnutar}";
+        gzip = "${pkgs.gzip}";
+        python = "${python}";
+        # The three below reach only a node that installs a binary wheel.
+        patchelf = "${pkgs.patchelf}";
+        # `pkgs.autoPatchelfHook` is a setup hook, and a graph node runs no setup
+        # hook. `pkgs.auto-patchelf` is the program that the hook calls.
+        autoPatchelf = "${pkgs.auto-patchelf}";
+        bintools = "${pkgs.stdenv.cc.bintools}";
+        gccLib = "${pkgs.stdenv.cc.cc.lib}";
+        # The three below reach only a node of kind `sdist`, which is a planner
+        # and needs what this derivation needs: an interpreter that has
+        # nanopynix, `packaging`, and the shared planner code.
+        plannerEnv = "${plannerEnvPath}";
+        packaging = "${pkgs.python3Packages.packaging}";
+        plannerLib = "${plannerLib}";
+      };
+      scripts = {
+        unpackWheel = "${./scripts/unpack-wheel.sh}";
+        installWheel = "${./scripts/install-wheel.sh}";
+        buildSdist = "${./scripts/build-sdist.sh}";
+        buildLocal = "${./scripts/build-local.py}";
+        makeVenv = "${./scripts/make-venv.py}";
+        makeApplication = "${./scripts/make-application.py}";
+        planSdist = "${./scripts/plan-sdist.py}";
+        # `graph.nix` builds the planner of a source distribution, and that
+        # planner evaluates `graph.nix` again for the graph it submits.
+        graphNix = "${./graph.nix}";
+      };
+      # The planner reads the `pyproject.toml` of each tree below, and resolves
+      # the backend that the tree asks for against the same lock file.
+      editables = pkgs.lib.mapAttrs (_: spec: {
+        source = "${spec.src}";
+        # **Only an editable install has a root.** The other two forms hold the
+        # code, so nothing redirects to a tree of the user and the value is empty.
+        root = spec.root or "";
+        mode = spec.mode or "editable";
+        subdirectory = spec.subdirectory or "";
+      }) editables;
+    }
+    // pkgs.lib.optionalAttrs (uvLock != null) {
+      # The lock file itself, as a store path. `builtins.toJSON` keeps the string
+      # context, so the file becomes an input source of every planner and is
+      # present in the sandbox.
+      uv = {
+        lock = "${uvLock}";
+        select = uvSelect;
+        extras = uvExtras;
+        groups = uvGroups;
+        editables = uvEditables;
+        declarations = uvDeclarations;
+        workspace = uvWorkspace;
+      };
+    };
 
   # What every planner reads about the target it plans for. The planner runs on
   # one machine and plans for another, so these are values.

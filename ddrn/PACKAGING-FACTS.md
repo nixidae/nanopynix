@@ -2345,6 +2345,29 @@ store of the test, and a comparison of the two path lists by name. The two
 stores hold two revisions of nixpkgs, so a comparison by store path answers
 nothing here and a comparison by name answers the question.
 
+### The argument moved every planner, and no environment
+
+`buildTools` changed `graph.nix` and the planner, so the `.drv` of every
+planner moved. The environment did not:
+
+```console
+$ nix build ... --expr '(import <before>/uv.nix { ... project = <before>/projects/pure-app; }).env'
+$ nix build ... --expr '(import <after>/uv.nix  { ... project = <after>/projects/pure-app; }).env'
+/nix/store/2ppg8xs82055lxw8vg22a1zbbvjnmfjc-pure-app
+/nix/store/2ppg8xs82055lxw8vg22a1zbbvjnmfjc-pure-app
+```
+
+Measured on 2026-08-12, over a copy of the example at the commit before the
+argument. **A floating output takes its path from what the build wrote**, so
+one path means one content, and this is the same proof that the change to the
+menu used. Under input addressing the path would have moved with the `.drv` of
+the planner, and a reader could not tell a rewritten plan from a rewritten
+environment.
+
+A caller that names no tool gets no `buildTools` key in the document of the
+planner, and a package that names none gets no key on its node. The rule is
+one shape for one meaning, and the seven projects of `projects` carry neither.
+
 ### `NIX_CFLAGS_COMPILE` reaches nothing here, and `CPPFLAGS` does
 
 The first version of `buildTools` set `NIX_CFLAGS_COMPILE` and `NIX_LDFLAGS`,
