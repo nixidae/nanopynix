@@ -182,6 +182,26 @@
 let
   inherit (pkgs) lib;
 
+  # **A directory that is not a uv project must say that.** Nix names the file
+  # that is absent, and it says nothing about what that file is for. So a
+  # reader who gave `project` the wrong directory, and a reader whose project
+  # never ran `uv lock`, got the same message about a path.
+  #
+  # `builtins.pathExists` asks the question before `builtins.readFile` answers
+  # it. The check is outermost, because `document` below forces the read.
+  absent = lib.filter (name: !builtins.pathExists (project + "/${name}")) [
+    "pyproject.toml"
+    "uv.lock"
+  ];
+
+  checkProject =
+    value:
+    lib.throwIf (absent != [ ]) (
+      "uv.nix: ${toString project} holds no ${lib.concatStringsSep " and no " absent}. "
+      + "`project` names the directory of a uv project, which holds pyproject.toml and uv.lock. "
+      + "Run `uv lock` in that directory when the lock file is the one that is absent."
+    ) value;
+
   # **Each of the two is a path, and not a string that holds a path.** A string
   # interpolation of `project` copies the whole directory into the store, so
   # `main.py` would then be an input of the planner and an edit of it would
@@ -757,66 +777,70 @@ let
   };
 in
 
-lib.throwIfNot (lockVersion == 1)
-  "uv.nix: ${lockFile} says version ${builtins.toJSON lockVersion}, and this reader accepts 1"
-  (
-    lib.throwIf (lib.subtractLists localNames fromSdist != [ ])
-      (
-        "uv.nix: fromSdist names ${builtins.toJSON (lib.subtractLists localNames fromSdist)}, "
-        + "and ${lockFile} holds no local package of that name. It holds ${builtins.toJSON localNames}."
-      )
-      (
-        # **`lockCheck` is here whatever `uvCheck` says**, and Nix evaluates it
-        # only when something asks for it. So `nix build --file ./uv.nix
-        # lockCheck` runs uv over the project and builds no graph, and the
-        # project tree still enters no store path of a build that never names
-        # this attribute.
-        #
-        # `environment` is this same project with no application, so a caller
-        # that ships one program and develops against the whole environment
-        # writes the arguments once:
-        #
-        #     target = import ./uv.nix { project = ./.; application = "ws-cli"; };
-        #     { packages.default = target.app; devShells.default = target.shell; }
-        #
-        # `app` is the same application as a derivation, for `nix run`, for
-        # `lib.getExe` and for `environment.systemPackages`. `./application.nix`
-        # says why a wrapper is necessary.
-        #
-        # `shell` is a development shell over the environment, and it sets
-        # `DDRN_EDITABLE_ROOT` to the project. `developmentShell` above says
-        # why that variable decides whether an editable member imports.
-        #
-        # `env` is the environment as a derivation, and it is what makes one
-        # command enough:
-        #
-        #     nix build --file ./uv.nix env --arg project /path/to/project
-        #     ./result/bin/python -c 'import rich'
-        #
-        # The result itself is the planner, so a build of it gives a `.drv`
-        # and a second command builds `"$drv^out"`. `env` holds that second
-        # step. It is the environment whether this call names an application
-        # or not, so `app` and `env` of one call are the two halves of one
-        # project.
-        #
-        # **It costs a second planner, and no second environment.** The two
-        # planners differ in one variable, so Nix builds both. Every node that
-        # they submit is content-addressing and identical, so the environment
-        # itself is one store path that both graphs reach.
-        planner
-        // {
-          inherit lockCheck;
-          app =
-            if application == null then
-              throw (
-                "uv.nix: `app` is the application as a derivation, and this call names no application. "
-                + "Pass `application`, or build this result itself for the environment."
-              )
-            else
-              applicationWrapper;
-          env = environmentWrapper;
-          shell = developmentShell;
-          environment = if environmentTarget == null then planner else environmentTarget;
-        }
-      )
-  )
+# `checkProject` is outermost, because every check below reads a file of the
+# project and a directory that holds no such file must say that first.
+checkProject (
+  lib.throwIfNot (lockVersion == 1)
+    "uv.nix: ${lockFile} says version ${builtins.toJSON lockVersion}, and this reader accepts 1"
+    (
+      lib.throwIf (lib.subtractLists localNames fromSdist != [ ])
+        (
+          "uv.nix: fromSdist names ${builtins.toJSON (lib.subtractLists localNames fromSdist)}, "
+          + "and ${lockFile} holds no local package of that name. It holds ${builtins.toJSON localNames}."
+        )
+        (
+          # **`lockCheck` is here whatever `uvCheck` says**, and Nix evaluates it
+          # only when something asks for it. So `nix build --file ./uv.nix
+          # lockCheck` runs uv over the project and builds no graph, and the
+          # project tree still enters no store path of a build that never names
+          # this attribute.
+          #
+          # `environment` is this same project with no application, so a caller
+          # that ships one program and develops against the whole environment
+          # writes the arguments once:
+          #
+          #     target = import ./uv.nix { project = ./.; application = "ws-cli"; };
+          #     { packages.default = target.app; devShells.default = target.shell; }
+          #
+          # `app` is the same application as a derivation, for `nix run`, for
+          # `lib.getExe` and for `environment.systemPackages`. `./application.nix`
+          # says why a wrapper is necessary.
+          #
+          # `shell` is a development shell over the environment, and it sets
+          # `DDRN_EDITABLE_ROOT` to the project. `developmentShell` above says
+          # why that variable decides whether an editable member imports.
+          #
+          # `env` is the environment as a derivation, and it is what makes one
+          # command enough:
+          #
+          #     nix build --file ./uv.nix env --arg project /path/to/project
+          #     ./result/bin/python -c 'import rich'
+          #
+          # The result itself is the planner, so a build of it gives a `.drv`
+          # and a second command builds `"$drv^out"`. `env` holds that second
+          # step. It is the environment whether this call names an application
+          # or not, so `app` and `env` of one call are the two halves of one
+          # project.
+          #
+          # **It costs a second planner, and no second environment.** The two
+          # planners differ in one variable, so Nix builds both. Every node that
+          # they submit is content-addressing and identical, so the environment
+          # itself is one store path that both graphs reach.
+          planner
+          // {
+            inherit lockCheck;
+            app =
+              if application == null then
+                throw (
+                  "uv.nix: `app` is the application as a derivation, and this call names no application. "
+                  + "Pass `application`, or build this result itself for the environment."
+                )
+              else
+                applicationWrapper;
+            env = environmentWrapper;
+            shell = developmentShell;
+            environment = if environmentTarget == null then planner else environmentTarget;
+          }
+        )
+    )
+)

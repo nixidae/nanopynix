@@ -379,6 +379,23 @@ network.
 interpolates `outPath` during evaluation. That placeholder is correct inside
 another derivation, and a shell cannot use it.
 
+## A directory that is not a uv project stops it first
+
+`uv.nix` asks whether the directory holds `pyproject.toml` and `uv.lock` before
+it reads either one. Nix names the file that is absent and says nothing about
+what the file is for, so a wrong directory and a project that never ran `uv
+lock` gave the same message about a path. The refusal names both:
+
+```
+error: uv.nix: /tmp/my-tree holds no pyproject.toml and no uv.lock. `project`
+names the directory of a uv project, which holds pyproject.toml and uv.lock.
+Run `uv lock` in that directory when the lock file is the one that is absent.
+```
+
+**Give `project` an absolute path.** A relative path resolves against the
+directory of `uv.nix`, and not against the shell, so the message then names a
+directory that you did not mean.
+
 ## A stale `uv.lock` stops the build
 
 `uv.nix` puts the `pyproject.toml` of each member into the store, and the

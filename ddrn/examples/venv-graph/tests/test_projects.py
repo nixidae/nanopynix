@@ -30,6 +30,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import anyio
 import pytest
 from toolchain import EXAMPLE, Toolchain, environment_of, nix_string, prefix_of
 
@@ -356,6 +357,37 @@ class TestThePlannerEnvironmentArgument:
         source = f'(import {UV} {{ project = "{project}"; }}).env.drvPath'
         drv = await toolchain.evaluate(source, evaluator=toolchain.host_evaluator)
         assert drv.endswith("-pure-app.drv"), drv
+
+
+class TestADirectoryThatIsNotAProject:
+    """What `project` says when it names the wrong directory.
+
+    **Nix names the file that is absent, and it says nothing about what that
+    file is for.** So a reader who gave the wrong directory, and a reader whose
+    project never ran `uv lock`, read the same message about a path. `uv.nix`
+    asks `builtins.pathExists` before it reads, and it names both files.
+
+    **These tests write the expression themselves**, because the message has to
+    hold the directory that the caller gave, and `Toolchain.source` gives
+    `nanopynixEnv` as well. They evaluate nothing else: the check is outermost,
+    so no lock file is read and no planner environment is built.
+    """
+
+    async def test_a_directory_that_holds_neither_file(self, toolchain: Toolchain, tmp_path: Path) -> None:
+        source = f'(import {UV} {{ project = "{tmp_path}"; }}).env.drvPath'
+        refusal = await toolchain.evaluate_failing(source)
+        assert f"{tmp_path} holds no pyproject.toml and no uv.lock" in refusal
+
+    async def test_a_project_that_never_ran_uv_lock(self, toolchain: Toolchain, tmp_path: Path) -> None:
+        # The message names the one file that is absent, and it names the
+        # command that writes the file.
+        await anyio.Path(tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "unlocked"\nversion = "0.1.0"\n', encoding="utf-8"
+        )
+        source = f'(import {UV} {{ project = "{tmp_path}"; }}).env.drvPath'
+        refusal = await toolchain.evaluate_failing(source)
+        assert f"{tmp_path} holds no uv.lock" in refusal
+        assert "Run `uv lock`" in refusal
 
 
 class TestBinaryApp:
