@@ -1181,9 +1181,11 @@ machine.** `OverlayNamespace` mounts `lowerdir=/nix/store`
 machine and the `lower_store` URI only supplies the metadata of those bytes. A
 separate store of the lab cannot take that place.
 
-### Three tests of this repository fail against Nix master, and did so before
+### Three tests of this repository failed against Nix master, and did so before
 
-`pytest tests` inside `nanopynixMaster.shell` gives 2594 passed and 3 failed:
+`pytest tests` inside `nanopynixMaster.shell` gave 2594 passed and 3 failed.
+It gives 2587 passed, 0 failed and 6 skipped now, and the default band gives
+2583 passed, 0 failed and 10 skipped. These were the three:
 
 | test | what differs |
 | --- | --- |
@@ -1200,7 +1202,49 @@ rather than `qb5sbdwqiy3dxhav6lc9n1sm6fmpc76w`. The same three tests fail there.
 `jj file annotate` gives the origin of the first two: an upstream author added
 `build-hook-kill-timeout` to `worker-settings.hh` on 2026-07-28, and the pin of
 this repository carries that commit. The default band runs Nix 2.34, which has
-no such setting, so `pytest tests` passes there.
+no such setting, so `pytest tests` passes there. The settings model takes the
+field with `since(NIX_2_36)`, and `field_is_supported` then keeps it out of the
+comparison on every older band.
+
+#### The oracle of a comparison has to be the Nix that nanopynix links
+
+The third one is not a defect of pynix. `nix/shell.nix` puts no `nix` in the
+shell, so `PATH` gives the Nix of the machine whichever band the shell belongs
+to. In the shell of the master band:
+
+```
+command -v nix         ->  /run/current-system/sw/bin/nix
+nix --version          ->  nix (Nix) 2.34.8
+running_nix_version()  ->  2.36.0pre-ddnix+2
+```
+
+The flake fingerprint is the first algorithm where those two disagree, and the
+string that Nix hashes says exactly how. The string was rebuilt in Python over
+a flake with no inputs, and each half of it identified:
+
+| what hashes to it | the string |
+| --- | --- |
+| pynix, on master | `git:<rev>;;<lock JSON>;hasRevCount;lastModified=<n>` |
+| `nix flake metadata`, 2.34 | `<rev>;;<lock JSON>;revCount=1;lastModified=<n>` |
+
+So master adds two things that 2.34 has not: the name of the scheme in front
+of the fingerprint of the input (`Input::getFingerprint`,
+`src/libfetchers/fetchers.cc:130`), and the `;hasRevCount` branch for a lazy
+`revCount` (`src/libflake/flake.cc:995`). A git fetch always writes a lazy
+`revCount` (`src/libfetchers/git.cc:923`), and `maybeGetIntAttr` resolves a
+copy rather than write the value back, so no call order makes it concrete.
+Every other key of the two objects is equal, including `locks`, `revision`,
+`revCount` and `lastModified`.
+
+`tests/support/nix_oracle.py` holds the rule now: a test asks for the oracle
+through `require_nix_oracle`, which skips when the command reports another
+version and names both versions in the message. The two oracle tests run on
+the default band, where the machine and the band agree, and skip on the master
+band.
+
+**The better repair is a shell that carries the `nix` of its own band**, and
+that is a change to a shell that a person uses by hand, so it is not made
+here.
 
 ### A nested deriving path names the output of a submitted derivation
 

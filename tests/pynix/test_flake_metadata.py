@@ -21,13 +21,13 @@ express.
 from __future__ import annotations
 
 import json
-import shutil
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from pynix import Pynix
 from tests.support.git import init_linked_flakes
+from tests.support.nix_oracle import require_nix_oracle
 from tests.support.subprocess_output import run_process
 
 if TYPE_CHECKING:
@@ -37,12 +37,15 @@ if TYPE_CHECKING:
 
 
 async def _nix_flake_metadata(flake: Path, store_uri: str) -> dict[str, Any]:
-    """The oracle: what ``nix flake metadata --json`` says about the same flake."""
-    if shutil.which("nix") is None:
-        pytest.skip("the nix CLI is the oracle for this test, and it is not on PATH")
+    """The oracle: what ``nix flake metadata --json`` says about the same flake.
+
+    The fingerprint of a flake is one of the values that two versions of Nix
+    compute differently, so `require_nix_oracle` refuses a command that does
+    not match the Nix that nanopynix links.
+    """
     result = await run_process(
         [
-            "nix",
+            await require_nix_oracle(),
             "--extra-experimental-features",
             "nix-command flakes",
             "flake",
