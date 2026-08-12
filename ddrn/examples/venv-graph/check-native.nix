@@ -14,23 +14,21 @@
   nanopynixEnv,
   project ? ./projects/native-app,
   venvName ? "native-app",
-  # **Each entry is named, and no default reaches a package that needs none.**
+  # **This file names no build tool, and the project names both.**
+  # `projects/native-app/pyproject.toml` holds `[tool.ddrn.build-tools]`, and
+  # `uv.nix` reads it. So this argument is empty, and a caller who overrides
+  # one package still can: `uv.nix` merges the two, and the argument wins for
+  # the package that it names.
+  #
   # `psutil` holds C code and links nothing outside the interpreter. `cffi`
   # reads `ffi.h` and links `libffi`, so it needs the two outputs of that
   # package as well: a node runs no `stdenv`, so no setup hook follows `.dev`.
   #
-  # `pkg-config` is here because `cffi` asks it first. The build succeeds with
-  # no `pkg-config` at all, because `cffi` falls back to `CPPFLAGS` and
-  # `LDFLAGS`, and `ddrn/PACKAGING-FACTS.md` records that measurement.
-  buildTools ? {
-    psutil = [ pkgs.stdenv.cc ];
-    cffi = [
-      pkgs.stdenv.cc
-      pkgs.pkg-config
-      pkgs.libffi.dev
-      pkgs.libffi
-    ];
-  },
+  # `pkg-config` is in that table because `cffi` asks it first. The build
+  # succeeds with no `pkg-config` at all, because `cffi` falls back to
+  # `CPPFLAGS` and `LDFLAGS`, and `ddrn/PACKAGING-FACTS.md` records that
+  # measurement.
+  buildTools ? { },
 }:
 
 let

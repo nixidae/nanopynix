@@ -17,3 +17,12 @@ ddrn = [
 
 [tool.uv]
 no-binary-package = ["cffi", "psutil"]
+
+# What each package needs to build. `uv.nix` reads this table, and each value
+# names an attribute of nixpkgs. `psutil` holds C code and links nothing
+# outside the interpreter. `cffi` reads `ffi.h` and links `libffi`, so it
+# needs the two outputs of that package. `pkg-config` is here because `cffi`
+# asks it first.
+[tool.ddrn.build-tools]
+psutil = ["stdenv.cc"]
+cffi = ["stdenv.cc", "pkg-config", "libffi.dev", "libffi"]

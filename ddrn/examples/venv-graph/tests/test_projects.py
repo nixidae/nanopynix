@@ -459,6 +459,63 @@ class TestAPackageThatCompiles:
         assert any(name.startswith("libffi-") for name in closure), closure
 
 
+class TestTheProjectDeclaresItsBuildTools:
+    """`[tool.ddrn.build-tools]`, and the argument that overrides it.
+
+    **The build above proves the table works**, because `check-native.nix`
+    names no tool and the two extensions still compile. These three tests cover
+    what a build cannot say cheaply: that the two routes agree, that an
+    argument replaces one entry, and what a wrong name says.
+
+    Each one evaluates and builds nothing.
+    """
+
+    #: The same two entries as `projects/native-app/pyproject.toml`, in the
+    #: spelling that a caller of `uv.nix` writes.
+    #:
+    #: **The `with` is necessary.** Nix does not evaluate the arguments of a
+    #: call against each other, so a value here cannot name the `pkgs` of the
+    #: same call. `uv.nix` takes the same nixpkgs by default.
+    ARGUMENT = (
+        "with (import <nixpkgs> {}); { psutil = [ stdenv.cc ]; cffi = [ stdenv.cc pkg-config libffi.dev libffi ]; }"
+    )
+
+    def planner(self, toolchain: Toolchain, **arguments: str) -> str:
+        return toolchain.source(UV, "drvPath", project=nix_string(PROJECTS / "native-app"), **arguments)
+
+    async def test_the_table_and_the_argument_give_one_planner(self, toolchain: Toolchain) -> None:
+        """**The move to `pyproject.toml` changed no derivation.**
+
+        A planner names its build tools through the document that it carries,
+        so two calls that end at the same store paths end at the same `.drv`.
+        This is the proof that the table is the argument, and not another
+        route to a similar result.
+        """
+        declared = await toolchain.evaluate(self.planner(toolchain))
+        given = await toolchain.evaluate(self.planner(toolchain, buildTools=self.ARGUMENT))
+        assert declared == given
+
+    async def test_an_argument_replaces_the_entry_that_it_names(self, toolchain: Toolchain) -> None:
+        # An empty list is how a caller takes the tools of one package away,
+        # and it leaves the entry of every other package alone.
+        declared = await toolchain.evaluate(self.planner(toolchain))
+        overridden = await toolchain.evaluate(self.planner(toolchain, buildTools="{ cffi = [ ]; }"))
+        assert declared != overridden
+
+    async def test_a_value_that_names_no_attribute_of_nixpkgs(self, toolchain: Toolchain, tmp_path: Path) -> None:
+        # The message names the package, the value and where the value came
+        # from. `stdenv.cxx` is the plausible misspelling of `stdenv.cc`.
+        shutil.copytree(PROJECTS / "native-app", tmp_path, dirs_exist_ok=True)
+        declaration = anyio.Path(tmp_path / "pyproject.toml")
+        text = await declaration.read_text(encoding="utf-8")
+        await declaration.write_text(text.replace('["stdenv.cc"]', '["stdenv.cxx"]'), encoding="utf-8")
+
+        source = toolchain.source(UV, "drvPath", project=nix_string(tmp_path))
+        refusal = await toolchain.evaluate_failing(source)
+        assert "[tool.ddrn.build-tools] of native-app gives 'psutil'" in refusal
+        assert "'stdenv.cxx', and nixpkgs holds no attribute of that name" in refusal
+
+
 class TestTheSourcesThatNoIndexServes:
     """The three projects whose artefacts an index cannot answer for."""
 

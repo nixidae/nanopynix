@@ -182,7 +182,7 @@ this.
 | `python` | the interpreter that the environment runs. See below |
 | `fromNixpkgs` | `{ pyzmq = pkgs.python3Packages.pyzmq; }` takes a package from nixpkgs instead of the index, and the graph builds no wheel for that name |
 | `fromSdist` | each member to install from its own source distribution, rather than as a PEP 660 editable |
-| `buildTools` | `{ psutil = [ pkgs.stdenv.cc ]; }` gives one package what its build needs. See below |
+| `buildTools` | `{ psutil = [ pkgs.stdenv.cc ]; }` gives one package what its build needs, and it replaces `[tool.ddrn.build-tools]` for that package. See below |
 | `editableRoot` | what a PEP 660 editable redirects to. The default is the variable `$DDRN_EDITABLE_ROOT`, so one environment serves every tree |
 | `markers` | `platform_release` and `platform_version`, which no build can know |
 | `uvCheck` | `true` runs `uv lock --check` over the project before the planner runs. See below |
@@ -390,7 +390,22 @@ well.
 A wheel needs no compiler, and this is the common case: the index serves a
 wheel for almost every package, and the planner chooses one by the PEP 425
 tags of the target. A source distribution that holds C code is the case that
-needs one, and `buildTools` names it for that package alone:
+needs one, and the project names it for that package alone:
+
+```toml
+# pyproject.toml
+[tool.ddrn.build-tools]
+psutil = ["stdenv.cc"]
+lxml = ["stdenv.cc", "libxml2.dev", "libxslt.dev"]
+```
+
+**Each value names an attribute of nixpkgs, and a dot walks into it.** So the
+project declares what it needs beside `[tool.uv]`, and
+`nix build --file uv.nix env --arg project ./.` needs no second argument.
+uv2nix asks for an overlay in the Nix language for the same decision.
+
+The `buildTools` argument writes the same thing in Nix, and it replaces the
+declaration of each package that it names:
 
 ```nix
 target = import ./uv.nix {
@@ -406,6 +421,10 @@ target = import ./uv.nix {
   };
 };
 ```
+
+The two routes end at one derivation, and `tests/test_projects.py` gates that.
+Use the argument for a package that a nixpkgs attribute name cannot reach, and
+the table for everything else.
 
 Each entry is a store path, and the node that builds that package reads it in
 four ways:

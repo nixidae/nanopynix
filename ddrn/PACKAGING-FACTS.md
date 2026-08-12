@@ -2557,6 +2557,58 @@ interpreter that built it.
 **A wheel that carries a binary may not say `py3-none-any`.** That tag means
 "any interpreter, any platform", and a compiled module runs on neither.
 
+### The project declares its build tools, and the declaration is the argument
+
+`[tool.uv] no-binary-package` is a setting that uv keeps in `pyproject.toml`
+and writes into no lock file, and `uv.nix` reads it there. A build tool is the
+same kind of setting, and PEP 518 gives `[tool.*]` to exactly this:
+
+```toml
+[tool.uv]
+no-binary-package = ["cffi", "psutil"]
+
+[tool.ddrn.build-tools]
+psutil = ["stdenv.cc"]
+cffi = ["stdenv.cc", "pkg-config", "libffi.dev", "libffi"]
+```
+
+**Each value names an attribute of nixpkgs, and a dot walks into it.** This is
+a lookup and not a rule: `libffi.dev` names the `dev` output of one package,
+and nothing globs, compares a version or evaluates a marker. So the boundary
+that `ddrn/NIX-FACTS.md` records holds. `lib.hasAttrByPath` refuses a name that
+nixpkgs does not answer, and the message names the package that asked:
+
+```
+error: uv.nix: [tool.ddrn.build-tools] of native-app gives 'psutil' the build
+tool 'stdenv.cxx', and nixpkgs holds no attribute of that name.
+```
+
+**The two routes end at one derivation.** `projects/native-app` declares the
+table, and the same two entries as a `buildTools` argument give the same
+planner:
+
+```console
+$ nix eval --impure --raw --expr \
+    '(import ./uv.nix { project = ./projects/native-app; nanopynixEnv = "…"; }).drvPath'
+/nix/store/b4bin047ms8yybwrpglbcrhnq2p4s7bk-venv-planner.drv
+$ nix eval --impure --raw --expr \
+    'let pkgs = import <nixpkgs> {}; in (import ./uv.nix { inherit pkgs; … buildTools = { … }; }).drvPath'
+/nix/store/b4bin047ms8yybwrpglbcrhnq2p4s7bk-venv-planner.drv
+```
+
+Measured on 2026-08-12. The argument replaces the entry of each package that
+it names, and an empty list takes the tools of one package away.
+
+**No check reads the key here.** A package name that this target does not
+install is not a mistake: one lock file resolves to more than one environment,
+so a table that covers a workspace names packages that a single member never
+builds.
+
+**What this buys is one file.** uv2nix asks for an overlay in the Nix language
+for the same decision, so a user of it describes the project in two places and
+in two languages. `nix build --file uv.nix env --arg project ./.` now needs no
+second argument for a project that compiles.
+
 ## PEP 751, and what `packaging` already does with it
 
 PEP 751 gives one lock file format that more than one tool writes. uv 0.12.1

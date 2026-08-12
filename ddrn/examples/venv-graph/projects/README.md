@@ -581,9 +581,22 @@ backend of both distributions is `setuptools`, and no lock file records the
 build system of a package. The planner resolves the backend out of the same
 menu, so `setuptools` has to be a package of this lock file.
 
-### What each package needs, and what `buildTools` names
+### What each package needs, and where the project says it
 
-`../check-native.nix` gives the argument, and the two entries differ:
+**The project declares its build tools, beside `[tool.uv]`:**
+
+```toml
+[tool.ddrn.build-tools]
+psutil = ["stdenv.cc"]
+cffi = ["stdenv.cc", "pkg-config", "libffi.dev", "libffi"]
+```
+
+Each value names an attribute of nixpkgs, and a dot walks into it. So
+`../check-native.nix` names no build tool, and one file describes the whole
+project. The `buildTools` argument of `../uv.nix` writes the same thing in
+Nix, and it replaces the entry of each package that it names.
+
+The two entries differ:
 
 | package | tools | why |
 | --- | --- | --- |

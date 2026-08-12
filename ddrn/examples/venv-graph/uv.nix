@@ -116,6 +116,11 @@
   # `{ psutil = [ pkgs.stdenv.cc ]; }`. `./default.nix` gives the whole reason
   # at its `buildTools` argument, and the short one is this: a source
   # distribution that holds C code needs a compiler, and no other node does.
+  #
+  # **The project declares the same thing in `pyproject.toml`**, under
+  # `[tool.ddrn.build-tools]`, and this argument replaces the declaration of
+  # each package that it names. `declaredBuildTools` below gives the table and
+  # the reason to prefer it.
   buildTools ? { },
   # Whether uv itself checks the lock file, in a derivation of its own, before
   # the planner runs.
@@ -418,6 +423,55 @@ let
   # invent an argument for the same decision. `no-binary-package` names each
   # package to build from its source distribution even when a wheel fits.
   noBinary = pyproject.tool.uv."no-binary-package" or [ ];
+
+  # **The project says which package needs a compiler, and it says so beside
+  # `tool.uv`.** `noBinary` above reads a setting of the project where uv keeps
+  # it. A build tool is the same kind of setting, and PEP 518 gives `[tool.*]`
+  # to exactly this. So a user of `./uv.nix` writes one file:
+  #
+  #     [tool.uv]
+  #     no-binary-package = ["cffi"]
+  #
+  #     [tool.ddrn.build-tools]
+  #     cffi = ["stdenv.cc", "pkg-config", "libffi.dev", "libffi"]
+  #
+  # and `nix build --file uv.nix env --arg project ./.` needs no second
+  # argument. uv2nix asks for an overlay in the Nix language for the same
+  # decision, and `ddrn/PACKAGING-FACTS.md` records what that costs a user.
+  #
+  # **A value is a lookup, and it is not a rule.** The dots walk `pkgs`, so
+  # `libffi.dev` names the `dev` output of one package. Nothing here globs,
+  # compares a version or evaluates a marker: those belong to the planner, and
+  # `ddrn/PACKAGING-FACTS.md` gives the boundary.
+  #
+  # **The key is a package name, and no check reads it here.** A name that this
+  # target does not install is not a mistake: one lock file resolves to more
+  # than one environment, so a table that covers the workspace names packages
+  # that a single member never builds.
+  declaredTools = pyproject.tool.ddrn."build-tools" or { };
+
+  # One attribute of `pkgs`, named by a dotted string, or a message that says
+  # which package asked for it.
+  toolOf =
+    package: name:
+    let
+      parts = lib.splitString "." name;
+    in
+    if lib.hasAttrByPath parts pkgs then
+      lib.getAttrFromPath parts pkgs
+    else
+      throw (
+        "uv.nix: [tool.ddrn.build-tools] of ${projectName} gives '${package}' the build tool "
+        + "'${name}', and nixpkgs holds no attribute of that name. Each value names an "
+        + "attribute of the nixpkgs that this call takes, and a dot walks into it."
+      );
+
+  declaredBuildTools = lib.mapAttrs (package: names: map (toolOf package) names) declaredTools;
+
+  # **The argument wins for the package that it names, and for no other one.**
+  # A caller who overrides `cffi` on the command line keeps the declaration of
+  # every other package, which is what a per-package override means.
+  chosenBuildTools = declaredBuildTools // buildTools;
 
   # The three source kinds that mean "a directory of this workspace, and not an
   # artefact of an index". `ddrn_venv._uvlock.LOCAL_SOURCES` lists the same
@@ -734,10 +788,11 @@ let
       noBinary
       application
       fromNixpkgs
-      buildTools
       python
       uvEditables
       ;
+
+    buildTools = chosenBuildTools;
 
     artifacts = lib.concatMap artifactsOf document.package;
 
