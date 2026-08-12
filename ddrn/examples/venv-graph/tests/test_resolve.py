@@ -488,6 +488,29 @@ class TestReadPyproject:
         assert read_pyproject(archive) == {}
         assert build_system(read_pyproject(archive))[0] == FALLBACK_BACKEND
 
+    def test_a_zip_with_no_declaration_gets_the_fallback_too(self, tmp_path: Path) -> None:
+        # The two archive kinds take separate routes through `read_pyproject`,
+        # so each one needs the case that PEP 517 gives the fallback for.
+        archive = tmp_path / "demo_tool-3.0.0.zip"
+        with zipfile.ZipFile(archive, "w") as handle:
+            handle.writestr("demo_tool-3.0.0/setup.py", b"")
+        assert read_pyproject(archive) == {}
+        assert build_system(read_pyproject(archive))[0] == FALLBACK_BACKEND
+
+    def test_a_member_of_that_name_that_is_not_a_regular_file(self, tmp_path: Path) -> None:
+        # **`extractfile` gives `None` for a directory**, and a `tar` archive
+        # may hold a directory of any name. Reading `None` would raise
+        # `AttributeError` far from the cause, so this reports the member.
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w") as handle:
+            info = tarfile.TarInfo("demo_tool-3.0.0/pyproject.toml")
+            info.type = tarfile.DIRTYPE
+            handle.addfile(info)
+        archive = tmp_path / "demo_tool-3.0.0.tar.gz"
+        archive.write_bytes(gzip.compress(buffer.getvalue()))
+        with pytest.raises(RuntimeError, match="is not a regular file"):
+            read_pyproject(archive)
+
 
 def tar_bytes(member: str) -> bytes:
     """One tar archive that holds `member`, with `PYPROJECT` as its content."""

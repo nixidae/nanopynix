@@ -309,6 +309,15 @@ class TestTheGroupsOfADeclaration:
     def test_a_document_with_no_group_gives_nothing(self) -> None:
         assert groups_of({"project": {"name": "trivial"}}) == {}
 
+    @pytest.mark.parametrize("entry", [123, 1.5, True, ["coverage"], None])
+    def test_an_entry_that_is_neither_a_string_nor_a_table_is_refused(self, entry: object) -> None:
+        # `tomllib` reads a file that the user wrote, so `_include_group` tests
+        # every step rather than assume the shape. An entry of any other TOML
+        # type takes the same route as a Dependency Object Specifier, and uv
+        # refuses both.
+        with pytest.raises(LockError, match="include-group entry only"):
+            groups_of({"dependency-groups": {"dev": [entry]}})
+
 
 class TestWhatTheCheckSkips:
     """The two cases where a comparison is not possible, and passes."""
@@ -360,6 +369,27 @@ dependencies = ["arpeggio>=3"]
         lock = Lock.read(str(LOCKS / "trivial.lock"))
         with pytest.raises(LockError, match=re.escape("uv.lock is stale")):
             check_freshness(lock, write(tmp_path, "trivial", text))
+
+    def test_a_listing_that_the_reader_cannot_walk_makes_no_comparison(self, tmp_path: Path) -> None:
+        """**A rule of uv that reaches further than this reader ends the check.**
+
+        `ddrn_venv._workspace.members` gives `None` for a listing it cannot
+        walk, and a `pyproject.toml` that `tomllib` refuses is one such
+        listing. The member comparison then makes no claim, rather than claim
+        that the workspace lost a member.
+        """
+        broken = tmp_path / "pyproject.toml"
+        broken.write_text("this is not TOML = = =\n", encoding="utf-8")
+        lock = Lock.read(str(LOCKS / "trivial.lock"))
+        check_freshness(lock, write(tmp_path, "trivial", TRIVIAL), listing={".": str(broken)})
+
+    def test_a_listing_with_no_root_makes_no_comparison(self, tmp_path: Path) -> None:
+        # The root holds `[tool.uv.workspace]`, so a listing without it says
+        # nothing about which directories are members.
+        other = tmp_path / "member-pyproject.toml"
+        other.write_text('[project]\nname = "other"\nversion = "0.1.0"\n', encoding="utf-8")
+        lock = Lock.read(str(LOCKS / "trivial.lock"))
+        check_freshness(lock, write(tmp_path, "trivial", TRIVIAL), listing={"member": str(other)})
 
 
 class TestTheMembersOfAWorkspace:
