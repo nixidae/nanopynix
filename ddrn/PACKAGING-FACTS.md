@@ -2340,22 +2340,40 @@ The local registry loses no hash. `uv.lock` writes `sdist = { path =
 "crated-1.0.0.tar.gz" }` with no hash of its own, and the export writes
 `hashes = {}`.
 
-### `builtins.fromTOML` refuses the file
+### `builtins.fromTOML` needs one more experimental feature, and nothing else
+
+PEP 751 writes `upload-time` as a TOML datetime, and uv writes one for each
+artefact. The default reader refuses it:
 
 ```console
 $ nix eval --impure --expr 'builtins.fromTOML (builtins.readFile ./pylock.toml)'
 error: while parsing TOML: Dates and times are not supported
 ```
 
-PEP 751 writes `upload-time` as a TOML datetime, and uv writes one for each
-artefact. `--no-hashes` does not remove it: 22 of them remain in the export of
-`projects/workspace`. With every `upload-time` removed by `sed`, the same
-command reads the file and gives 13 packages.
+**`parse-toml-timestamps` is the whole answer.**
+`src/libexpr/primops/fromTOML.cc:131-149` handles `local_datetime`,
+`offset_datetime`, `local_date` and `local_time`, and it raises that message
+only when `Xp::ParseTomlTimestamps` is disabled. A timestamp arrives as an
+attribute set:
 
-**So the Nix half of this lab cannot read a `pylock.toml` as it stands.** That
-half exists to call `builtins.fromTOML` over the lock file. Two ways out: patch
-`fromTOML` in the fork of Nix that this lab already carries, or strip the
-datetimes in a derivation before the reader sees the file.
+```console
+$ nix eval --impure --extra-experimental-features parse-toml-timestamps --expr '...'
+{ name = "editables"; packages = 13; uploadTime = { _type = "timestamp"; value = "2026-04-14T10:39:03Z"; }; }
+```
+
+Measured on 2026-08-12, on both bands: Nix 2.34.8 of this machine and the
+2.36.0pre-ddnix of the lab. The exports of `projects/vendored-app`,
+`projects/local-index` and `projects/git-app` each read as well.
+
+So the cost is one more entry beside the four features that this example needs
+already. **No patch of Nix, and no derivation that rewrites the file.** A
+derivation would be the worse answer twice over: it would rewrite a lock file
+before a reader saw it, and reading its output during evaluation is an import
+from derivation, which this example does not do today.
+
+`upload-time` is the only datetime that PEP 751 defines. `packaging.pylock`
+gives it to `PackageWheel`, `PackageSdist` and `PackageArchive`, and to no
+other class.
 
 ### What the export does not carry
 
