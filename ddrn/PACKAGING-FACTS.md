@@ -2395,6 +2395,74 @@ compares that table with the `pyproject.toml` of each member, and it is how
 this lab refuses a stale lock file. A `pylock.toml` records no declaration to
 compare against, so a checked-in export goes stale with no reader to notice.
 
+### A reader of the standard format is half the size, and it parses nothing
+
+`examples/venv-graph/pylock.nix` is that reader, written as a spike.
+`examples/venv-graph/tests/test_pylock.py` runs it over an export of each of the
+seven projects, and 18 tests pass in 5.9 s. Measured on 2026-08-12, with
+`pytest ddrn/examples/venv-graph/tests/test_pylock.py`.
+
+| file | lines | what it reads |
+| --- | ---: | --- |
+| `uv.nix` | 846 | the whole of `uv.lock`, and the graph that it names |
+| `uv.nix`, lines 422 to 719 | 298 | the source of each package, and its artefacts |
+| `uv-git.nix` | 94 | one `git+https://...#<rev>` url |
+| `pylock.nix` | 188 | the whole of `pylock.toml` |
+
+So the comparable read is 392 lines against 188. **The 204 lines that go are
+the ones that decide what a source is.** `uv.nix` reads `package.source` and
+asks which of five keys it holds, then joins a registry against a path, then
+splits a url into a repository, a subdirectory and a revision. PEP 751 gives
+each shape a key of its own, so `pylock.nix` asks which key is present and
+reads it.
+
+`uv-git.nix` disappears whole: `vcs.url`, `vcs.commit-id` and
+`vcs.subdirectory` are three fields, and no reader parses them apart.
+
+One translation arrives in return. uv writes `sha256:<hex>` as a string, and
+PEP 751 writes a table of one algorithm to one digest. That is `hashOf`, and it
+is 12 lines.
+
+### The menu is the same menu, and the wheel choice stays at build time
+
+The export of each project offers the artefacts that its `uv.lock` offers, and
+the two counts are equal for all seven. `test_the_menu_is_the_menu_that_uv_lock_gives`
+asserts that.
+
+| project | artefacts | packages | trees |
+| --- | ---: | ---: | --- |
+| pure-app | 10 | 5 | — |
+| packaged-app | 24 | 13 | packaged-app |
+| workspace | 22 | 13 | ws-cli, ws-core |
+| binary-app | 100 | 4 | — |
+| git-app | 2 | 2 | flit-core |
+| vendored-app | 6 | 4 | — |
+| local-index | 6 | 4 | — |
+
+**This is the fact that matters for the target.** An export resolves which
+packages the target installs, and it keeps every wheel of each one. So the
+planner still chooses an artefact by the PEP 425 tags of the target, and the
+machine that exported chose no wheel. `binary-app` keeps all 100 rows of
+`numpy`, and its export also carries two per-package `marker =` lines.
+
+The only name that the export drops is the virtual root of the project, which
+installs nothing. `test_the_export_drops_the_virtual_root_and_nothing_else`
+asserts the equality against the `virtual` sources of `uv.lock`.
+
+### What the spike does not answer
+
+The spike reads a lock file, and it builds nothing. `default.nix` takes the
+menu that `pylock.nix` gives, so a planner over it is a small change and not a
+proven one. Three things stay open, and each one is a fact of the section
+above and not of the reader:
+
+- One `pylock.toml` is one selection, so `select`, `extras` and `groups` need
+  an exported file of each.
+- The export carries no `[package.metadata]`, so `ddrn_venv._freshness` has
+  nothing to compare.
+- `packaging.pylock` reads the same file in the planner, and the spike calls
+  it nowhere.
+
 ## The order that these facts imply
 
 **Keep the two halves apart, the way pyproject.nix and uv2nix keep them

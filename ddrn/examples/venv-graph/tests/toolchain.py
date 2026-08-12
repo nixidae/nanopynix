@@ -58,7 +58,16 @@ EXAMPLE = HERE.parent
 REPO = EXAMPLE.parents[2]
 
 #: The features that the patched Nix needs to evaluate and to build a graph.
-FEATURES = ["nix-command", "flakes", "ca-derivations", "dynamic-derivations"]
+#: `parse-toml-timestamps` is the one that no planner needs: `tests/test_pylock.py`
+#: reads a PEP 751 file, which writes `upload-time` as a TOML datetime, and
+#: `builtins.fromTOML` refuses such a value without that feature.
+FEATURES = [
+    "nix-command",
+    "flakes",
+    "ca-derivations",
+    "dynamic-derivations",
+    "parse-toml-timestamps",
+]
 
 #: The feature that a **build** of a planner needs. Nix compares it in
 #: `DerivationBuildingGoal::tryToBuild`, which runs only after substitution
