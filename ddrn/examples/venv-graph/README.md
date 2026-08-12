@@ -90,7 +90,7 @@ by default.
 
 `./run-uv.sh` does all of the above, and it then builds two projects of
 `./projects`, one step at a time. Copy it rather than write these commands
-again. `tests/test_projects.py` builds all seven, and it is the gate.
+again. `tests/test_projects.py` builds all eight, and it is the gate.
 
 ## The two steps
 
@@ -557,7 +557,7 @@ message that `zipfile` raises, and the whole table.
 $ pytest ddrn/examples/venv-graph/tests -m "not nix"    # the decisions, one second
 $ shell="nix develop --impure --file . nanopynixMaster.shell --command"
 $ $shell pytest ddrn/examples/venv-graph/tests -m "not network"   # and the sealed graph
-$ $shell pytest ddrn/examples/venv-graph/tests          # and the seven real projects
+$ $shell pytest ddrn/examples/venv-graph/tests          # and the eight real projects
 $ ddrn/examples/venv-graph/run-uv.sh                    # two of them, step by step
 $ ddrn/examples/venv-graph/bench/measure.sh --cold      # what an evaluation costs
 ```

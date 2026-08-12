@@ -554,6 +554,51 @@ file itself. That costs nothing: `uv.nix` copies the file with `builtins.path`.
 `tests/test_local_index.py` reads this lock file, and `../check-index.nix`
 builds the environment and reports what it holds.
 
+## `native-app`
+
+The eighth project, and the one that needs a compiler. `psutil` and `cffi` both
+build from their source distribution, so a node of the graph runs `gcc`.
+
+```console
+$ nix run --file . pkgs.uv -- init --app --no-package --name native-app \
+    --python 3.13 --no-workspace --vcs none native-app
+$ cd native-app
+$ rm main.py
+$ nix run --file . pkgs.uv -- add --no-sync psutil cffi
+$ nix run --file . pkgs.uv -- add --no-sync --group ddrn installer setuptools
+```
+
+Then `tool.uv.no-binary-package` names both, so the planner takes the source
+distribution of each and not the wheel that PyPI serves:
+
+```toml
+[tool.uv]
+no-binary-package = ["cffi", "psutil"]
+```
+
+**`setuptools` is in the `ddrn` group for the reason that `installer` is.** The
+backend of both distributions is `setuptools`, and no lock file records the
+build system of a package. The planner resolves the backend out of the same
+menu, so `setuptools` has to be a package of this lock file.
+
+### What each package needs, and what `buildTools` names
+
+`../check-native.nix` gives the argument, and the two entries differ:
+
+| package | tools | why |
+| --- | --- | --- |
+| `psutil` | `stdenv.cc` | it holds C code and links nothing outside the interpreter |
+| `cffi` | `stdenv.cc`, `pkg-config`, `libffi.dev`, `libffi` | it reads `ffi.h` and links `libffi` |
+
+**Name each output that the build reads.** A node of the graph runs no
+`stdenv`, so no setup hook follows `.dev`: `libffi.dev` holds the header and
+`libffi` holds the library, and the build needs both.
+
+**`pkg-config` is not necessary here, and the entry is honest about that.**
+`cffi` asks `pkg-config` first and falls back to `CPPFLAGS` and `LDFLAGS`, so
+the build succeeds with no `pkg-config` at all.
+`ddrn/PACKAGING-FACTS.md` records that measurement.
+
 ## The two distributions that a project vendors
 
 `vendored-app/vendor` and `local-index/index` hold four small files, and no

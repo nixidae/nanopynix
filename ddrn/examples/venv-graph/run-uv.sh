@@ -2,7 +2,7 @@
 # Show a real `uv` project become a graph of derivations, one step at a time.
 #
 # **This script is the demonstration, and `tests/test_projects.py` is the
-# gate.** That module builds all seven projects of `./projects` and reads each
+# gate.** That module builds all eight projects of `./projects` and reads each
 # report back, and it fails when one of them changes. This script builds two of
 # them and prints what each step produced, so that a reader sees the two-step
 # build rather than a pass mark.
@@ -148,6 +148,19 @@ echo
 echo "############ one member of a workspace, as an application ############"
 show store cat "$(build check-application.nix)"
 
+# **A package that needs a compiler.** A node of the graph gets `coreutils`,
+# `unzip`, `tar`, `gzip` and the interpreter, and no compiler: one in that list
+# would enter the closure of every pure Python wheel as well. `buildTools` of
+# `uv.nix` names one for the package that needs it, and `projects/native-app`
+# builds `psutil` and `cffi` from their source distribution.
+#
+# **The compiler reaches the build and no environment.** `graph.nix` puts `-g0`
+# in `CPPFLAGS`, because a `.so` with debug information names every include
+# directory of its build and the scan of the output makes each one a reference.
+echo
+echo "############ two packages that a compiler builds ############"
+show store cat "$(build check-native.nix)"
+
 # **The same environment as a shell, and the editable tree that it reads.**
 # `shell` sets `DDRN_EDITABLE_ROOT` to the project, so an editable member
 # imports the tree that the user edits. This script prints the command rather
@@ -165,6 +178,6 @@ cat <<COMMAND
 COMMAND
 
 echo
-echo '==> tests/test_projects.py builds the other five projects, and every'
+echo '==> tests/test_projects.py builds the other six projects, and every'
 echo "==> check of this directory. Run it with:"
 echo "==>   direnv exec . pytest ddrn/examples/venv-graph/tests"

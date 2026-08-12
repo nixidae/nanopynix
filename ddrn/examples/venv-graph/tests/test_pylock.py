@@ -44,6 +44,7 @@ NAMES = [
     "git-app",
     "vendored-app",
     "local-index",
+    "native-app",
 ]
 
 #: The feature that `builtins.fromTOML` needs for a PEP 751 file. That format
@@ -140,7 +141,7 @@ async def timestamps(toolchain: Toolchain) -> None:
 
 
 class TestEveryProjectReads:
-    """The seven projects, through the standard format."""
+    """Every project of the example, through the standard format."""
 
     @pytest.mark.parametrize("name", NAMES)
     async def test_the_menu_is_the_menu_that_uv_lock_gives(

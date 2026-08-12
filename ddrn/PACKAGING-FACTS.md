@@ -2366,7 +2366,8 @@ environment.
 
 A caller that names no tool gets no `buildTools` key in the document of the
 planner, and a package that names none gets no key on its node. The rule is
-one shape for one meaning, and the seven projects of `projects` carry neither.
+one shape for one meaning, and `projects/native-app` is the one project of the
+eight that carries either.
 
 ### `NIX_CFLAGS_COMPILE` reaches nothing here, and `CPPFLAGS` does
 
@@ -2442,6 +2443,35 @@ libxml2-2.15.3  libxslt-1.1.45  lxml-6.1.1  native-real  psutil-7.2.2
 
 `libxml2` and `libxslt` are real: the `.so` of `lxml` links against both.
 Nothing of the compiler is there.
+
+### `cffi` asks `pkg-config` and does not need the answer
+
+`projects/native-app` is the gate over two packages of PyPI, and
+`check-native.nix` names `pkg-config` for `cffi` because `cffi` asks it first.
+**The build succeeds with no `pkg-config` at all.** `_ask_pkg_config` of
+`cffi/setup.py` fails, `cffi` falls back to a hand-written list of directories,
+and the `-isystem` of `CPPFLAGS` answers before that list does:
+
+```
+'-g0', '-isystem', '/nix/store/…-gcc-wrapper-15.3.0/include',
+'-DFFI_BUILDING=1', '-I/usr/include/ffi', '-I/usr/include/libffi',
+'-I/nix/store/…-python3-3.14.6/include/python3.14'
+```
+
+The header is what the build needs. Without `libffi.dev` in the list the same
+build stops:
+
+```
+cffi> src/c/_cffi_backend.c:15:10: fatal error: ffi.h: No such file or directory
+```
+
+Measured on 2026-08-12, by building `check-native.nix` three times: with the
+argument as written, with `pkg-config` removed, and with the two outputs of
+`libffi` removed.
+
+**So no test of this repository covers `PKG_CONFIG_PATH`.** The variable is
+there because a build that reads it is ordinary, and the two gates cover
+`PATH`, `CPPFLAGS` and `LDFLAGS` alone.
 
 ### The wheel says which interpreter it is for
 

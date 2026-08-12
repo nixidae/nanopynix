@@ -1,4 +1,4 @@
-"""The seven real projects of `../projects`, built end to end against PyPI.
+"""The eight real projects of `../projects`, built end to end against PyPI.
 
 `test_sealed_graph.py` builds the same machinery over `./fixtures`, which are
 derivations of this repository, so no node of that graph reaches an index. This
@@ -20,6 +20,7 @@ Each project exercises what the ones before it cannot:
 | `git-app` | a dependency that `uv.lock` names by a commit |
 | `vendored-app` | two dependencies that no index serves |
 | `local-index` | a registry that is a directory of the project |
+| `native-app` | two source distributions that hold C code, and the compiler that `buildTools` names |
 
 `../run-uv.sh` is the demonstration rather than the gate. It builds two of
 these projects one step at a time, and it prints what each step produced.
@@ -50,6 +51,7 @@ NAMES = {
     "git-app": "git-app",
     "vendored-app": "vendored-app",
     "local-index": "local-index",
+    "native-app": "native-app",
 }
 
 #: What the whole workspace resolves to. **The test states this, and the graph
@@ -409,6 +411,52 @@ class TestBinaryApp:
             fromNixpkgs="{ pyzmq = (import <nixpkgs> {}).python3Packages.pyzmq; }",
         )
         assert "pyzmq" in report
+
+
+class TestAPackageThatCompiles:
+    """`buildTools`, against two source distributions of PyPI.
+
+    **`tests/sealed.nix` covers the same argument over a fixture, and this
+    covers what a fixture cannot.** The backend here is the `setuptools` that
+    each project declares, the source is the archive that the index serves, and
+    `customize_compiler` of `setuptools._distutils` is what reads `CPPFLAGS`
+    and `LDFLAGS`. The fixture backend mirrors that function, and a mirror is
+    not the thing.
+
+    `check-native.nix` names the tools, and `ddrn/PACKAGING-FACTS.md` records
+    what each one is for.
+    """
+
+    async def test_two_packages_build_from_source_and_run(self, toolchain: Toolchain) -> None:
+        report = await check(toolchain, "check-native.nix")
+
+        # `psutil` holds C code and links nothing outside the interpreter, so
+        # the compiler alone answers it.
+        assert "psutil       7." in report
+        # **`cffi` needs the header and the library of `libffi`.** The header
+        # reaches the build through `CPPFLAGS` and the library through
+        # `LDFLAGS`, and `sizeof` runs the library that the linker found.
+        assert "sizeof(long)=8" in report
+
+        # Neither wheel came from the index: `tool.uv.no-binary-package` names
+        # both, so the planner chose the source distribution of each.
+        assert ".so" in report
+
+    async def test_the_compiler_reaches_no_environment(self, toolchain: Toolchain) -> None:
+        # `-g0` of `../graph.nix` is what keeps it out. A `.so` with debug
+        # information names every include directory of its build, so the scan
+        # of the output would make the compiler and each `dev` output a
+        # reference. `ddrn/PACKAGING-FACTS.md` measures what that costs.
+        report = await check(toolchain, "check-native.nix")
+        closure = await toolchain.closure_of(prefix_of(report))
+
+        forbidden = ("gcc-wrapper", "binutils-", "linux-headers-", "pkg-config-")
+        found = [name for name in closure if name.endswith("-dev") or name.startswith(forbidden)]
+        assert found == [], found
+
+        # `libffi` is a real dependency, so the rule above did not empty the
+        # closure: the extension of `cffi` links against it.
+        assert any(name.startswith("libffi-") for name in closure), closure
 
 
 class TestTheSourcesThatNoIndexServes:
