@@ -1208,9 +1208,9 @@ comparison on every older band.
 
 #### The oracle of a comparison has to be the Nix that nanopynix links
 
-The third one is not a defect of pynix. `nix/shell.nix` puts no `nix` in the
-shell, so `PATH` gives the Nix of the machine whichever band the shell belongs
-to. In the shell of the master band:
+The third one is not a defect of pynix. `nix/shell.nix` put no `nix` in the
+shell, so `PATH` gave the Nix of the machine whichever band the shell belonged
+to. In the shell of the master band, before the repair:
 
 ```
 command -v nix         ->  /run/current-system/sw/bin/nix
@@ -1236,15 +1236,29 @@ copy rather than write the value back, so no call order makes it concrete.
 Every other key of the two objects is equal, including `locks`, `revision`,
 `revCount` and `lastModified`.
 
-`tests/support/nix_oracle.py` holds the rule now: a test asks for the oracle
-through `require_nix_oracle`, which skips when the command reports another
-version and names both versions in the message. The two oracle tests run on
-the default band, where the machine and the band agree, and skip on the master
-band.
+**The repair is a shell that carries the `nix` of its own band.**
+`nix/shell.nix` takes `nix-cli`, which each Nix-version scope defines beside
+the library, so the command and the library come from one source:
 
-**The better repair is a shell that carries the `nix` of its own band**, and
-that is a change to a shell that a person uses by hand, so it is not made
-here.
+```
+command -v nix         ->  /nix/store/8kzpn67…-nix-2.36.0pre-ddnix+2/bin/nix
+nix --version          ->  nix (Nix) 2.36.0pre-ddnix+2
+running_nix_version()  ->  2.36.0pre-ddnix+2
+```
+
+The two oracle tests then run on both bands, and `test_flake_metadata_matches_nix`
+passes on master: pynix and `nix flake metadata` give one fingerprint.
+`pytest tests` gives 2590 passed, 0 failed and 3 skipped on the master band,
+and 2583 passed, 0 failed and 10 skipped on the default band.
+
+**The daemon of the machine is still the daemon of the machine.** A command in
+that shell which speaks to `/nix/var/nix/daemon-socket` is a newer client than
+that daemon. Give a store of your own for work that the protocol of the machine
+cannot carry.
+
+`tests/support/nix_oracle.py` holds the rule that made the difference visible,
+and it stays: a test asks for the oracle through `require_nix_oracle`, which
+skips when the command reports another version and names both versions.
 
 ### A nested deriving path names the output of a submitted derivation
 

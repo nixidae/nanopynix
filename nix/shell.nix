@@ -13,6 +13,7 @@
   statix,
   tofuCoreSchemaTool,
   storeExecTool,
+  nix-cli,
   gdb,
   graphviz,
   graph-easy,
@@ -40,6 +41,23 @@ mkShell {
   '';
 
   packages = [
+    # **The `nix` of this band, and not the `nix` of the machine.** This shell
+    # is defined inside each Nix-version scope, so `nix-cli` is the command
+    # that the same source builds as the library that nanopynix links.
+    #
+    # A test that compares pynix with `nix ... --json` needs this. Without it,
+    # `PATH` gives whatever the machine runs: measured on 2026-08-12, the shell
+    # of the master band linked 2.36.0pre-ddnix and found 2.34.8, and the two
+    # printed two flake fingerprints over one flake.
+    # `tests/support/nix_oracle.py` refuses such a comparison, and
+    # `ddrn/NIX-FACTS.md` records the two strings.
+    #
+    # **The daemon of the machine stays the daemon of the machine.** A command
+    # here that speaks to `/nix/var/nix/daemon-socket` is a newer client than
+    # that daemon. Give a store of your own, such as
+    # `--store 'local://?root=/tmp/somewhere'`, for work that the protocol of
+    # the machine cannot carry.
+    nix-cli
     pythonEnv
     pyright
     ruff
