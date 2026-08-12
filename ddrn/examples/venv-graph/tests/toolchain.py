@@ -413,6 +413,17 @@ class Toolchain:
         """What the store object that `path` names points at."""
         return str(self.path_in_store(path).readlink())
 
+    async def closure_of(self, path: str) -> list[str]:
+        """Every store path that `path` reaches, by name and sorted.
+
+        **The name answers the question, and the store path does not.** Two
+        stores hold two revisions of nixpkgs, so a comparison by store path
+        says that every path differs. `compute_fs_closure` walks the
+        references that the scan of each output recorded.
+        """
+        found = await self.store.compute_fs_closure(path)
+        return sorted(entry.name for entry in found)
+
 
 async def check_toolchain() -> None:
     """Refuse a run whose interpreter is not the patched build.

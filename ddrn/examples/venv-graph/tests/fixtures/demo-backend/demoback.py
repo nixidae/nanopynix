@@ -131,6 +131,14 @@ def _compile() -> dict[str, bytes]:
     # reads a declaration for this, and so does this one.
     libraries = [f"-l{name}" for name in _table().get("libraries", [])]
 
+    # **`CFLAGS` of the interpreter carries `-g`, and this backend passes it
+    # for the same reason a real one does.** `customize_compiler` puts that
+    # value on the command of every build, so a `.so` of any real project
+    # carries debug information unless something later turns it off.
+    # `../../../graph.nix` puts `-g0` in `CPPFLAGS`, which lands after this,
+    # and the last of the two wins.
+    base = shlex.split(sysconfig.get_config_var("CFLAGS") or "")
+
     built: dict[str, bytes] = {}
     for source in sources:
         target = source.with_name(f"{source.stem}{suffix}")
@@ -139,6 +147,7 @@ def _compile() -> dict[str, bytes]:
             "-shared",
             "-fPIC",
             f"-I{include}",
+            *base,
             *flags,
             str(source),
             *link,

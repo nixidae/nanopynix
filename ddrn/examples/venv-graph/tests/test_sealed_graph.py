@@ -257,6 +257,40 @@ class TestAProjectThatHoldsCCode:
         assert module.startswith("_speedup."), module
         assert module.endswith(".so"), module
 
+    async def test_the_compiler_reaches_no_environment(self, toolchain: Toolchain) -> None:
+        """`-g0`, and the closure that it keeps out.
+
+        **A `.so` with debug information names every include directory of its
+        build.** The scan of the output then makes the compiler, `glibc-dev`
+        and the `dev` output of each library a reference of the install, and
+        each one enters the closure of the environment. `stdenv` of nixpkgs
+        strips a binary for the same reason, and a node runs no `stdenv`.
+
+        `ddrn/PACKAGING-FACTS.md` measures what the flag saves over a real
+        project: 545822056 bytes and 41 paths without it, and 228729808 bytes
+        and 28 paths with it.
+        """
+        check = await toolchain.build(SEALED, "nativeCheck")
+        environment = environment_of(toolchain.cat(check))
+
+        closure = await toolchain.closure_of(environment)
+
+        # **A `dev` output is a build input by definition**, so a name that
+        # ends in it has no business in the closure of an environment. The
+        # other three are the compiler, its linker and the headers of the
+        # kernel, which a running interpreter reads as little.
+        #
+        # `gcc-*-lib` is not one of them. It holds `libgcc_s`, which every
+        # compiled module links against, and the interpreter carries it
+        # already.
+        forbidden = ("gcc-wrapper", "binutils-", "linux-headers-")
+        found = [name for name in closure if name.endswith("-dev") or name.startswith(forbidden)]
+        assert found == [], found
+
+        # The library that the module links against is a real dependency, and
+        # this asserts that the rule above did not empty the closure.
+        assert any(name.startswith("zlib-") for name in closure), closure
+
     async def test_a_build_that_names_no_compiler(self, toolchain: Toolchain) -> None:
         # **The outer planner still builds.** It registers the graph and
         # submits it, and no compiler is needed for that. The failure arrives
