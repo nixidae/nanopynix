@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 
 import pytest
-from ddrn_venv import Artifact, Plan
+from ddrn_venv import Artifact, Plan, open_restricted_store
 
 
 def wheel(package: str, version: str) -> Artifact:
@@ -52,3 +52,38 @@ class TestTheBootstrapNode:
         plan.artifact_node(wheel("demo", "1.0"), "wheel")
         with pytest.raises(ValueError, match=re.escape("two different nodes are both called 'demo-1.0'")):
             plan.artifact_node(wheel("demo", "1.0"), "sdist-build", backend="flit_core.buildapi")
+
+
+class TestAPlannerRunsInsideABuildOnly:
+    """The two guards that `open_restricted_store` puts before every Nix call.
+
+    **A planner reads a restricted daemon socket that only a `builder-rpc-v0`
+    build has.** A reader who runs `plan.py` by hand meets one of these two
+    messages, and each one names the reason rather than the symptom. Both
+    guards raise before `init_libstore`, so this module reaches them with no
+    store and no build.
+    """
+
+    @pytest.mark.parametrize("remote", ["", "daemon", "/nix/store", "ssh-ng://web01"])
+    def test_a_socket_that_is_not_the_restricted_one_is_refused(
+        self, remote: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("out", raising=False)
+        monkeypatch.setenv("NIX_REMOTE", remote)
+        with pytest.raises(RuntimeError, match="runs only inside a builder-rpc-v0 build"):
+            open_restricted_store()
+
+    def test_an_unset_socket_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("out", raising=False)
+        monkeypatch.delenv("NIX_REMOTE", raising=False)
+        with pytest.raises(RuntimeError, match="runs only inside a builder-rpc-v0 build"):
+            open_restricted_store()
+
+    def test_an_output_path_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # **A `builder-rpc-v0` build gets no `$out`.** The output arrives
+        # through `submit_output`, so a build that set one is not the build
+        # that this script runs in.
+        monkeypatch.setenv("NIX_REMOTE", "unix:///build/restricted-socket")
+        monkeypatch.setenv("out", "/nix/store/aaa-demo")
+        with pytest.raises(RuntimeError, match="out is set to"):
+            open_restricted_store()
