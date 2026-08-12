@@ -1385,6 +1385,24 @@ lrwxrwxrwx 0  -> /nix/store/a851fa0dqrjd1bshd2x6v02ck3mmr1n1-packaged-app
 `DDRN_EDITABLE_ROOT` names the tree of the machine, so an editable member of
 the environment reads what the user edits.
 
+**Two planners reach one environment, and the second one costs a planner.**
+`app` and `env` of one call are two planners: the second is the same call with
+`application = null` and the `-env` suffix. Every node that the two submit is
+content-addressing and identical, so the environment is one store path.
+Measured on 2026-08-12, over `projects/workspace` with a `venvName` that no
+store had held:
+
+| the command | wall clock |
+| --- | --- |
+| `nix build ... app` | 7.221 s |
+| `nix build ... env`, after that | 4.234 s |
+| `nix build ... env`, again | 0.611 s |
+
+The 4.234 s is the second planner and the trampoline, and the environment is
+not part of it. `bin/ws-cli` of the application points at
+`/nix/store/3cghs9ya4kdwzl05yz8rb39zsrwxawg9-speed-app-env`, and the `env`
+wrapper of the same call points at that same path.
+
 ### nanopynix builds the whole graph, with no `nix` command
 
 The tests drive the example through the patched `nix` command. That command is
