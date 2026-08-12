@@ -2291,6 +2291,92 @@ $ py=$(nix build --file . pkgs.python313 --no-link --print-out-paths)
 $ export UV_PYTHON_DOWNLOADS=never UV_PYTHON="$py/bin/python3.13"
 ```
 
+## PEP 751, and what `packaging` already does with it
+
+PEP 751 gives one lock file format that more than one tool writes. uv 0.12.1
+exports it, and `packaging` 26.2 reads it. Measured on 2026-08-12.
+
+```console
+$ uv export --format pylock.toml --frozen --all-packages --all-groups \
+    --python <interpreter> -o pylock.toml
+```
+
+The output name must be `pylock.toml`, or `pylock.<name>.toml` with a name that
+holds no dot. uv refuses any other name. `--python` is necessary here, because
+uv downloads an interpreter that NixOS cannot start.
+
+Over `projects/workspace`, the export is 3274 bytes and `uv.lock` is 8874.
+
+### `packaging.pylock` does the work that `_uvlock` does
+
+`packaging/pylock.py` is 33890 bytes, and it holds `Pylock`, `Package`,
+`PackageWheel`, `PackageSdist`, `PackageDirectory`, `PackageVcs` and
+`PackageArchive`. `Pylock` holds `from_dict`, `validate`, `to_dict` and
+`select`:
+
+```python
+Pylock.select(*, environment=None, tags=None, extras=None, dependency_groups=None)
+    -> Iterator[tuple[Package, PackageVcs | PackageDirectory | PackageArchive | PackageWheel | PackageSdist]]
+```
+
+**That one method is the marker evaluation, the extras and the groups, and the
+choice of a wheel by its PEP 425 tags.** It gives the chosen artefact beside
+each package. Over the export above it gave 13 packages of 13: a wheel for each
+package of an index, and a directory for each member of the workspace.
+
+### Each awkward source kind survives, in a standard spelling
+
+| the source | what `uv.lock` writes | what `pylock.toml` writes |
+| --- | --- | --- |
+| a member of the workspace | `source = { editable = "packages/ws-cli" }` | `directory = { path = "packages/ws-cli", editable = true }` |
+| a tarball of the project | `source = { path = "vendor/archived-1.0.0.tar.gz" }` | `archive = { path = "...", hashes = { sha256 = "9207336..." } }` |
+| a registry that is a directory | `source = { registry = "index" }`, and a row with a path | `index = "file:///.../index"`, and an `sdist` with a `file://` url |
+| a git source | one url, as `git+https://...?subdirectory=x#<rev>` | `vcs = { type = "git", url = ..., commit-id = ..., subdirectory = ... }` |
+
+**The git row is the one that would delete code.** `./uv-git.nix` parses that
+url, and PEP 751 gives the same three parts as fields.
+
+The local registry loses no hash. `uv.lock` writes `sdist = { path =
+"crated-1.0.0.tar.gz" }` with no hash of its own, and the export writes
+`hashes = {}`.
+
+### `builtins.fromTOML` refuses the file
+
+```console
+$ nix eval --impure --expr 'builtins.fromTOML (builtins.readFile ./pylock.toml)'
+error: while parsing TOML: Dates and times are not supported
+```
+
+PEP 751 writes `upload-time` as a TOML datetime, and uv writes one for each
+artefact. `--no-hashes` does not remove it: 22 of them remain in the export of
+`projects/workspace`. With every `upload-time` removed by `sed`, the same
+command reads the file and gives 13 packages.
+
+**So the Nix half of this lab cannot read a `pylock.toml` as it stands.** That
+half exists to call `builtins.fromTOML` over the lock file. Two ways out: patch
+`fromTOML` in the fork of Nix that this lab already carries, or strip the
+datetimes in a derivation before the reader sees the file.
+
+### What the export does not carry
+
+The export of `projects/workspace` holds no `extras` key, no
+`dependency-groups` key, no `default-groups` key, and no `dependencies` on any
+package. uv resolves the selection while it exports, and it writes the result.
+
+**So one `pylock.toml` is one selection.** `uv.nix` takes `select`, `extras`
+and `groups` as arguments, and `tests/test_projects.py` builds three
+environments from the one `uv.lock` of `projects/workspace`. Each of those
+would need an exported file of its own.
+
+The format itself does not force this. `Pylock` holds `extras`,
+`dependency_groups` and `default_groups`, and `select` takes the first two. The
+exporter of uv is what flattens them.
+
+**The export also carries no `[package.metadata]`.** `ddrn_venv._freshness`
+compares that table with the `pyproject.toml` of each member, and it is how
+this lab refuses a stale lock file. A `pylock.toml` records no declaration to
+compare against, so a checked-in export goes stale with no reader to notice.
+
 ## The order that these facts imply
 
 **Keep the two halves apart, the way pyproject.nix and uv2nix keep them
