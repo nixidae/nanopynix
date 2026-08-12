@@ -469,6 +469,78 @@ takes its path from what the build wrote, so one path means one content. Under
 input addressing the path would have moved with the `.drv` of the planner, and
 a reader could not tell a rewritten plan from a rewritten environment.
 
+### A planner node spends 97% of its time on one import
+
+The measurements above are the cost of the evaluation, which writes the `.drv`
+files. This one is the cost of a planner node while it runs.
+
+`projects/workspace` builds in 4.320 s, and 0.441 s of that is the outer
+evaluation. Temporary `time.monotonic()` prints inside `plan.py` gave the
+breakdown of one planner node:
+
+| phase | seconds |
+| --- | --- |
+| the imports of the module | 0.877 |
+| open the restricted store | 0.003 |
+| parse `DDRN_INPUTS` | 0.000 |
+| resolve the lock file | 0.006 |
+| build the plan | 0.005 |
+| submit the graph | 0.011 |
+| everything after the imports | 0.025 |
+
+**The decision work is 25 ms, and the import is 35 times that.** The
+instrumentation is gone now, and the import half needs none. It reproduces from
+the environment of the planner alone, as the best of five runs:
+
+```console
+$ env=/nix/store/...-ddrn-planner-env
+$ PYTHONPATH=$packaging:planner "$env/bin/python" -c pass                     # 17 ms
+$ PYTHONPATH=$packaging:planner "$env/bin/python" -c 'import packaging.tags'  # 65 ms
+$ PYTHONPATH=$packaging:planner "$env/bin/python" -c 'import nanopynix'       # 848 ms
+$ PYTHONPATH=$packaging:planner "$env/bin/python" -c 'import ddrn_venv'       # 880 ms
+```
+
+So the interpreter starts in 17 ms, and `import nanopynix` is 848 ms of the
+880. `python -X importtime` gives 778 ms of self time over 555 modules, by
+top-level package:
+
+| package | modules | self |
+| --- | --- | --- |
+| `nanopynix_proto` | 12 | 274.2 ms |
+| `nanopynix` | 53 | 122.5 ms |
+| `pydantic` | 41 | 44.9 ms |
+| `anyio` | 31 | 29.3 ms |
+| `grpclib_transports` | 15 | 20.8 ms |
+| `nanopynix_bindings` | 10 | 20.2 ms |
+
+**The planner uses one name of that package, and the name is
+`init_libstore`.** Every other name it needs comes from `nanopynix_bindings`,
+and `from nanopynix_bindings import expr, store, util` costs 46 ms. The 12
+generated modules of `nanopynix_proto` alone are 274 ms, and a planner opens no
+RPC session at all.
+
+A submodule does not help, because Python runs the `__init__` of the package
+first:
+
+| import | seconds |
+| --- | --- |
+| `nanopynix.settings` | 0.785 |
+| `nanopynix.stores` | 0.819 |
+| `nanopynix.rpc` | 0.840 |
+| `nanopynix` | 0.848 |
+
+**The cost is the public surface of `nanopynix/__init__.py`, and every consumer
+pays it.** That file re-exports `inproc`, `rpc`, `stores`, the settings models
+and the generated protocol, so one import loads the whole library. The number
+above is therefore not a fact about this lab. `pynix --version` costs 2.054 s,
+and `import nanopynix` is 0.818 s of that. Issue #122 holds the measurement of
+both consumers, and the three shapes that could remove the cost.
+
+One planner runs for each source distribution of a project, at each level of
+the recursion, so the cost multiplies with the count of source distributions
+and not with the count of packages. `run-uv.sh` builds two projects, and four
+planner nodes run in it.
+
 ### How uv2nix resolves, and what each step is for
 
 `lib/lock1.nix:50`, `resolveDependencies`. It takes the lock, a PEP 508
