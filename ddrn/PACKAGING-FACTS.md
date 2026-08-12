@@ -553,6 +553,28 @@ The planner reads `init_libstore` from `nanopynix.libstore`, so it pays 53 ms
 in place of 848 ms. Its decision work is still 25 ms, and the import is no
 longer 35 times that.
 
+**Measured again from the environment of the planner**, with the same command
+as above and the best of five runs:
+
+| import | before | after |
+| --- | ---: | ---: |
+| `python -c pass` | 17 ms | 14 ms |
+| `import packaging.tags` | 65 ms | 64 ms |
+| `import nanopynix` | 848 ms | 23 ms |
+| `from nanopynix.libstore import init_libstore` | 848 ms | 49 ms |
+| **`import ddrn_venv`** | **880 ms** | **140 ms** |
+
+`import ddrn_venv` loads 176 modules, against 555 for `import nanopynix`
+alone before. `nanopynix_proto`, `pydantic`, `grpclib`, `anyio` and
+`betterproto2` are absent from `sys.modules`, and the planner holds
+`nanopynix`, `nanopynix.libstore` and the compiled bindings.
+
+**`packaging` is now the largest import of a planner**, at 64 ms against 49 ms
+for the store surface. The decision work is 25 ms, so the import is 5.6 times
+the work rather than 35 times it. A planner runs one time for each source
+distribution of a project, so this is a cost of each node and not of the
+build.
+
 **A consumer that reads a name from every module pays for every module.**
 `pynix` is one, and its start did not change: 2.09 s, of which `lsprotocol` is
 394 ms. Issue #107 covers what `pynix` itself asks for. The change moves the
