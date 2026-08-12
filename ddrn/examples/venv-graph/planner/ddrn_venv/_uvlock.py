@@ -398,13 +398,6 @@ class Lock:
             members=tuple(document.get("manifest", {}).get("members", [])),
         )
 
-    def by_name(self) -> dict[str, list[Package]]:
-        """Every entry, grouped by its normalised name."""
-        grouped: dict[str, list[Package]] = {}
-        for package in self.packages:
-            grouped.setdefault(package.name, []).append(package)
-        return grouped
-
     def find(self, name: str, environment: Mapping[str, str]) -> Package:
         """The one entry of `name` that this environment takes.
 
