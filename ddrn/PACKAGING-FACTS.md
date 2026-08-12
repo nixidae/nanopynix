@@ -1444,6 +1444,49 @@ its default is `pkgs.python3`, which is the correct default for a shared store.
 A caller that builds a single-purpose image passes one expression and pays one
 build of CPython.
 
+### The same environment from nixpkgs, measured beside it
+
+`python3.withPackages` is the ordinary way to get this environment, so it is
+the number that says what this lab costs. Measured on 2026-08-12, over
+`projects/pure-app`, which resolves to `rich` and its three dependencies. Both
+sides read the same `<nixpkgs>` and the same `pkgs.python3`:
+
+| the closure | paths | NAR bytes |
+| --- | --- | --- |
+| `pkgs.python3` alone | 23 | 219013232 |
+| `python3.withPackages (ps: [ ps.rich ])` | 28 | 238473264 |
+| `uv.nix` of `projects/pure-app` | 28 | 238220632 |
+
+**The interpreter is 91.9% of each total**, and each environment adds five
+paths: the four packages, and the environment itself. The 23 paths of the
+interpreter are a subset of both closures, and no path of it is missing from
+either, so the subtraction is exact:
+
+| what each one adds to a target that holds `pkgs.python3` | bytes |
+| --- | --- |
+| `python3.withPackages` | 19460032 |
+| `uv.nix` | 19207400 |
+
+**The difference is 252632 bytes, and 236488 of it is the environment path:**
+
+| the path | nixpkgs | `uv.nix` |
+| --- | --- | --- |
+| pygments | 13450712 | 13441424 |
+| rich | 4778984 | 4776248 |
+| markdown-it-py | 902600 | 899248 |
+| mdurl | 69592 | 68824 |
+| the environment | 258144 | 21656 |
+
+`python3.withPackages` writes a compiled wrapper for each program, and `bin`
+holds twelve of them at about 16000 bytes each. A virtual environment writes a
+symbolic link for the interpreter, and a Python shim of about 265 bytes for
+each console script. The four packages differ by less than 0.1% each.
+
+**So the runtime closure is no reason to choose either one.** The two agree to
+0.1%, because both install the same code beside the same interpreter. The
+reason to choose is the resolution: `uv.lock` decides the versions here, and
+nixpkgs decides them there.
+
 ## A proof that reaches no index
 
 `ddrn/examples/venv-graph/run.sh` is the proof over the real lock file, and
