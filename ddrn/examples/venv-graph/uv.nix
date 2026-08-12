@@ -309,6 +309,43 @@ let
     name = environmentName;
   };
 
+  # The same call with no application, which is the target of the environment.
+  # `environment` of the result gives it, and `env` builds it.
+  environmentTarget =
+    if application == null then
+      null
+    else
+      import ./uv.nix (
+        arguments
+        // {
+          application = null;
+          # **The suffix has to match, or one environment takes two store
+          # paths.** `Plan.root` names the environment of an application
+          # `<name>-env`, and a node name is the name of a store path.
+          venvName = "${environmentName}-env";
+        }
+      );
+
+  # **The environment as a derivation, so that one command builds it.**
+  # A planner writes a `.drv`, so a caller of the command line builds the
+  # planner and then builds `"$drv^out"`. This attribute holds the second step,
+  # so `nix build --file ./uv.nix env` is the whole build and `result/bin`
+  # holds the programs.
+  #
+  # It is the same shape as `app`, and `./application.nix` gives the reason
+  # that shape is necessary: `builtins.outputOf` gives a string, and `nix
+  # build` takes a derivation.
+  environmentWrapper =
+    let
+      target = if environmentTarget == null then planner else environmentTarget;
+      name = if application == null then environmentName else "${environmentName}-env";
+    in
+    import ./application.nix {
+      inherit pkgs name;
+      application = builtins.outputOf target.outPath "out";
+      program = null;
+    };
+
   # **`tool.uv` is a setting of the project, and uv copies none of it into the
   # lock file.** So this reads the setting where uv keeps it, rather than
   # invent an argument for the same decision. `no-binary-package` names each
@@ -704,6 +741,18 @@ lib.throwIfNot (lockVersion == 1)
         # `lib.getExe` and for `environment.systemPackages`. `./application.nix`
         # says why a wrapper is necessary.
         #
+        # `env` is the environment as a derivation, and it is what makes one
+        # command enough:
+        #
+        #     nix build --file ./uv.nix env --arg project /path/to/project
+        #     ./result/bin/python -c 'import rich'
+        #
+        # The result itself is the planner, so a build of it gives a `.drv`
+        # and a second command builds `"$drv^out"`. `env` holds that second
+        # step. It is the environment whether this call names an application
+        # or not, so `app` and `env` of one call are the two halves of one
+        # project.
+        #
         # **It costs a second planner, and no second environment.** The two
         # planners differ in one variable, so Nix builds both. Every node that
         # they submit is content-addressing and identical, so the environment
@@ -719,21 +768,8 @@ lib.throwIfNot (lockVersion == 1)
               )
             else
               applicationWrapper;
-          environment =
-            if application == null then
-              planner
-            else
-              import ./uv.nix (
-                arguments
-                // {
-                  application = null;
-                  # **The suffix has to match, or one environment takes two
-                  # store paths.** `Plan.root` names the environment of an
-                  # application `<name>-env`, and a node name is the name of a
-                  # store path.
-                  venvName = "${environmentName}-env";
-                }
-              );
+          env = environmentWrapper;
+          environment = if environmentTarget == null then planner else environmentTarget;
         }
       )
   )

@@ -94,6 +94,18 @@ echo
 echo "############ step two: the graph ############"
 show store cat "$(build check-packaged.nix)"
 
+# **`env` is those two steps as one command.** The result of `uv.nix` is the
+# planner, so the build above gave a `.drv` and a second build gave the graph.
+# `env` is a derivation whose whole content is one symbolic link to the
+# environment, so one build reaches it. `application.nix` gives the reason a
+# wrapper is necessary: `builtins.outputOf` gives a string, and `nix build`
+# takes a derivation.
+echo
+echo "############ the same environment, in one command ############"
+wrapper="$(build uv.nix env --arg project "$here/projects/packaged-app")"
+echo "==> one build gave $wrapper, which holds one link:"
+show store ls --long "$wrapper"
+
 # **The editable proof.** The environment installed `packaged-app` from its own
 # tree, and the `.pth` that `hatchling` wrote expands `$DDRN_EDITABLE_ROOT` when
 # the interpreter starts. So a second tree reads back differently from the

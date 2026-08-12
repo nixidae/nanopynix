@@ -1347,6 +1347,25 @@ argument names the program. The build verifies that the application holds that
 program, so a member whose console script carries another name fails with a
 message that lists what the application does hold.
 
+**The same wrapper removes the two-step build of an environment.** The result
+of `uv.nix` is the planner, so a build of that result gives a `.drv` and a
+second build gives the graph. The `env` attribute is that wrapper over the
+environment, so one build reaches the environment. Measured on 2026-08-12, over
+the application of `projects/workspace`:
+
+| the store path | the closure |
+| --- | --- |
+| `fnw2a8v...-workspace-app-env`, the environment | 238228600 bytes |
+| `jqygw70...-workspace-app-env`, the `env` wrapper | 238228776 bytes |
+
+So `env` costs the same 176 bytes and the same one path that `app` costs, and
+the two names agree. The whole content of the wrapper is one symbolic link:
+
+```console
+$ nix --store "$store" store ls --long /nix/store/jqygw70...-workspace-app-env
+lrwxrwxrwx 0  -> /nix/store/fnw2a8vvml2y7fcx2cnzzn2hs94lyjnk-workspace-app-env
+```
+
 ### nanopynix builds the whole graph, with no `nix` command
 
 The tests drive the example through the patched `nix` command. That command is

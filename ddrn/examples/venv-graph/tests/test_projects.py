@@ -263,6 +263,49 @@ class TestTheApplicationAsADerivation:
         assert "names no application" in refusal
 
 
+class TestTheEnvironmentAsADerivation:
+    """`env`, which is what makes one command build an environment.
+
+    **The result of `uv.nix` is the planner, so a build of it gives a `.drv`.**
+    A reader of the command line then builds `"$drv^out"`, which is two
+    commands for one environment. `env` is that second step as a derivation,
+    so `nix build --file ./uv.nix env` is the whole build.
+
+    It is the same shape as `app`, and `../application.nix` gives the reason
+    that shape is necessary.
+    """
+
+    async def test_one_command_builds_the_environment(self, toolchain: Toolchain) -> None:
+        # **The whole content is one symbolic link**, the way `app` is, so the
+        # closure grows by this path alone.
+        wrapper = await toolchain.build(UV, "env", project=str(PROJECTS / "pure-app"))
+        assert wrapper.endswith("-pure-app"), wrapper
+        assert toolchain.list_files(wrapper) == []
+
+        environment = toolchain.link_target(wrapper)
+        assert environment.endswith("-pure-app"), environment
+        assert environment != wrapper
+
+        # `result/bin/python` is what a reader of the README runs next.
+        assert (toolchain.path_in_store(environment) / "bin" / "python").exists()
+
+    async def test_the_environment_of_an_application(self, toolchain: Toolchain) -> None:
+        # **`app` and `env` of one call are the two halves of one project.**
+        # The environment of an application takes the `-env` suffix, so a user
+        # who installs both gets one environment and not two copies of it.
+        wrapper = await toolchain.build(UV, "env", **WORKSPACE_APP)
+        assert wrapper.endswith("-workspace-app-env"), wrapper
+        assert toolchain.list_files(wrapper) == []
+
+        environment = toolchain.link_target(wrapper)
+        assert environment.endswith("-workspace-app-env"), environment
+
+        # Every program of the application is a link into that same path.
+        application = toolchain.link_target(await toolchain.build(UV, "app", **WORKSPACE_APP))
+        program = toolchain.path_in_store(application) / "bin" / "ws-cli"
+        assert str(program.readlink()) == f"{environment}/bin/ws-cli"
+
+
 class TestBinaryApp:
     """A wheel that holds compiled code, and the same package from nixpkgs."""
 

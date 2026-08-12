@@ -73,6 +73,10 @@ $ ./nix-patched/bin/nix build --store "$store" "$drv^out" \
 The first command prints a `.drv` path, because a planner writes a derivation
 and not a directory. The second builds the graph behind it.
 
+**The `env` attribute holds the second step, so one command is enough.** See
+"`env`, and one command instead of two" below. The two commands above stay the
+way to read what each step produced.
+
 **Give `project` an absolute path.** A relative path resolves against the
 directory of `uv.nix`, and not against the shell.
 
@@ -245,6 +249,26 @@ suffix, so a user who installs both gets one environment and not two copies of
 it. It costs a second planner build, because the two planners differ in one
 variable, and no second environment: every node they submit is
 content-addressing and identical.
+
+### `env`, and one command instead of two
+
+"The two steps" above gives the two commands that a build takes: one for the
+planner, and one for the graph that the planner registered. `env` holds the
+second step, so one command is enough:
+
+```console
+$ nix build --file ./uv.nix env --arg project /path/to/project
+$ ./result/bin/python -c 'import rich'
+```
+
+It is the same wrapper that `app` is, and `application.nix` gives the reason a
+wrapper is necessary: `builtins.outputOf` gives a string, and `nix build` takes
+a derivation. The whole content is one symbolic link, so the closure grows by
+this path alone.
+
+`env` is the environment whether the call names an application or not. So `app`
+and `env` of one call are the two halves of one project, and both reach the one
+environment that the section above describes.
 
 ### `app`, and why a wrapper is necessary
 
