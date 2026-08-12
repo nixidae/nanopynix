@@ -2389,6 +2389,50 @@ $ py=$(nix build --file . pkgs.python313 --no-link --print-out-paths)
 $ export UV_PYTHON_DOWNLOADS=never UV_PYTHON="$py/bin/python3.13"
 ```
 
+### Two ways to seed the private store, and what each one costs
+
+The build runs in a private chroot store, and that store starts empty. Two
+forms fill it, and `README.md` and `run-uv.sh` do not use the same one.
+
+- **`nix copy --to "$store" --no-check-sigs`** puts the closure of the patched
+  Nix and of the planner environment in, before the first build.
+- **`--extra-substituters daemon --option require-sigs false`** names the
+  system daemon as a substituter, and copies nothing first.
+
+Measured on 2026-08-12 over `projects/pure-app`, with one empty store for each
+form and the store removed between the two runs:
+
+| form | seeded from this machine | fetched from `cache.nixos.org` | built | store | total |
+| --- | --- | --- | --- | --- | --- |
+| `nix copy` | 142 paths | **78 paths** | 13 | 825 MB | 8 s |
+| `--extra-substituters daemon` | 214 paths | **0 paths** | 13 | 822 MB | 9 s |
+
+Both gave `/nix/store/90mx650ayjnhh0ivf92kmjgpbymskkzm-pure-app`.
+
+**The substituter form removes the network, and it does not save time or
+space.** `nix copy` seeds the two closures that the command names, so each
+other path of the build still comes from the binary cache. The daemon serves
+all of them. The wall-clock is the same here, because the cache is fast and the
+78 paths are 20.7 MiB.
+
+**The daemon is the only source that works.** `--extra-substituters local` and
+`--extra-substituters 'local?root=/'` both fail with `path '...' is required,
+but there is no substituter that can build it`. A client cannot read the
+database of the local store; the daemon owns it.
+
+**The substituter form prints one warning for each realisation.** The patched
+Nix is 2.36-pre and the daemon of this machine is older, so each build prints
+`warning: the daemon is missing the 'realisation-with-path-not-hash' protocol
+feature, needed to support content-addressing derivations`. One build of
+`pure-app` printed it 16 times, and a whole run of `run-uv.sh` printed it 145
+times in 1088 lines.
+
+**So `run-uv.sh` keeps `nix copy`.** That script is the demonstration, and its
+output is what a reader reads. It also cannot become an offline script whatever
+it does, because the graph downloads each artefact from PyPI. The one-command
+form in `README.md` keeps the substituter, because a reader of that form wants
+the environment and not the transcript.
+
 ## A package that compiles, and what its compiler costs
 
 ### A node of the graph holds no compiler, and one argument gives it one

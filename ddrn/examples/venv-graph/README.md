@@ -40,6 +40,17 @@ Three things make one command enough, and each has a section below:
   patched nanopynix itself, no cache signed it, and a chroot store refuses an
   unsigned path by default.
 
+  The daemon is the only source that works here. `--extra-substituters local`
+  fails, because a client cannot read the database of the local store.
+
+  **This form prints one warning for each realisation.** The patched Nix is
+  newer than the daemon of the machine, so each build reports that the daemon
+  has no `realisation-with-path-not-hash` protocol feature. The build is
+  correct, and the warning names a real difference between the two versions.
+  `./run-uv.sh` uses `nix copy` for that reason, and
+  `ddrn/PACKAGING-FACTS.md` measures both forms under "Two ways to seed the
+  private store".
+
 Measured on 2026-08-12 over `projects/pure-app`: the command started with an
 empty directory and left a store of 1.3 GB, and `result` was one symbolic link
 to `/nix/store/2ppg8xs82055lxw8vg22a1zbbvjnmfjc-pure-app`.
