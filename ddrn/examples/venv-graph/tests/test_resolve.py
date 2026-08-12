@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import gzip
 import io
+import json
 import tarfile
 import zipfile
 from typing import TYPE_CHECKING
@@ -26,6 +27,7 @@ from ddrn_venv import (
     choose,
     is_pyproject,
     read_pyproject,
+    target_from_environ,
     target_tags,
     wheel_rank,
 )
@@ -55,6 +57,9 @@ MARKERS = {
     "sys_platform": "linux",
     "extra": "",
 }
+
+#: The document that `default.nix` puts in `DDRN_TARGET`, as JSON.
+TARGET_DOCUMENT = {"markers": MARKERS, "pythonVersion": PYTHON_VERSION, "platform": PLATFORM}
 
 PYPROJECT = b"""
 [build-system]
@@ -225,6 +230,70 @@ class TestChoose:
 
     def test_a_name_that_the_lock_does_not_hold_gives_nothing(self, target: Target) -> None:
         assert choose([wheel("demo", "1.0")], Requirement("absent"), target) is None
+
+    def test_no_binary_sends_a_named_package_to_its_source_distribution(self, target: Target) -> None:
+        # This is `tool.uv.no-binary-package`, and it is the one setting that
+        # reverses the rule above. **uv keeps it in `pyproject.toml` and writes
+        # it into no lock file**, so `uv.nix` reads it where uv put it.
+        artifacts = [sdist("demo", "1.0"), wheel("demo", "1.0")]
+        chosen = choose(artifacts, Requirement("demo"), target, no_binary={"demo"})
+        assert chosen is not None
+        assert chosen.kind == "sdist"
+
+    def test_no_binary_names_one_package_and_not_another(self, target: Target) -> None:
+        artifacts = [sdist("other", "1.0"), wheel("other", "1.0")]
+        chosen = choose(artifacts, Requirement("other"), target, no_binary={"demo"})
+        assert chosen is not None
+        assert chosen.kind == "wheel"
+
+    def test_no_binary_with_no_source_distribution_gives_nothing(self, target: Target) -> None:
+        # A package that ships wheels alone cannot answer the setting, and the
+        # caller learns that from an empty answer rather than a wrong one.
+        assert choose([wheel("demo", "1.0")], Requirement("demo"), target, no_binary={"demo"}) is None
+
+    def test_the_name_of_no_binary_is_normalised_too(self, target: Target) -> None:
+        # `choose` compares the canonical name, so a setting that writes
+        # `demo_pkg` reaches the package that the index calls `demo-pkg`.
+        artifacts = [sdist("demo-pkg", "1.0"), wheel("demo-pkg", "1.0")]
+        chosen = choose(artifacts, Requirement("demo-pkg"), target, no_binary={"demo-pkg"})
+        assert chosen is not None
+        assert chosen.kind == "sdist"
+
+
+class TestTheTargetComesFromTheNixHalf:
+    """`DDRN_TARGET` carries the whole target, and a planner reads it once.
+
+    **A planner plans for a machine that it is not running on.** Every value
+    below therefore travels, and none of it is read from the interpreter that
+    runs the planner. `PEP508_KEYS` is what makes a short document an error
+    rather than a silent fall back to this machine.
+    """
+
+    def test_the_document_becomes_the_target(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DDRN_TARGET", json.dumps(TARGET_DOCUMENT))
+        read = target_from_environ()
+        assert read.python_version == PYTHON_VERSION
+        assert read.platform == PLATFORM
+        assert read.tags == tuple(target_tags(PYTHON_VERSION, PLATFORM))
+
+    def test_the_extra_is_empty_whatever_the_document_says(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # An edge of an optional dependency carries `extra == '...'`, and the
+        # lock file already resolved it. An empty value makes each such marker
+        # false, which is what a resolved edge needs.
+        document = {**TARGET_DOCUMENT, "markers": {**MARKERS, "extra": "docs"}}
+        monkeypatch.setenv("DDRN_TARGET", json.dumps(document))
+        assert target_from_environ().markers["extra"] == ""
+
+    def test_a_document_that_leaves_out_a_pep_508_key_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        markers = {name: value for name, value in MARKERS.items() if name != "sys_platform"}
+        monkeypatch.setenv("DDRN_TARGET", json.dumps({**TARGET_DOCUMENT, "markers": markers}))
+        with pytest.raises(RuntimeError, match="sys_platform"):
+            target_from_environ()
+
+    def test_an_unset_variable_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("DDRN_TARGET", raising=False)
+        with pytest.raises(RuntimeError, match="DDRN_TARGET"):
+            target_from_environ()
 
 
 class TestArtifact:
