@@ -11,7 +11,7 @@ was still narrower than Nix's:
 
 - the ``strip-ansi`` package, ``\x1B\[\d+(;\d+){0,2}m``, an SGR sequence of at
   most three numeric parameters;
-- ``tests/nanopynix/primops/test_primop_error_parity.py``,
+- ``nanopynix/tests/primops/test_primop_error_parity.py``,
   ``\x1b\[[0-9;]*m``, any SGR sequence;
 - ``nanopynix_helpers.fod``, ``\x1b\[[0-?]*[ -/]*[@-~]``, any CSI sequence.
 
@@ -22,7 +22,7 @@ first one leaves ``\x1b[38;2;255;0;0m`` in place, because a 24-bit colour
 carries five parameters and the pattern reads three. The first and the second
 one keep ``\x1b[2K``, which does not end in ``m``.
 
-``tests/nanopynix/bindings/test_util_bindings.py`` holds the same three
+``nanopynix/tests/bindings/test_util_bindings.py`` holds the same three
 sequences against the filter that this repository now uses.
 
 **The ban is on re-implementing the filter, not on the escape character.** A
@@ -58,6 +58,24 @@ RE_FUNCTIONS = frozenset({"compile", "findall", "finditer", "fullmatch", "match"
 # spellings that survive into the *value* of a raw string literal, where the
 # `re` module decodes them instead of Python.
 ESCAPE_SPELLINGS = ("\x1b", "\\x1b", "\\x1B", "\\033", "\\u001b", "\\u001B", "\\e", "\\N{ESC")
+
+# The ledger of files that read an escape sequence themselves, and why each one
+# may. A path is here only when `nanopynix.strip_ansi` is the wrong answer, and
+# not when calling it is merely inconvenient. Same shape as the ledger in
+# `tests/meta/test_consumer_surface.py`, and for the same reason: an exemption
+# that a machine records is an exemption a reader can find.
+EXEMPT: dict[str, str] = {
+    "completion-spike/src/completion_spike/_pty.py": (
+        "Not Nix output. This reads what a *shell* draws on a pty -- cursor "
+        "movement, an OSC title, and a private-parameter sequence that fish "
+        "writes -- so `nix::filterANSIEscapes` is not the authority on it. It "
+        "also applies a backspace rather than removing it, which no filter of "
+        "Nix log text does. And `completion-spike` is a nixpkgs "
+        "`buildPythonApplication` that depends on `cyclopts` alone: importing "
+        "`nanopynix` would put the whole library in the runtime closure of a "
+        "package whose subject is shell plumbing."
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -111,7 +129,10 @@ def scan_tree(root: Path) -> list[Violation]:
     """Return every escape-reading pattern under ``root``."""
     violations: list[Violation] = []
     for path in iter_python_files(root):
-        violations.extend(scan_source(path.read_text(encoding="utf-8"), path.relative_to(root)))
+        relative = path.relative_to(root)
+        if relative.as_posix() in EXEMPT:
+            continue
+        violations.extend(scan_source(path.read_text(encoding="utf-8"), relative))
     return violations
 
 

@@ -1,6 +1,7 @@
 """Register custom Python primops and use the built-in YAML primops.
 
-Requires dynamic primop registration, which every supported Nix has.
+Requires Nix >= 2.32 — primop registration is broken on Nix 2.31 and isn't
+expected to be fixed there. Every supported Nix meets that: the floor is 2.34.
 
 Run with::
 
@@ -9,7 +10,7 @@ Run with::
 
 # ruff: noqa: T201
 # The printed output is the example. These are run by hand and by
-# tests/nanopynix/test_examples.py; a logger would hide the very thing
+# nanopynix/tests/test_examples.py; a logger would hide the very thing
 # they exist to show.
 
 from __future__ import annotations

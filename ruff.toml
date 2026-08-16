@@ -9,6 +9,16 @@ line-length = 120
 # meets the type rules.
 exclude = ["ddrn/examples/venv-graph/projects"]
 
+# `pynixd/` is in this gate now. It cost 30 findings, every one of them
+# `I001 unsorted-imports` and every one of them fixed by `ruff check --fix`:
+# that tree carries its own `ruff.toml` which also selects `I`, so the two
+# configurations disagreed on the order and on nothing else.
+#
+# The other three gates still hold it out, and each one names its own reason:
+# `ruff-strict.toml` here, `pyproject.toml` for pyright, and
+# `tests/support/suppressions.py`. Issue #131 removes them one gate at a
+# time, and this was the first.
+
 [lint]
 select = [
   "E",
@@ -25,17 +35,34 @@ ignore = [
 ignorelist = ["eval"]
 
 [lint.per-file-ignores]
-"tests/**" = [
+# `**/tests/**` and not `tests/**`: issue #130 gives each project its own
+# suite, so an entry per project would be a list that the next move forgets to
+# extend. It reaches a suite only, never a `src/`. See `ruff-strict.toml`,
+# which carries the same glob and the full argument.
+"**/tests/**" = [
   "SLF001",
 ] # tests intentionally inspect private implementation state
 
 [lint.isort]
 combine-as-imports = true
 known-first-party = [
+  # `support` and `_shared_sessions` are `pynix/tests/`'s own modules.
+  # pytest puts that directory on `sys.path` because the suite has no
+  # `__init__.py`, so they are importable by bare name and isort cannot
+  # tell them from a third-party package without being told.
+  "_shared_sessions",
   "nanopynix",
   "nanopynix_expr",
   "nanopynix_fetchers",
   "nanopynix_flake",
   "nanopynix_store",
   "nanopynix_util",
+  "support",
+  # Named here, unlike `nanopynix` and `pynix`, which ruff finds by itself:
+  # with no `src` setting it looks for a directory of the same name beside
+  # this file, and these two are at `test-support/src/test_support` and
+  # `nanopynix-testing/src/nanopynix_testing`. Add a project the same way when
+  # its directory name and its module name differ.
+  "test_support",
+  "nanopynix_testing",
 ]

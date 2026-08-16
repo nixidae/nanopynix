@@ -43,21 +43,46 @@ namespace nb = nanobind;
  *   or a list of strings", so they are excluded deliberately and permanently.
  * - `queryValidPaths` is not on that class, so nothing can call it directly;
  *   `nix::Store` derives it from `queryPathInfo`, which already dispatches.
- * `read_derivation` is dispatched because `nix::Store::readDerivation` is
- * virtual from 2.34 on (`store-api.hh:819`).
- * `nanopynix.build_info()["capabilities"]` carries
+ * `read_derivation` needs `nix::Store::readDerivation` to be virtual, which it
+ * is from 2.34 (`store-api.hh:819`) and was not on 2.31 (`:771`). Issue #126
+ * raised the supported floor to 2.34, so it dispatches on every version this
+ * repository builds. `nanopynix.build_info()["capabilities"]` still carries
  * `store_impl_read_derivation`, the same way `dynamic_primop_registration` is
- * handled, for a caller that wants to branch on it.
+ * carried, so a caller reads a capability rather than a version number.
  *
- * There is no fallback. `nix::Store::readDerivation` does *not* route through
- * `queryPathInfo`: `readDerivationCommon` reads the `.drv` through
+ * **A Python store cannot serve a derivation on its own, and that is measured
+ * rather than inferred.** `nix::Store::readDerivation` does *not* route
+ * through `queryPathInfo`: `readDerivationCommon` reads the `.drv` through
  * `requireStoreObjectAccessor` (2.35, `store-api.cc:1183`), and `PyStoreImpl`
- * answers with a `nullptr` accessor when no `underlying` is set. Measured, not
- * inferred: on 2.35 a pure Python store whose `is_valid_path_uncached` returns
- * true and whose `query_path_info` answers still fails `read_derivation` with
- * `InvalidPath: path '...' is not a valid store path`. Serving derivations was
- * never possible without this hook, which is what makes it an addition rather
- * than a relaxation.
+ * answers with a `nullptr` when no `underlying` is set. On 2.35 a pure Python
+ * store whose `is_valid_path_uncached` returns true and whose
+ * `query_path_info` answers still fails `read_derivation` with `InvalidPath:
+ * path '...' is not a valid store path`. Dispatch is what makes the override
+ * reachable at all, so this is an addition and not a relaxation.
+ *
+ * Serving it through `getFSAccessor` instead was rejected. That route needs no
+ * virtual, so it would have worked below the floor as well, but the two Nix
+ * versions ask for different things: 2.31 asks the whole-store accessor for
+ * `CanonPath(drvPath.to_string())`, and 2.35 asks a per-object accessor for
+ * `CanonPath::root`. Two accessor contracts with different path rooting is two
+ * protocols, not one, in the same way `narFromPath`'s `Sink &` is.
+ *
+ * **This list is the inbound protocol, and a dictionary is its shape.** Three
+ * of the names below -- `query_path_info`, `query_missing` and
+ * `read_derivation` -- also name a method of `nanopynix_bindings.store.Store`,
+ * and each of those has a `_typed` neighbour that returns a bound C++ type.
+ * The two are not an old form and a new one. They are two directions:
+ *
+ * - Outbound, Nix to Python. `query_path_info_typed` projects a struct that
+ *   Nix already filled, and reads each field only when a caller asks for it.
+ * - Inbound, Python to Nix. A `nanopynix.StoreImpl` builds an answer from
+ *   nothing, so it needs a shape it can construct. Every bound store type but
+ *   `StorePath` takes no constructor, because a projection has no reason to
+ *   take one. A dictionary is therefore the only shape available here, and it
+ *   is also the natural one.
+ *
+ * `py_store_impl.cpp` reads each answer with `nb::cast<nb::dict>`, and that is
+ * why. Issue #141 records the decision and the two alternatives it rejected.
  */
 #define NANOPYNIX_STORE_DISPATCH_METHODS(X)                                                        \
     X(is_valid_path_uncached)                                                                      \
@@ -133,8 +158,7 @@ struct PyStoreImpl : public nix::Store {
 
     void queryRealisationUncached(
         const nix::DrvOutput & id,
-        nix::Callback<std::shared_ptr<const nix::UnkeyedRealisation>> callback
-        ) noexcept override;
+        nix::Callback<std::shared_ptr<const nix::UnkeyedRealisation>> callback) noexcept override;
 
     std::optional<nix::StorePath> queryPathFromHashPart(const std::string & hashPart) override;
 

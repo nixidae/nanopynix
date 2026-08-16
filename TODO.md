@@ -62,7 +62,8 @@ justify existing at all.
 # Tracked: the value-reading API, measured
 
 Ordered by measured cost, not by how appealing the change is. "Consumer
-sites" counts `pynix/src` + `ekn/src` + `docs` only -- not nanopynix's own
+sites" counted `pynix/src` + `ekn/src` + `docs` when it was measured; `ekn`
+has since moved to easykubenix. Not nanopynix's own
 layers (each method spans ~6: protocol, proto, worker, client, inproc,
 binding) and not tests.
 
@@ -256,7 +257,7 @@ the run right after `to_python()` moved onto `printValueAsJSON`.
      kept in sync).
 
      Three things that design must keep doing, all pinned by
-     `tests/nanopynix/test_exception_translation.py`: the catch-all fires; it
+     `nanopynix/tests/test_exception_translation.py`: the catch-all fires; it
      does not shadow the specific subclasses; and it does not overreach
      -- standard C++ exceptions (`std::bad_alloc`, nlohmann-json,
      our own `std::out_of_range` in `list_get`) have no clause and must
@@ -414,7 +415,7 @@ the run right after `to_python()` moved onto `printValueAsJSON`.
    re-own all of them. The cost is termination, not transport -- functions
    already cross the wire fine via `attr()`/`apply()`.
 
-   Recorded in `tests/nanopynix/primops/test_ipaddress_primops.py`'s
+   Recorded in `nanopynix/tests/primops/test_ipaddress_primops.py`'s
    `test_the_callables_are_reachable_through_as_dict`, on the primop's own
    docstring, and for both engines in the semantic parity matrix.
 
@@ -444,7 +445,7 @@ the run right after `to_python()` moved onto `printValueAsJSON`.
 
 8. ~~**`test_engine_parity.py` compares signatures**, so "same name, same
    signature, different behaviour" passes.~~ -- DONE.
-   `tests/nanopynix/test_engine_parity_semantics.py` is the other half:
+   `nanopynix/tests/test_engine_parity_semantics.py` is the other half:
    `(expression, operation)` run on both engines, outcomes compared as
    either a returned value or an exception *type*. 25 success cases, 19
    failure cases.
@@ -460,7 +461,7 @@ the run right after `to_python()` moved onto `printValueAsJSON`.
    unification of `attr` should delete both entries.
 
    `tests/temp/` is gone. `test_exception_translation.py` moved to
-   `tests/nanopynix/` unchanged; the matrix moved to
+   `nanopynix/tests/` unchanged; the matrix moved to
    `test_error_boundaries.py`, keeping the three invariants the semantic
    layer does not cover (store/build failures across both backends,
    `NixError`-catchability, and `nix::ErrorInfo` compared field by field
@@ -476,8 +477,8 @@ surfaced 39 pre-existing hotspots above their thresholds, each suppressed
 with a `# noqa` pointing here rather than refactored blind as part of the
 lint-rule rollout (a refactor risks behavior changes; a lint sweep shouldn't
 bundle them). Worth tackling opportunistically when next touching one of
-these functions: `tests/support/lsp_scenario.py`'s `_apply` (38 branches/87 statements),
-`tests/support/nix_runtime.py`'s `pytest_collection_modifyitems` (21
+these functions: `pynix/tests/support/lsp_scenario.py`'s `_apply` (38 branches/87 statements),
+`nanopynix_testing.nix_runtime`'s `pytest_collection_modifyitems` (21
 branches/56 statements), `pynix/_lsp/_syntax.py`'s `_resolve_declaration`
 (18 branches) and `_identifier_path_at_node` (17 branches/11 returns), and a
 long tail of smaller too-many-arguments constructors/factories (`ekn/apply.py`,

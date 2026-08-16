@@ -35,10 +35,11 @@ let
   # interpreter derivation itself untouched.
   pythonBase = pkgs.python3.override {
     packageOverrides = pySelf: pyPrev: {
-      # THE ONE OVERRIDE. Delete it when nixpkgs PR #548078 reaches the
-      # nixpkgs this repo pins.
+      # THE ONE OVERRIDE, for two unrelated reasons. The first goes away
+      # when nixpkgs PR #548078 reaches the nixpkgs this repo pins; the
+      # second does not go away at all. Keep them separable.
       #
-      # datamodel-code-generator runs ruff over the code it generates and
+      # ONE. datamodel-code-generator runs ruff over the code it generates and
       # compares the result against a checked-in expectation. A newer ruff
       # writes a blank line after `from __future__ import annotations`, so
       # five of its tests fail, and nixpkgs ships the package with a failing
@@ -49,6 +50,20 @@ let
       # The list is upstream's list, and not the two failures that were
       # visible. nixpkgs passes --maxfail=2, so the run stopped at the second
       # one and the other three were never reported.
+      # TWO. Six of its tests start a real HTTP server on loopback, and the
+      # Darwin build sandbox refuses the `bind`:
+      #
+      #   socketserver.py:478: PermissionError: [Errno 1] Operation not permitted
+      #
+      # 5948 pass and only these six fail, so this is the sandbox saying no
+      # rather than the package being broken. `__darwinAllowLocalNetworking`
+      # is nixpkgs' own switch for exactly that, and it is ignored on Linux,
+      # so it costs nothing there and keeps the six tests running here
+      # instead of deleting the coverage.
+      #
+      # Found making `ekn` build on macOS at all: this package reaches the
+      # tree through tree-sitter-config, so those six failures took out the
+      # whole toolchain.
       datamodel-code-generator = pyPrev.datamodel-code-generator.overridePythonAttrs (old: {
         disabledTests = (old.disabledTests or [ ]) ++ [
           "test_no_use_type_checking_imports"
@@ -57,6 +72,7 @@ let
           "test_ruff_check_only"
           "test_type_checking_imports_default_to_runtime_imports_for_modular_pydantic_ruff"
         ];
+        __darwinAllowLocalNetworking = true;
       });
 
       # The protobuf runtime, and the protoc plugin that writes the modules
@@ -113,6 +129,13 @@ let
   # library, so it lives out here rather than in nanopynixForNixVersions.
   storeExecTool = pkgs.callPackage ./tools/store-exec/package.nix { };
 
+  # The completion spike: a tiny cyclopts program, the shell code that gives a
+  # cyclopts script a dynamic completion, and a pty driver that proves it in
+  # fish, bash and zsh. Version-independent, like the two tools above, so it
+  # lives out here and not in `nanopynixForNixVersions`. Its own tests run in
+  # its own build -- see nix/completion-spike.nix.
+  completionSpike = pythonBase.pkgs.callPackage ./nix/completion-spike.nix { };
+
   # This repo's seam onto pyproject.nix's builders: `ps` builds package sets
   # (nix/python-set.nix), `mkApp` turns one of their packages into a release
   # application (nix/mk-app.nix).
@@ -149,7 +172,8 @@ let
   # `nanopynixForNixVersions` asserts on it.
   #
   # UBSan runs on its own rather than beside TSAN, although the two combine.
-  # Each one now runs over every supported version.
+  # Each one then reports against a build that the other did not instrument,
+  # so a finding names one sanitizer and not a pair of them.
   sanitizers = {
     tsan = pkgs.callPackage ./nix/sanitizer.nix { name = "thread"; };
     ubsan = pkgs.callPackage ./nix/sanitizer.nix { name = "undefined"; };
@@ -167,16 +191,16 @@ let
   # to.
   patchedBoehmGC = boehmgc.patchBoehmGC pkgs.nixDependencies.boehmgc;
 
-  # Every C and C++ library of the closure, from the zig stdenv. The file
+  # Every C and C++ library of the closure, rebuilt for the wheel. The file
   # gives the package list, the payload trim and the corrections that each
   # package needs.
   #
   # **At the top level, and not in the `let` of `nanopynixForNixVersions`.**
-  # `nanopynixWheel` reads `zigLibs` to name the licence of each library that
+  # `nanopynixWheel` reads `wheelLibs` to name the licence of each library that
   # rides in the wheel, and that binding is a sibling of this one. Neither this
   # import nor `patchedBoehmGC` above reads an argument of that function, so
   # both moved out whole.
-  zigNix = import ./nix/zig-nix.nix {
+  wheelNix = import ./nix/nix-closure.nix {
     inherit lib pkgs;
     boehmgc = patchedBoehmGC;
     python = pythonBase;
@@ -215,9 +239,24 @@ let
   # and never meets this; nanopynix gives each evaluator its own thread, so it
   # does. ThreadSanitizer found it -- see issue #90, and the patch header.
   #
-  # One file, because `describe` and `emitTreeAttrs` are byte-identical in
-  # 2.34, 2.35 and git. The default branch needs its own, below.
+  # One file, since 2.31 left the matrix. That version needed a second copy of
+  # this patch: `describe` was byte-identical everywhere, and `emitTreeAttrs`
+  # was not, because 2.31 wrote the call on one line and took no `state.mem`.
   gmtimePatch = ./nix/patches/nix-gmtime-not-thread-safe.patch;
+
+  # `EvalState::printStatistics` writes its report to stderr, or to the file
+  # that `NIX_SHOW_STATS_PATH` names. nanopynix embeds the evaluator, so it can
+  # read neither. The patch splits a `statisticsJSON` out of that function,
+  # turns `count-calls` into an ordinary `EvalSettings` option, and makes the
+  # three call-count maps concurrent. The patch header gives the reason for
+  # each part, and the upstream defect that the third part corrects.
+  #
+  # Two files for one change, because the line numbers differ. The 2.35 file
+  # covers git as well: `lib.versions.majorMinor` reads git's
+  # "2.35pre20260619_f8bb823a" as "2.35", and the patch applies there with an
+  # offset and no fuzz.
+  countCallsPatch234 = ./nix/patches/nix-2.34-count-calls.patch;
+  countCallsPatch235 = ./nix/patches/nix-2.35-count-calls.patch;
 
   # The same repair again, for the default branch. `emitTreeAttrs` gained a
   # `callPos` argument there, so the released form of the hunk does not apply.
@@ -230,20 +269,30 @@ let
   # as the fallback for anything without its own entry (git's rolling
   # pre-release version string, any future point release, ...).
   nixPatches = {
+    # A version with no entry of its own. The countCalls patch is the 2.35
+    # file, which is the newest one. A future version whose source moved fails
+    # here, at the patch, and that is the failure to want: the bindings gate
+    # the statistics on the version number, so a silent absence would instead
+    # break the build of the bindings.
     default = [
       emptyBindingsPatch
       baseEnvSizePatch
       gmtimePatch
+      countCallsPatch235
     ];
     "2.34" = [
       emptyBindingsPatch
       baseEnvSizePatch
       gmtimePatch
+      countCallsPatch234
     ];
+    # git resolves to this entry too, because its version string reads as
+    # "2.35". The countCalls patch is the 2.35 file for that reason.
     "2.35" = [
       emptyBindingsPatch
       baseEnvSizePatch
       gmtimePatch
+      countCallsPatch235
     ];
     # The default branch, which `nix/nix-master.nix` builds. It differs from
     # `default` in both directions, so it needs its own entry rather than the
@@ -265,6 +314,27 @@ let
   };
 
   patchesFor = scope: nixPatches.${lib.versions.majorMinor scope.version} or nixPatches.default;
+
+  # **The oldest Nix that this repository supports.** Every variant reads it,
+  # so one number moves the whole matrix.
+  #
+  # 2.31 was the version below it, and issue #126 holds the measurement that
+  # removed it. On one commit, the `test-local` job skipped 107 tests on 2.31
+  # and 13 on 2.35, and it took 12m22s against 7m39s. It was the job with the
+  # least signal and the longest run. `ci/render.py` also could not run on 2.31
+  # at all, because primop registration is broken there and upstream does not
+  # plan to correct it. That second reason no longer holds on its own: issue
+  # #121 moved the renderer off `builtins.toYAML`, so it registers no primop.
+  #
+  # **2.34 and not 2.32, because 2.32 and 2.33 do not exist to build.** nixpkgs
+  # carries `nixComponents_2_32` and `nixComponents_2_33`, and evaluating
+  # either one throws. `isNixScope` already dropped both, so a floor of "2.32"
+  # would select the same versions while naming one that no job can build.
+  #
+  # Raise this number when the next version earns the same measurement. Do not
+  # add a version-specific branch to library code to keep an old one alive --
+  # `AGENTS.md` gives that rule, and this floor is what makes it affordable.
+  supportedNixFloor = "2.34";
 
   # Builds one full nanopynix scope per modular Nix component set nixpkgs
   # exposes, optionally with ThreadSanitizer instrumentation applied to nix
@@ -300,20 +370,21 @@ let
       # bad as it sounds so long as evaluation just takes place within
       # short-lived processes". An RPC worker is such a process.
       gc ? true,
-      # Whether the whole C and C++ closure comes from the zig stdenv, which
-      # targets an old glibc so that a PyPI wheel runs off NixOS.
+      # Whether the whole C and C++ closure is rebuilt for a PyPI wheel, which
+      # lowers the glibc floor and gives the closure one private C++ runtime so
+      # that the wheel runs off NixOS.
       #
       # A whole scope, and for the same reason as the sanitizer above: a wheel
       # takes the highest glibc floor of everything that it carries, so one
       # library of the stdenv of nixpkgs holds the whole wheel at `GLIBC_2.38`.
-      # `nix/zig-nix.nix` names each package, and issue #111 holds the
+      # `nix/nix-closure.nix` names each package, and issue #111 holds the
       # measurements.
-      zig ? false,
+      wheel ? false,
       # Extra Nix component scopes to build against, keyed as
       # `nixComponents_<name>` exactly as `pkgs.nixVersions` keys its own.
       #
       # `nixMasterComponents` is the only caller, and it stays out of
-      # `nanopynixVersionsInternal` for the same reason `nanopynixZig` does:
+      # `nanopynixVersionsInternal` for the same reason the wheel does:
       # every CI job comes from that set, and this one builds Nix from source.
       extraNixScopes ? { },
     }:
@@ -416,25 +487,65 @@ let
                 inherit (final) version;
               };
 
-              pythonSet = ps.mkPythonSet {
-                inherit python;
-                # Sourced from nixpkgs: the build systems, plus the whole
-                # third-party runtime closure, plus our own native extension.
-                # `python.pkgs` already resolved every one of those names, so
-                # the roots are just the propagated inputs nixpkgs computed --
-                # no second hand-written dependency list to fall out of date.
-                nixpkgsRoots = [
-                  final.nanopynix-bindings
-                ]
-                ++ ps.nixpkgsRootsFor {
+              /*
+                This repo's Python closure, optionally widened by a consumer's
+                own projects.
+
+                The parameters exist for a consumer that builds one of *its
+                own* pyproject.toml projects against this closure --
+                easykubenix does, for its `ekn` CLI. Adding the project to the
+                overlay is not enough on its own: a set's nixpkgs packages are
+                lifted once, from the roots `mkPythonSet` is seeded with, and
+                the lifting machinery is internal to nix/python-set.nix. So a
+                dependency that only the consumer's project declares (`kr8s`,
+                for `ekn`) has no way into the set after the fact -- an
+                `overrideScope` can add the project but not the closure it
+                needs. Passing `projectRoots` here reads that project's
+                pyproject.toml alongside ours and resolves its dependencies
+                the same way, which is the only place that can happen.
+
+                Type: pythonSetWith :: AttrSet -> AttrSet
+              */
+              pythonSetWith =
+                {
+                  # Consumer pyproject.toml directories, read for their
+                  # third-party dependencies exactly as ours are. Their own
+                  # names are excluded from the nixpkgs lookup automatically
+                  # (see `nixpkgsRootsFor`), since `overlay` supplies them.
+                  projectRoots ? [ ],
+                  # The consumer's own projects, as a standard overlay.
+                  # Composed *over* ours, so it can also replace one of them.
+                  overlay ? (_final: _prev: { }),
+                }:
+                ps.mkPythonSet {
                   inherit python;
-                  inherit (final.pyPackages) projectRoots;
-                  # A nixpkgs Python package, but this scope's own -- lifted
-                  # in as a root above rather than looked up by name.
-                  exclude = [ "nanopynix-bindings" ];
+                  # Sourced from nixpkgs: the build systems, plus the whole
+                  # third-party runtime closure, plus our own native extension.
+                  # `python.pkgs` already resolved every one of those names, so
+                  # the roots are just the propagated inputs nixpkgs computed --
+                  # no second hand-written dependency list to fall out of date.
+                  nixpkgsRoots = [
+                    final.nanopynix-bindings
+                  ]
+                  ++ ps.nixpkgsRootsFor {
+                    inherit python;
+                    # `completion-spike` is not one of `pyPackages`: it is a
+                    # nixpkgs `buildPythonApplication`, and it runs its own
+                    # tests in its own build. Its *declarations* are read here
+                    # anyway, so that `cyclopts` and `pexpect` reach this set
+                    # and the type gate can see the tree. Reading the
+                    # pyproject.toml is all `nixpkgsRootsFor` does, so this
+                    # adds no second package.
+                    projectRoots =
+                      final.pyPackages.projectRoots ++ [ ./completion-spike ] ++ projectRoots;
+                    # A nixpkgs Python package, but this scope's own -- lifted
+                    # in as a root above rather than looked up by name.
+                    exclude = [ "nanopynix-bindings" ];
+                  };
+                  overlay = lib.composeExtensions final.pyPackages.built overlay;
                 };
-                overlay = final.pyPackages.built;
-              };
+
+              pythonSet = final.pythonSetWith { };
 
               # The same set with our projects swapped for editable installs.
               # `mkVirtualEnv` from here gives a venv whose site-packages
@@ -444,6 +555,11 @@ let
               inherit (final.pythonSet)
                 nanopynix-proto
                 nanopynix-helpers
+                # The pytest plugin, developed here alongside everything else.
+                # Exported because a consumer's test suite may want it too --
+                # see the note on the outer `inherit` for the one way to take
+                # it that actually works.
+                pytest-agent
                 ;
 
               nanopynix = final.pythonSet.nanopynix // {
@@ -457,30 +573,6 @@ let
                   # so they need them exactly as the released program does.
                   inherit tofuCoreSchemaTool storeExecTool;
                 };
-              };
-
-              # ekn's own Python source lives here (migrated from
-              # easykubenix/ekn), so it is built against exactly the
-              # nanopynix/nanopynix-bindings built in this same scope, with no
-              # cross-repo source reference. easykubenix consumes this
-              # build's output (`nanopynix.ekn`) for its own
-              # parseYamlStream.nix IFD fallback rather than building its own.
-              #
-              # A release build is `mkApplication` over a venv: the venv has
-              # the real dependency closure, and mkApplication symlinks out
-              # just the parts of the package's own `$out` that belong in a
-              # program, leaving site-packages behind.
-              ekn = mkApp {
-                name = "ekn";
-                inherit (final) pythonSet;
-                completions.var = "_EKN_COMPLETE";
-                # `ekn` imports pygit2, which initialises OpenSSL at import
-                # and refuses to start where there is no trust store. Three
-                # easykubenix derivations run `ekn` inside a build sandbox,
-                # which is exactly that. See issue #62. `pynix` needs no
-                # bundle: it imports no OpenSSL consumer at start-up, and Nix
-                # itself holds the certificates for the fetching it drives.
-                caBundle = true;
               };
 
               pynix = mkApp {
@@ -499,6 +591,16 @@ let
                   storeExecTool
                 ];
               };
+              # The daemon proxy, as a release application. It needs no
+              # `pathInputs`: it speaks the daemon protocol itself and shells
+              # out to no tool. Issue #131 added it, so that
+              # `nixosModules.pynixd` can default `services.pynixd.package` to
+              # a build of this repository rather than to a second, separately
+              # pinned one under `pynixd/default.nix`.
+              pynixd = mkApp {
+                name = "pynixd";
+                inherit (final) pythonSet;
+              };
               shell = final.callPackage ./nix/shell.nix { inherit tofuCoreSchemaTool storeExecTool; };
               # A live, editable-install `pynix`/`ekn` env (no devtools --
               # see nix/shell.nix for the full interactive nanopynix shell),
@@ -511,7 +613,7 @@ let
               # An attrset of derivations, not one derivation, so a failing
               # run names the gate. `flake.nix` puts it under `checks`; the
               # `packages` filter drops it, which is what we want.
-              checks = final.callPackage ./nix/checks.nix { };
+              checks = final.callPackage ./nix/checks.nix { inherit completionSpike; };
             }
           ) scope.packages
         );
@@ -614,8 +716,8 @@ let
           suffix =
             if sanitizer != null then
               "-${sanitizer.suffix}"
-            else if zig then
-              "-zig"
+            else if wheel then
+              "-wheel"
             else if !gc then
               "-nogc"
             else
@@ -626,7 +728,13 @@ let
     lib.pipe (pkgs.nixVersions // extraNixScopes) (
       [
         (lib.filterAttrs isNixScope)
-        (lib.filterAttrs isSupportedVersion)
+        # **The supported floor, and every variant obeys it.** `git` passes
+        # too: `majorMinor` of a `2.35pre...` version is `2.35`.
+        (lib.filterAttrs (
+          _: scope: lib.versionAtLeast (lib.versions.majorMinor scope.version) supportedNixFloor
+        ))
+      ]
+      ++ [
         (lib.mapAttrs (_: patchNixScope))
         (lib.mapAttrs (_: extendNixScope))
       ]
@@ -642,8 +750,8 @@ let
       # Last, so this is the final word on the stdenv of the scope. It writes
       # `nix-expr` too, and `applyBoehmGCPatch` above writes the same
       # attribute: the later one wins, and the collector that it names is the
-      # patched one rebuilt with zig, so the patch survives the order.
-      ++ lib.optional zig (lib.mapAttrs (_: zigNix.applyZigOverrides))
+      # patched one rebuilt for the wheel, so the patch survives the order.
+      ++ lib.optional wheel (lib.mapAttrs (_: wheelNix.applyWheelOverrides))
       ++ [ (lib.mapAttrs' rename) ]
     );
 
@@ -676,19 +784,19 @@ let
   #
   # Every CI job comes from that set: `tests` maps it to one
   # `nanopynix-tests-<name>` package for each entry, and `ciVersionMatrix`
-  # groups the same names into the matrices. Adding "-zig" there would put a
+  # groups the same names into the matrices. Adding "-wheel" there would put a
   # from-source rebuild of the whole C and C++ closure into the per-commit
   # matrix, on every version. That closure leaves the binary cache by
   # construction, because lowering the glibc floor is what it is for.
   #
   # So it lives here, reachable by name for a person who wants a wheel, and
-  # invisible to the matrices. `variantSuffixes` needs no "-zig" entry for the
+  # invisible to the matrices. `variantSuffixes` needs no "-wheel" entry for the
   # same reason: `unlistedVariants` reads `nanopynixVersionsInternal`, and this
   # is not in it.
   #
   # One version only. A wheel carries one Nix, which is the whole reason a
   # wheel removes the ABI matrix.
-  nanopynixZig = (nanopynixForNixVersions { zig = true; }).nix_2_34-zig;
+  nanopynixForWheel = (nanopynixForNixVersions { wheel = true; }).nix_2_34-wheel;
 
   # A Nix from the default branch, and the nanopynix built against it.
   #
@@ -697,7 +805,7 @@ let
   # feature is; `nix/nix-master.nix` says which revision and why the version
   # string has to be overridden with the source.
   #
-  # **Off every matrix, exactly like `nanopynixZig` above.** The packaging
+  # **Off every matrix, exactly like the wheel above.** The packaging
   # expressions come from the nixpkgs pin and the source does not, so no part
   # of this is in a binary cache and the whole of Nix builds from source.
   # `variantSuffixes` needs no entry for it, because `unlistedVariants` reads
@@ -713,12 +821,15 @@ let
   # extension above, which bundles each library and writes the `manylinux` tag.
   # Off the matrices for the same reason as the build it reads.
   # The licence text of every library that the wheel bundles. The package set
-  # is the whole zig closure plus the collector and the five Nix components,
+  # is the whole rebuilt closure plus the collector and the five Nix components,
   # which is every library that can end up in `nanopynix_bindings.libs/`.
   nanopynixWheelLicenses = pkgs.callPackage ./nix/wheel-licenses.nix { } {
-    packages = zigNix.zigLibs // {
-      boehmgc = zigNix.zigBoehmGC;
-      inherit (nanopynixZig)
+    packages = wheelNix.wheelLibs // {
+      boehmgc = wheelNix.wheelBoehmGC;
+      # The one C++ runtime of the closure. Every C++ object of the wheel names
+      # it, so the wheel carries it and the notice has to describe it.
+      nanopynix-cxx-runtime = wheelNix.cxxRuntime;
+      inherit (nanopynixForWheel)
         nix-util
         nix-store
         nix-expr
@@ -731,7 +842,9 @@ let
   nanopynixWheel = pkgs.callPackage ./nix/wheel.nix {
     inherit (pkgs.python3Packages) auditwheel wheel;
     licenses = nanopynixWheelLicenses;
-    bindings = nanopynixZig.nanopynix-bindings.override {
+    inherit (wheelNix) cxxRuntime;
+    inherit (wheelNix.cxxStdenv) lowerGlibc;
+    bindings = nanopynixForWheel.nanopynix-bindings.override {
       # **The Nix version is in the name, and not in the version.**
       #
       # PyPI holds one name for one project, and this project builds one
@@ -749,8 +862,18 @@ let
       # the extension links, so `nix2-34` covers 2.34.8 and 2.34.9, and the
       # exact version stays in `build_info()` and in the metadata.
       pypiName = "nanopynix-bindings-nix${
-        lib.replaceStrings [ "." ] [ "-" ] (lib.versions.majorMinor nanopynixZig.version)
+        lib.replaceStrings [ "." ] [ "-" ] (lib.versions.majorMinor nanopynixForWheel.version)
       }";
+
+      # **Here, and in no other build.** One `cp313-abi3` wheel imports on
+      # every CPython from 3.13 up, so a release of CPython costs no rebuild.
+      # Without it PyPI needs one wheel for each Python minor version, times
+      # three Nix versions and two architectures.
+      #
+      # `nanopynix-bindings/package.nix` says why nothing that Nix builds wants
+      # this: such a build serves one interpreter, and the stable ABI stops
+      # nanobind reading the internals of CPython directly.
+      stableAbi = true;
     };
   };
 
@@ -795,14 +918,20 @@ let
   # the drift check is what proves each gate is set correctly: a field the
   # running Nix does not have shows up as `extra`, and a gate that hides a
   # field the running Nix does have shows up as `missing`. Neither can be seen
-  # from one version. Measured: the gate refuses 15 of the 32 fields on 2.34
-  # and 1 on 2.35, so each version reaches a different part of the check.
-  # Dropping a version deletes that coverage in silence, because the remaining
-  # jobs stay green.
+  # from one version. Dropping a version deletes that coverage in silence,
+  # because the remaining jobs stay green.
   #
-  # The measurement above named 2.31 as well, and said 31 of 32. That version
-  # is gone -- `minimumNixVersion` gives the reason -- so the oldest gate that
-  # anything now exercises is the 2.34 one.
+  # **Issue #126 dropped 2.31 anyway, and this is what it cost.** The gate
+  # refused 31 of the 32 fields on 2.31, 15 on 2.34 and 1 on 2.35, so 2.31 was
+  # the only job that saw a `since("2.34")` field refused. Those gates are now
+  # true on every supported version, so the drift check never exercises them.
+  # They are not dead -- a consumer can link an older Nix by hand -- but
+  # nothing here proves them any more.
+  #
+  # That was a considered trade, and the measurement that bought it is in
+  # `supportedNixFloor` above. The rule still holds for 2.34: it is the only
+  # version that refuses a `since("2.35")` field, and dropping it would repeat
+  # the loss with nothing left to catch it.
   ciVersionMatrix =
     let
       names = map (lib.removePrefix "nanopynix-tests-") (builtins.attrNames tests);
@@ -857,19 +986,43 @@ lib.throwIf (unlistedVariants != [ ])
       nanopynix-bindings
       nanopynix-helpers
       nanopynix-proto
-      ekn
+      # `nanopynix.pytest-agent` is the *package*, built in this repo's
+      # `pythonSet`. A consumer that assembles its own venv should not add it
+      # from here -- mixing a package built in one builders set into another
+      # set's venv does not resolve. Name it in that venv's own spec instead
+      # (`pytest-agent = [ ];`), which works because `pythonSetWith` composes
+      # this repo's project overlay into the consumer's set.
+      pytest-agent
       pynix
+      # The daemon proxy of `pynixd/`. `nixosModules.pynixd` in `flake.nix`
+      # defaults `services.pynixd.package` to this one.
+      pynixd
       pynixDevEnv
       shell
       nanopynix-docs
       checks
+      # For a consumer that builds one of *its own* projects against this
+      # repo's Python closure. easykubenix owns `ekn`'s source and renders it
+      # on its own side, using `ps` and `mkApp` below.
+      #
+      # `pythonSetWith` is the one to reach for when that project has a
+      # dependency this repo does not declare -- it seeds the set from the
+      # consumer's pyproject.toml as well as ours, which is the only point at
+      # which a nixpkgs package can enter. `pythonSet` is `pythonSetWith { }`,
+      # for consumers that just want the closure as it stands.
+      pythonSet
+      pythonSetWith
       ;
 
     inherit
       flake
       pkgs
       nanopynixVersions
-      nanopynixZig
+      nanopynixForWheel
+      # The C and C++ closure that the wheel bundles, and the stdenv that
+      # builds it. `cxxRuntime` is the one C++ runtime of that closure, and it
+      # is a build of its own that has its own gate.
+      wheelNix
       nanopynixMaster
       nanopynixWheel
       nanopynixWheelLicenses
@@ -880,5 +1033,17 @@ lib.throwIf (unlistedVariants != [ ])
       ciVersionMatrix
       tofuCoreSchemaTool
       storeExecTool
+      # The seam onto pyproject.nix's builders, exported for the same reason
+      # `pythonSet` above is. `ps.mkProject` renders a project from its own
+      # pyproject.toml; `mkApp` turns one of those into a release application.
+      #
+      # `mkApp` is the part a consumer cannot do without. Its `caBundle`
+      # wrapper is the fix for issue #62: a program that initialises OpenSSL
+      # at import (anything pulling in pygit2) cannot start inside a Nix build
+      # sandbox, which has no trust store. easykubenix runs its `ekn` CLI in
+      # exactly that position from three derivations, and gates it on its own
+      # side. See nix/mk-app.nix.
+      ps
+      mkApp
       ;
   }

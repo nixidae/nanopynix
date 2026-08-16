@@ -8,7 +8,7 @@ at module level is a ``SyntaxError``.
 
 The mechanism is in ``tests/support/doc_snippets.py``. A snippet carries an
 ``<!-- example: file#region -->`` pointer, and this file asserts that the block
-equals that region. ``tests/nanopynix/test_examples.py`` runs the example, so
+equals that region. ``nanopynix/tests/test_examples.py`` runs the example, so
 the two together give what #23 asks for: **the suite fails when a published
 snippet stops working.** Neither half is sufficient. Execution alone lets a
 page drift from the code it claims to show, and equality alone proves two
@@ -48,18 +48,18 @@ UNMIRRORED: dict[str, str] = {
         "copies a closure into the host `daemon` store. CI runners differ on "
         "the first, and the second writes outside any store this suite owns."
     ),
-    "docs/nanopynix/api/process.md:155": (
+    "docs/nanopynix/api/process.md:169": (
         "Needs a reachable remote host and a bastion in front of it, which is "
         "the whole point of the block: `NIX_SSHOPTS` exists because "
         "`ProxyJump` has no store-URI equivalent. "
-        "`tests/nanopynix/test_session_env.py::"
+        "`nanopynix/tests/test_session_env.py::"
         "test_the_worker_reads_the_value_the_session_named` asserts the "
         "mechanism the block relies on, with a name no Nix reads."
     ),
     "docs/nanopynix/api/store.md:22": (
         "Two calls that need a derivation to build, and the block shows that "
         "they agree rather than what either returns. "
-        "`tests/nanopynix/test_store_engine_parity_semantics.py::"
+        "`nanopynix/tests/test_store_engine_parity_semantics.py::"
         "test_a_bare_drv_means_every_output_on_both_engines` asserts that "
         "same equality on both engines, so the claim on the page does run."
     ),
@@ -147,13 +147,27 @@ def test_every_python_block_is_mirrored_or_recorded() -> None:
     declared = set(UNMIRRORED)
 
     added = sorted(unmirrored - declared)
+    stale = sorted(declared - unmirrored)
+
+    # **A key of UNMIRRORED holds a line number, so text above a block moves
+    # it.** That case reports one added key and one stale key of the same page,
+    # and the two messages below then send the reader to write an example and
+    # to delete a record, when the whole correction is one number. Prose above
+    # a block is an ordinary edit, so this happens to a person who changed no
+    # code at all. Name it first.
+    moved = sorted((was, now) for was in stale for now in added if was.rsplit(":", 1)[0] == now.rsplit(":", 1)[0])
+    assert not moved, (
+        f"{len(moved)} UNMIRRORED entr(y/ies) name a line that moved. An edit above the block "
+        "shifted it, and the block itself may be unchanged. Correct the line number rather than "
+        "add or delete a record:\n" + "\n".join(f"  {was} -> {now}" for was, now in moved)
+    )
+
     assert not added, (
         f"{len(added)} published Python block(s) point at no example, so nothing runs them.\n"
         f"Add `<!-- example: <file>#<region> -->` directly above the fence and put the code in "
         f"{EXAMPLES_DIR}/, or record why it cannot run in UNMIRRORED in this file: {added}"
     )
 
-    stale = sorted(declared - unmirrored)
     assert not stale, f"{len(stale)} UNMIRRORED entr(y/ies) no longer match a block. Delete them: {stale}"
 
 

@@ -1,14 +1,22 @@
 #include <nanobind/nanobind.h>
 
 #include "nanopynix_modules.hh"
+#include "nix_ref_caster.hh"
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/shared_ptr.h>
+#include <nanobind/stl/set.h>
 #include <nanobind/typing.h>
+
+#include <fcntl.h>
+#include <sys/stat.h>
 
 #include <filesystem>
 #include <limits>
+#include <map>
+#include <memory>
+#include <mutex>
 
 #include <nix/store/store-api.hh>
 #include <nix/store/store-open.hh>
@@ -28,6 +36,7 @@
 #include <nix/store/content-address.hh>
 #include <nix/store/store-reference.hh>
 #include <nix/store/store-registration.hh>
+#include <nix/store/globals.hh>
 #include <nlohmann/json.hpp>
 #include <nix/util/experimental-features.hh>
 // `experimentalFeatureSettings` itself, which write_dev_shell_derivation
@@ -237,16 +246,210 @@ static void bind_store_path(nb::module_ &m) {
 }
 
 // =========================================================================
+// ValidPathInfo — the same data as path_info_to_dict, as a type
+// =========================================================================
+//
+// The spike of issue #141. `path_info_to_dict` above converts each of the
+// nine fields, and it renders every reference through the store, before the
+// caller reads one of them. This type reads a field when the caller asks for
+// it.
+//
+// Two fields need a `def_prop_ro`, and each names the reason:
+//
+//   * `nar_hash`: `Hash::to_string` takes a format and a with-type flag, so
+//     there is no field to expose. The format matches the dictionary.
+//   * `ca` and `sigs`: a free function renders each one.
+//
+// **A `ValidPathInfo` knows its store directory.**
+// `UnkeyedValidPathInfo::storeDir` holds it, and `StoreDirConfig::printStorePath`
+// is `(storeDir + "/").append(path.to_string())` and nothing more. So this
+// type renders a path itself, in C++, and it needs no `nix::Store`.
+//
+// `path`, `references` and `deriver` therefore carry the same strings that
+// the dictionary carries. Each one renders when the caller reads it, and the
+// measurement of issue #141 says why that matters: `references` is the whole
+// cost of `path_info_to_dict`, and a caller that reads `nar_size` alone
+// should not pay it.
+//
+// `store_path` gives the `nix::StorePath` itself, for a caller that wants to
+// compare or to hash a path and never needs the text.
+static void bind_valid_path_info(nb::module_ &m) {
+    nb::class_<nix::ValidPathInfo>(m, "ValidPathInfo")
+        .def_ro("store_dir", &nix::ValidPathInfo::storeDir)
+        .def_ro("store_path", &nix::ValidPathInfo::path)
+        .def_prop_ro("path",
+                     [](const nix::ValidPathInfo &i) {
+                         return (i.storeDir + "/").append(i.path.to_string());
+                     })
+        .def_prop_ro("references",
+                     [](const nix::ValidPathInfo &i) {
+                         nb::list refs;
+                         for (auto &r : i.references)
+                             refs.append((i.storeDir + "/").append(r.to_string()));
+                         return refs;
+                     })
+        .def_prop_ro("deriver",
+                     [](const nix::ValidPathInfo &i) -> std::optional<std::string> {
+                         if (!i.deriver)
+                             return std::nullopt;
+                         return (i.storeDir + "/").append(i.deriver->to_string());
+                     })
+        .def_ro("nar_size", &nix::ValidPathInfo::narSize)
+        .def_ro("ultimate", &nix::ValidPathInfo::ultimate)
+        .def_prop_ro("nar_hash",
+                     [](const nix::ValidPathInfo &i) {
+                         return i.narHash.to_string(nix::HashFormat::SRI, true);
+                     })
+        // The dictionary reports an unset registration time as `None`, and
+        // the C++ field is `0`. Keep that, so both methods agree.
+        .def_prop_ro("registration_time",
+                     [](const nix::ValidPathInfo &i) -> std::optional<std::int64_t> {
+                         if (!i.registrationTime)
+                             return std::nullopt;
+                         return static_cast<std::int64_t>(i.registrationTime);
+                     })
+        .def_prop_ro("ca",
+                     [](const nix::ValidPathInfo &i) -> std::optional<std::string> {
+                         if (!i.ca)
+                             return std::nullopt;
+                         return nix::renderContentAddress(*i.ca);
+                     })
+        .def_prop_ro("sigs",
+                     [](const nix::ValidPathInfo &i) {
+                         nb::list sigs;
+                         for (auto &sig : nix::Signature::toStrings(i.sigs))
+                             sigs.append(sig);
+                         return sigs;
+                     })
+        .def("__repr__", [](const nix::ValidPathInfo &i) {
+            return "ValidPathInfo('" + std::string(i.path.to_string()) + "')";
+        });
+}
+
+// =========================================================================
 // Store — bound directly via shared_ptr<Store>
 // =========================================================================
 
+// -------------------------------------------------------------------------
+// One LocalStore for each state directory
+// -------------------------------------------------------------------------
+//
+// `nix::openStore` keeps no cache, so it builds a new store on every call.
+// That is right for the `nix` command, which opens one store and then exits.
+// It is wrong here. `LocalStore` names its temp-roots lock file
+// `<stateDir>/temproots/<getpid()>`, and it takes a waiting exclusive `flock`
+// on that file for the whole life of the store. Nix gives the assumption in
+// its own comment: "It *must* be stale, since there can be no two processes
+// with the same pid." A second `LocalStore` in this process is that
+// impossible thing, and the two stores deadlock in `flock`. `lockFile` calls
+// `checkInterrupt` only after `flock` returns, so nothing cancels the wait.
+// That is issue #99.
+//
+// So this process keeps one `LocalStore` for each state directory. The
+// pointer is weak, so the store goes away when the last `Store` of the caller
+// goes away. That is the behaviour of the process without a cache.
+//
+// The key is the state directory that Nix resolved, and not the store URI. A
+// URI names a location, and a location is not an identity. pytest removes a
+// temporary store root and then gives the same name to the next test, so one
+// URI names two different directories in one session. A cache on the URI
+// returned the store of the first test, which held a directory that no longer
+// exists, and four tests of `test_l3_inproc.py` failed on "opening file ...
+// No such file or directory".
+//
+// A path is not an identity either, for the same reason. Each entry also
+// holds an open descriptor on the state directory, and the `st_dev` and
+// `st_ino` of that directory. A lookup accepts the entry only when two checks
+// agree:
+//
+//   - `fstat` of the held descriptor reports `st_nlink == 0` after something
+//     removes the directory. The descriptor keeps the old inode, and the
+//     kernel does not put that inode back. This check therefore sees a
+//     removal even when the file system gives the same inode number to the
+//     directory that replaces it.
+//   - `stat` of the path sees a replacement that took a different inode,
+//     which a rename leaves behind and which the first check does not report.
+//
+// The mutex covers the construction of the store as well as the lookup. That
+// is deliberate: the race of #99 is two threads that build a store for one
+// state directory at the same moment, and a lock that the construction does
+// not cover leaves that race open. Only a local store takes the mutex, so an
+// SSH store or a daemon store never waits behind local disk work.
+
+namespace {
+
+struct CachedLocalStore {
+    std::weak_ptr<nix::Store> store;
+    nix::AutoCloseFD state_dir;
+    dev_t dev;
+    ino_t ino;
+};
+
+std::mutex local_store_cache_mutex;
+std::map<std::filesystem::path, CachedLocalStore> local_store_cache;
+
+// True when the entry still describes the directory that `path` names now.
+bool cached_store_is_current(const CachedLocalStore &entry, const std::filesystem::path &path) {
+    struct stat held{};
+    if (fstat(entry.state_dir.get(), &held) != 0 || held.st_nlink == 0)
+        return false;
+    struct stat now{};
+    if (stat(path.c_str(), &now) != 0)
+        return false;
+    return now.st_dev == entry.dev && now.st_ino == entry.ino;
+}
+
+std::shared_ptr<nix::Store> open_store_shared(nix::StoreReference &&reference) {
+    auto config = nix::resolveStoreConfig(std::move(reference));
+
+    auto *local = dynamic_cast<nix::LocalFSStoreConfig *>(&*config);
+    if (local == nullptr) {
+        auto store = config->openStore();
+        store->init();
+        return store.get_ptr();
+    }
+
+    // `weakly_canonical`, so two names for one directory give one key. The
+    // directory does not exist yet on the first open, and that function
+    // accepts a path that is not there.
+    std::filesystem::path state_dir =
+        std::filesystem::weakly_canonical(std::filesystem::path(local->stateDir.get()));
+
+    const std::lock_guard<std::mutex> guard(local_store_cache_mutex);
+
+    if (auto it = local_store_cache.find(state_dir); it != local_store_cache.end()) {
+        auto shared = it->second.store.lock();
+        if (shared && cached_store_is_current(it->second, state_dir))
+            return shared;
+        local_store_cache.erase(it);
+    }
+
+    auto store = config->openStore();
+    store->init();
+
+    // `init` makes the state directory, so the descriptor opens after it and
+    // not before. A store that is not a `LocalStore` takes no temp-roots
+    // lock, and it stays out of the cache.
+    if (dynamic_cast<nix::LocalStore *>(&*store) != nullptr) {
+        nix::AutoCloseFD state_fd{open(state_dir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC)};
+        struct stat identity{};
+        if (state_fd && fstat(state_fd.get(), &identity) == 0)
+            local_store_cache.insert_or_assign(
+                state_dir, CachedLocalStore{store.get_ptr(), std::move(state_fd), identity.st_dev, identity.st_ino});
+    }
+
+    return store.get_ptr();
+}
+
+} // namespace
+
 static std::shared_ptr<nix::Store> open_store_uri(const std::string &uri) {
     nb::gil_scoped_release release;
-    return nix::openStore(uri).get_ptr();
+    return open_store_shared(nix::StoreReference::parse(uri));
 }
 static std::shared_ptr<nix::Store> open_store_default() {
     nb::gil_scoped_release release;
-    return nix::openStore().get_ptr();
+    return open_store_shared(nix::StoreReference{nix::settings.storeUri.get()});
 }
 
 static void close_store(nix::Store &store) {
@@ -273,6 +476,21 @@ static nb::dict query_path_info(nix::Store &s, const nix::StorePath &path) {
         info.emplace(s.queryPathInfo(path));
     }
     return path_info_to_dict(s, **info);
+}
+
+// The same query, as the bound type. The spike of issue #141 keeps both, so
+// that a test can compare them and nothing downstream changes.
+//
+// The return type is `nix::ref<const nix::ValidPathInfo>`, which
+// `nix_ref_caster.hh` carries. `const_pointer_cast` is safe here, because the
+// bound type exposes each field read-only.
+static nix::ref<nix::ValidPathInfo> query_path_info_typed(nix::Store &s, const nix::StorePath &path) {
+    std::optional<nix::ref<const nix::ValidPathInfo>> info;
+    {
+        nb::gil_scoped_release release;
+        info.emplace(s.queryPathInfo(path));
+    }
+    return nix::ref<nix::ValidPathInfo>(std::const_pointer_cast<nix::ValidPathInfo>(info->get_ptr()));
 }
 
 // The text behind `nix-store --dump-db`, which `nix-store --load-db` reads
@@ -388,6 +606,55 @@ static nb::dict query_missing(nix::Store &s, const nix::DerivedPaths &paths) {
 // an output selector, which is exactly how inproc and rpc came to disagree.
 static nb::dict query_missing_paths(nix::Store &s, const nb::sequence &paths) {
     return query_missing(s, parse_derived_paths(s, derived_path_strings(paths, "query_missing"), "query_missing"));
+}
+
+// The general form of the #141 spike.
+//
+// `nix::ValidPathInfo` renders its own paths, because
+// `UnkeyedValidPathInfo::storeDir` holds the store directory.
+// `nix::MissingPaths` holds no such field, and neither does
+// `nix::BasicDerivation`, so that property is luck and not a rule.
+//
+// This wrapper supplies the missing half. It holds the struct and the store
+// directory of the store that answered the query, so the bound type renders
+// itself in the same way and still needs no `nix::Store` at read time. The
+// same shape serves each remaining helper, because a store directory is the
+// only thing `Store::printStorePath` reads.
+struct PyMissingPaths {
+    nix::MissingPaths missing;
+    std::string store_dir;
+
+    nb::list render(const nix::StorePathSet &paths) const {
+        nb::list out;
+        for (auto &p : paths)
+            out.append((store_dir + "/").append(p.to_string()));
+        return out;
+    }
+};
+
+static void bind_missing_paths(nb::module_ &m) {
+    // This type keeps the name that Nix gives the struct. The `TypedDict` of
+    // `query_missing` is `MissingPathsDict` in `store.pat`, and that file
+    // states the rule: a bound C++ type takes the name of the struct, and the
+    // shape of a dictionary takes the `Dict` suffix.
+    nb::class_<PyMissingPaths>(m, "MissingPaths")
+        .def_ro("store_dir", &PyMissingPaths::store_dir)
+        .def_prop_ro("will_build", [](const PyMissingPaths &p) { return p.render(p.missing.willBuild); })
+        .def_prop_ro("will_substitute",
+                     [](const PyMissingPaths &p) { return p.render(p.missing.willSubstitute); })
+        .def_prop_ro("unknown", [](const PyMissingPaths &p) { return p.render(p.missing.unknown); })
+        .def_prop_ro("download_size", [](const PyMissingPaths &p) { return p.missing.downloadSize; })
+        .def_prop_ro("nar_size", [](const PyMissingPaths &p) { return p.missing.narSize; });
+}
+
+static PyMissingPaths query_missing_paths_typed(nix::Store &s, const nb::sequence &paths) {
+    auto derived = parse_derived_paths(s, derived_path_strings(paths, "query_missing"), "query_missing");
+    nix::MissingPaths m;
+    {
+        nb::gil_scoped_release release;
+        m = s.queryMissing(derived);
+    }
+    return PyMissingPaths{std::move(m), s.storeDir};
 }
 
 // --- Collective queries ---
@@ -643,6 +910,147 @@ static nb::dict derived_path_node_to_dict(const Node &node) {
     return entry;
 }
 
+// =========================================================================
+// Derivation — the same data as read_derivation, as three types
+// =========================================================================
+//
+// The strongest case of issue #141. `read_derivation` below is 79 lines, and
+// two of the three defects that
+// `nanopynix/tests/test_store_metadata_fidelity.py` records came from it.
+//
+// `input_drvs` is the one to read first. `DerivedPathMap` is a tree, and a
+// dictionary has no natural shape for a tree, so a person had to invent one.
+// The invented one kept the first output of each child and never recursed.
+// `DerivationOutputs` below binds Nix's own node, so no projection exists to
+// get wrong, and the recursion is the tree itself.
+//
+// `structured_attrs` is the other. Nix's parser moves the `__json` attribute
+// out of `env` into `Derivation::structuredAttrs`, and reading `env` alone
+// reported nothing for a derivation that used it.
+
+// One node of `Derivation::inputDrvs`. Bound by reference: each child lives
+// inside the parent's map, and `rv_policy::reference_internal` keeps the
+// parent alive for as long as Python holds the child.
+//
+// **The type is derived from the field, and not written out again.** Nix
+// declares `DerivedPathMap<std::set<OutputName, std::less<>>> inputDrvs`, and
+// that transparent comparator makes it a different type from
+// `DerivedPathMap<StringSet>::ChildNode`. Spelling the type here compiled and
+// then raised `std::bad_cast` at the first read, because nanobind had
+// registered a type that no value has. The element type also differs across
+// the supported Nix versions, which is why `derived_path_node_to_dict` below
+// is a template.
+using DrvInputMap = std::decay_t<decltype(std::declval<const nix::Derivation &>().inputDrvs.map)>;
+using DrvInputNode = DrvInputMap::mapped_type;
+
+static void bind_derivation_outputs(nb::module_ &m) {
+    nb::class_<DrvInputNode>(m, "DerivationOutputs")
+        .def_prop_ro("outputs",
+                     [](const DrvInputNode &n) {
+                         nb::list out;
+                         // `value` is a set of output names, and its element
+                         // type differs across the supported Nix versions, so
+                         // this reads it as a range.
+                         for (auto &name : n.value)
+                             out.append(name);
+                         return out;
+                     })
+        // Each child is a copy, and not a reference into the parent.
+        // `rv_policy::reference_internal` needs a parent object to tie the
+        // lifetime to, and `nb::cast` inside this lambda has none: it raises
+        // `std::bad_cast` at the first read. A copy of the node is a copy of
+        // a C++ value and not a projection of it, so the tree stays a tree.
+        .def_prop_ro("dynamic_outputs", [](const DrvInputNode &n) {
+            nb::dict children;
+            for (auto &[name, child] : n.childMap)
+                children[name.c_str()] = nb::cast(child);
+            return children;
+        });
+}
+
+// One output of a derivation. `nix::DerivationOutput` is a `std::variant`, so
+// `type` names the branch and the other fields report what that branch
+// carries. A branch that carries no path leaves `path` as `None`, and so on.
+//
+// The wrapper holds the store directory, because a `DerivationOutput` carries
+// none and `InputAddressed` holds a `StorePath` that has to be rendered.
+struct PyDerivationOutput {
+    nix::DerivationOutput output;
+    std::string store_dir;
+};
+
+// Each branch of the variant, read once. `read_derivation` writes this same
+// `std::visit` inline, and the bound type reads it per property, so the visit
+// lives here and each property picks one field out of the result.
+struct DerivationOutputFields {
+    std::string type;
+    std::optional<std::string> path;
+    std::optional<std::string> ca;
+    std::optional<std::string> method;
+    std::optional<std::string> hash_algo;
+};
+
+static DerivationOutputFields derivation_output_fields(const PyDerivationOutput &o) {
+    DerivationOutputFields f;
+    std::visit(
+        nix::overloaded{
+            [&](const nix::DerivationOutput::InputAddressed &ia) {
+                f.type = "InputAddressed";
+                f.path = (o.store_dir + "/").append(ia.path.to_string());
+            },
+            [&](const nix::DerivationOutput::CAFixed &caf) {
+                f.type = "CAFixed";
+                f.ca = nix::renderContentAddress(nix::ContentAddress{caf.ca});
+            },
+            [&](const nix::DerivationOutput::CAFloating &caf) {
+                f.type = "CAFloating";
+                f.method = std::string(caf.method.render());
+                f.hash_algo = std::string(nix::printHashAlgo(caf.hashAlgo));
+            },
+            [&](const nix::DerivationOutput::Deferred &) { f.type = "Deferred"; },
+            [&](const nix::DerivationOutput::Impure &imp) {
+                f.type = "Impure";
+                f.method = std::string(imp.method.render());
+                f.hash_algo = std::string(nix::printHashAlgo(imp.hashAlgo));
+            },
+        },
+        o.output.raw);
+    return f;
+}
+
+static void bind_derivation_output(nb::module_ &m) {
+    nb::class_<PyDerivationOutput>(m, "DerivationOutput")
+        .def_ro("store_dir", &PyDerivationOutput::store_dir)
+        .def_prop_ro("type", [](const PyDerivationOutput &o) { return derivation_output_fields(o).type; })
+        .def_prop_ro("path", [](const PyDerivationOutput &o) { return derivation_output_fields(o).path; })
+        .def_prop_ro("ca", [](const PyDerivationOutput &o) { return derivation_output_fields(o).ca; })
+        .def_prop_ro("method", [](const PyDerivationOutput &o) { return derivation_output_fields(o).method; })
+        .def_prop_ro("hash_algo",
+                     [](const PyDerivationOutput &o) { return derivation_output_fields(o).hash_algo; });
+}
+
+// The derivation itself. `nix::Derivation` carries no store directory, so the
+// wrapper holds the one of the store that read it. That is the rule this
+// issue settled on, and `PyMissingPaths` above is the other user of it.
+struct PyDerivation {
+    nix::Derivation drv;
+    std::string store_dir;
+
+    std::string render(const nix::StorePath &p) const {
+        return (store_dir + "/").append(p.to_string());
+    }
+};
+
+
+static PyDerivation read_derivation_typed(nix::Store &s, const nix::StorePath &drvPath) {
+    nix::Derivation drv;
+    {
+        nb::gil_scoped_release release;
+        drv = s.readDerivation(drvPath);
+    }
+    return PyDerivation{std::move(drv), s.storeDir};
+}
+
 // One node of `inputDrvs`, read back from the dict that
 // `derived_path_node_to_dict` produced. Templated for the same reason: the
 // value type of the map differs across the supported Nix versions.
@@ -738,6 +1146,9 @@ static nb::dict derivation_to_dict(const nix::StoreDirConfig &cfg, const nix::De
     return d;
 }
 
+// The dictionary form, which `Derivation.to_dict` and this share. Issue #141
+// replaces this shape with the bound types above, and the two live side by
+// side until it finishes.
 static nb::dict read_derivation(nix::Store &s, const nix::StorePath &drvPath) {
     nix::Derivation drv;
     {
@@ -854,12 +1265,6 @@ struct PyStoreDirConfig {
     nix::StoreDirConfig config() const { return nix::StoreDirConfig{store_dir}; }
 };
 
-/// A `nix::Derivation` held by value, so that Python can build one, render it,
-/// and hand it to a store.
-struct PyDerivation {
-    nix::Derivation drv;
-};
-
 // Write a derivation to the store, and remember its hash modulo.
 //
 // The write itself is `unparse` plus three store operations -- `addTempRoot`,
@@ -900,6 +1305,95 @@ static std::string store_write_derivation(nix::Store &s, const PyDerivation &drv
 static void derivation_fill_in_output_paths(PyDerivation &drv, nix::Store &s) {
     nb::gil_scoped_release release;
     drv_fill_in_output_paths(drv.drv, s);
+}
+
+static void bind_derivation(nb::module_ &m) {
+    nb::class_<PyDerivation>(m, "Derivation")
+        .def_ro("store_dir", &PyDerivation::store_dir)
+        .def_prop_ro("name", [](const PyDerivation &d) { return d.drv.name; })
+        .def_prop_ro("system", [](const PyDerivation &d) { return d.drv.platform; })
+        .def_prop_ro("builder", [](const PyDerivation &d) { return d.drv.builder; })
+        .def_prop_ro("args",
+                     [](const PyDerivation &d) {
+                         nb::list args;
+                         for (auto &a : d.drv.args)
+                             args.append(a);
+                         return args;
+                     })
+        .def_prop_ro("env",
+                     [](const PyDerivation &d) {
+                         nb::dict env;
+                         for (auto &[k, v] : d.drv.env)
+                             env[k.c_str()] = v;
+                         return env;
+                     })
+        .def_prop_ro("input_srcs",
+                     [](const PyDerivation &d) {
+                         nb::list srcs;
+                         for (auto &p : d.drv.inputSrcs)
+                             srcs.append(d.render(p));
+                         return srcs;
+                     })
+        .def_prop_ro("input_drvs",
+                     [](const PyDerivation &d) {
+                         nb::dict drvs;
+                         for (auto &[path, node] : d.drv.inputDrvs.map)
+                             drvs[d.render(path).c_str()] = nb::cast(node);
+                         return drvs;
+                     })
+        .def_prop_ro("outputs",
+                     [](const PyDerivation &d) {
+                         nb::dict outputs;
+                         for (auto &[name, output] : d.drv.outputs)
+                             outputs[name.c_str()] = PyDerivationOutput{output, d.store_dir};
+                         return outputs;
+                     })
+        // `unparse()` is Nix's own serialiser for the field, and it returns
+        // the `{"__json", payload}` pair. This hands back the bytes Nix read.
+        .def_prop_ro("structured_attrs",
+                     [](const PyDerivation &d) -> std::optional<std::string> {
+                         if (!d.drv.structuredAttrs)
+                             return std::nullopt;
+                         return d.drv.structuredAttrs->unparse().second;
+                     })
+        .def("__repr__", [](const PyDerivation &d) { return "Derivation('" + d.drv.name + "')"; })
+        // Everything above reads a derivation that a store gave. Everything
+        // below writes one that Python built, which is what a planner of
+        // `ddrn` does inside a `builder-rpc-v0` build.
+        //
+        // **These take a `StoreDirConfig` rather than read `store_dir`.** A
+        // planner has a store directory and no store, and `StoreDirConfig` is
+        // the type that renders and parses a path without one.
+        .def_static(
+            "from_dict",
+            [](const PyStoreDirConfig &c, const nb::dict &value) {
+                return PyDerivation{derivation_from_dict(c.config(), value), c.store_dir};
+            },
+            "store_dir_config"_a, "value"_a,
+            "Build a derivation from the same shape that `Store.read_derivation` "
+            "returns. Every key of that shape is required.")
+        .def("to_dict",
+             [](const PyDerivation &self, const PyStoreDirConfig &c) {
+                 return derivation_to_dict(c.config(), self.drv);
+             },
+             "store_dir_config"_a)
+        .def("to_aterm",
+             [](const PyDerivation &self, const PyStoreDirConfig &c) {
+                 return drv_unparse(self.drv, c.config());
+             },
+             "store_dir_config"_a,
+             "The ATerm bytes, rendered by Nix's own writer. These are the bytes "
+             "that `Store.write_derivation` would store.")
+        .def("store_path",
+             [](const PyDerivation &self, const PyStoreDirConfig &c) {
+                 auto cfg = c.config();
+                 return cfg.printStorePath(drv_store_path(self.drv, cfg));
+             },
+             "store_dir_config"_a,
+             "The path this derivation would have, without writing it.")
+        .def("fill_in_output_paths", &derivation_fill_in_output_paths, "store"_a,
+             "Replace each Deferred output with the input-addressed path that Nix "
+             "computes for it. Mutates this derivation.");
 }
 
 // Rewrite a derivation so that its builder dumps its own environment, and
@@ -1189,6 +1683,7 @@ static void bind_store(nb::module_ &m) {
             "build_mode"_a = nix::bmNormal,
             "eval_store"_a = nullptr)
         .def("read_derivation", &read_derivation, "drv_path"_a)
+        .def("read_derivation_typed", &read_derivation_typed, "drv_path"_a)
         .def("write_derivation", &store_write_derivation, "derivation"_a, "repair"_a = false,
              "Write a derivation to this store with Nix's own ATerm writer, and "
              "return its path. Also memoises the hash modulo of the derivation, so "
@@ -1198,6 +1693,7 @@ static void bind_store(nb::module_ &m) {
         .def("submit_output", &store_submit_output, "path"_a, "output"_a = "out")
         // Path info
         .def("query_path_info", &query_path_info, "path"_a)
+        .def("query_path_info_typed", &query_path_info_typed, "path"_a)
         .def("dump_db", &dump_db, "paths"_a, "show_derivers"_a = true, "show_hash"_a = true)
         .def("query_path_from_hash_part",
              [](nix::Store &s, const std::string &h) { return s.queryPathFromHashPart(h); },
@@ -1208,6 +1704,7 @@ static void bind_store(nb::module_ &m) {
         .def("copy_closure", &copy_closure,
              "paths"_a, "dest_store"_a, "repair"_a = false, "check_sigs"_a = true, "substitute"_a = false)
         .def("query_missing", &query_missing_paths, "paths"_a)
+        .def("query_missing_typed", &query_missing_paths_typed, "paths"_a)
         // Derivations
         .def("query_derivation_outputs", &query_derivation_outputs, "path"_a)
         .def("query_valid_derivers", &query_valid_derivers, "path"_a)
@@ -1314,41 +1811,6 @@ void nanopynix_bind_store(nb::module_ &m) {
             return "StoreDirConfig(" + c.store_dir + ")";
         });
 
-    nb::class_<PyDerivation>(m, "Derivation")
-        .def_static(
-            "from_dict",
-            [](const PyStoreDirConfig &c, const nb::dict &value) {
-                return PyDerivation{derivation_from_dict(c.config(), value)};
-            },
-            "store_dir_config"_a, "value"_a,
-            "Build a derivation from the same shape that `Store.read_derivation` "
-            "returns. Every key of that shape is required.")
-        .def("to_dict",
-             [](const PyDerivation &self, const PyStoreDirConfig &c) {
-                 return derivation_to_dict(c.config(), self.drv);
-             },
-             "store_dir_config"_a)
-        .def("to_aterm",
-             [](const PyDerivation &self, const PyStoreDirConfig &c) {
-                 return drv_unparse(self.drv, c.config());
-             },
-             "store_dir_config"_a,
-             "The ATerm bytes, rendered by Nix's own writer. These are the bytes "
-             "that `Store.write_derivation` would store.")
-        .def("store_path",
-             [](const PyDerivation &self, const PyStoreDirConfig &c) {
-                 auto cfg = c.config();
-                 return cfg.printStorePath(drv_store_path(self.drv, cfg));
-             },
-             "store_dir_config"_a,
-             "The path this derivation would have, without writing it.")
-        .def("fill_in_output_paths", &derivation_fill_in_output_paths, "store"_a,
-             "Replace each Deferred output with the input-addressed path that Nix "
-             "computes for it. Mutates this derivation.")
-        .def_prop_ro("name", [](const PyDerivation &self) { return self.drv.name; })
-        .def("__repr__", [](const PyDerivation &self) {
-            return "Derivation(" + self.drv.name + ")";
-        });
 
     m.def("open_store", &open_store_uri, "uri"_a);
     m.def("open_store", &open_store_default);
@@ -1385,6 +1847,11 @@ void nanopynix_bind_store(nb::module_ &m) {
     }
 
     bind_store_path(m);
+    bind_valid_path_info(m);
+    bind_missing_paths(m);
+    bind_derivation_outputs(m);
+    bind_derivation_output(m);
+    bind_derivation(m);
     bind_store(m);
 
     // ── Pure utility functions (no init required) ───────────────

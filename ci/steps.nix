@@ -387,15 +387,37 @@ let
     tsan = "";
   };
 
-  # **`tests/pynix` is out of the ASAN selection, and run 30895974566 is the
-  # reason.** That run reached a 120-minute cap and reported 806 tests, 742
-  # passed, 10 failed, 0 AddressSanitizer reports, killed inside
-  # `tests/pynix/test_lsp.py`. All ten failures were in `tests/pynix`, and none
-  # were in `tests/nanopynix`, so nothing is lost by the cut and the whole
+  # **The pynix suite is out of the ASAN selection, and run 30895974566 is
+  # the reason.** That run reached a 120-minute cap and reported 806 tests,
+  # 742 passed, 10 failed, 0 AddressSanitizer reports, killed inside that
+  # suite's `test_lsp.py`. All ten failures were in the pynix suite, and none
+  # were in `nanopynix/tests`, so nothing is lost by the cut and the whole
   # failure set goes with it. Only instrumented code reports:
-  # nanopynix-bindings, the Nix libraries and boost. `tests/nanopynix` drives
-  # that surface directly, and `tests/pynix` reaches the bindings only along
-  # paths `tests/nanopynix` already covers.
+  # nanopynix-bindings, the Nix libraries and boost. `nanopynix/tests` drives
+  # that surface directly, and the pynix suite reaches the bindings only
+  # along paths `nanopynix/tests` already covers.
+  #
+  # Issue #130 moved that suite to `pynix/tests/`, so the path here moved
+  # with it. The runner passes no path of its own and reads `testpaths` from
+  # the repository `pytest.ini`, which names each project's suite.
+  #
+  # **`--ignore-glob` and not `--ignore`, and the move is the reason.**
+  # `--ignore` prunes a directory that pytest reaches by *recursion*, and it
+  # does not touch a path that pytest was given as an argument. Every entry
+  # of `testpaths` is such an argument. Before the move, `testpaths` named
+  # `tests` and `--ignore=tests/pynix` pruned a subdirectory of it. After the
+  # move, `pynix/tests` is a `testpaths` entry, so the same flag reads as a
+  # live exclusion and excludes nothing.
+  #
+  # Measured on this tree: 2674 tests collected, 2674 with
+  # `--ignore=pynix/tests`, and 2199 with the glob below. The suite holds
+  # 475, which is the difference. CI run 31712183826 is where it showed:
+  # the ASAN jobs ran the pynix suite for the first time and 11 of its tests
+  # failed on the host `bash`, which cannot load beside the glibc that the
+  # sanitizer runtime pulls in.
+  #
+  # `tests/meta/test_ci_step_policy.py` now fails on an `--ignore` that names
+  # a `testpaths` entry, so this cannot go quiet again.
   #
   # **The no-collector suite keeps pytest's capture, and the sanitized ones do
   # not.** A sanitizer writes its report to stderr from inside the process, so
@@ -415,7 +437,7 @@ let
   # crash visible. Decide that on its own, and not inside a refactor.
   kindArgs = {
     ubsan = uncapturedArgs;
-    asan = uncapturedArgs ++ [ "--ignore=tests/pynix" ];
+    asan = uncapturedArgs ++ [ "--ignore-glob=pynix/tests/*" ];
     nogc = baseArgs;
   };
 
@@ -570,11 +592,30 @@ let
           base_sha="$(jq -r '.before // ""' "$GITHUB_EVENT_PATH")"
         fi
 
+        # pynixd arrived by a merge of two histories, in issue #131, and this
+        # commit is the tip of what that merge brought in. Its 272 commits
+        # predate this repository and follow conventions of their own. A
+        # rewrite of a published history is not worth making them conform, so
+        # the range below excludes them.
+        #
+        # **This is not one push.** The gate reads `before..HEAD`, so every
+        # branch that takes the import merge for the first time sees all 272
+        # again: `develop` did, and `main` does next. Without the exclusion
+        # that push checks 834 subjects, reports 272 failures that no person
+        # can act on, and makes `docs-build` and `docs-deploy` skip.
+        imported_tip="e7b3a3d4eb58e827de0f68c26cceeb7b010e818b"
+        exclude=()
+        if git cat-file -e "$imported_tip^{commit}" 2>/dev/null; then
+          exclude=("^$imported_tip")
+        else
+          echo "the pynixd import tip is not in this clone; checking the whole range"
+        fi
+
         # `before` is the all-zero sha for a new branch, and it names a commit
         # that the remote no longer has after a force push. The range means
         # nothing in either case, so check the head alone.
         if [ -n "$base_sha" ] && git cat-file -e "$base_sha^{commit}" 2>/dev/null; then
-          commits="$(git rev-list --no-merges "$base_sha..$head_sha")"
+          commits="$(git rev-list --no-merges "$base_sha..$head_sha" "''${exclude[@]}")"
         else
           echo "no usable base commit; checking $head_sha alone"
           commits="$(git rev-list --no-merges -1 "$head_sha")"
@@ -589,7 +630,7 @@ let
         for sha in $commits; do
           subject="$(git log -1 --format=%s "$sha")"
           # A space is legal inside the parentheses, because this repository
-          # writes a multi-scope subject as `(nanopynix, ekn)`.
+          # writes a multi-scope subject as `(nanopynix, pynix)`.
           if ! printf '%s\n' "$subject" | grep -Eq '^[a-z]+(\([a-z0-9._/, -]+\))?!?: .+'; then
             echo "::error::$sha: not a Conventional Commits subject: $subject"
             status=1

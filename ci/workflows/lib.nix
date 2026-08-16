@@ -111,7 +111,7 @@ let
     # the same cap, and it measured 12 minutes locally: a fork for each
     # in-process test costs about half again as much as one process.
     suite = 30;
-    # `tests/nanopynix` under ASAN. Three runs measured the way here:
+    # `nanopynix/tests` under ASAN. Three runs measured the way here:
     #
     #   30860160011  686 tests, stopped at a 60-minute cap
     #   30883251498  686 tests, stopped at a 60-minute cap
@@ -119,7 +119,7 @@ let
     #
     # The third raised the three deadlines and got *slower* per test, because
     # each failure then waited out a longer clock. `ci/steps.nix` answers both
-    # halves: it drops `tests/pynix`, where all ten of that run's failures
+    # halves: it drops `pynix/tests`, where all ten of that run's failures
     # were, and brings the deadlines back to a middle ground. The remaining
     # selection is about 600 tests, and the passing rate of run 30895974566
     # puts that inside 60 minutes. This is the measurement that confirms it.
@@ -128,7 +128,7 @@ let
     # 45 seconds in the TSAN jobs of run 30930842932, which is the slow build.
     soak = 15;
     # Five runs of the concurrency soak, one per seed. Each run deals every
-    # eligible test into eight overlapping lanes -- see tests/support/soak.py.
+    # eligible test into eight overlapping lanes -- see nanopynix_testing.soak.
     tsanStress = 25;
     tsanBroad = 20;
     # `nix build` of every gate, which takes about a minute between them.
@@ -166,6 +166,40 @@ let
     versionMatrix = 20;
     # One commit and one push, by an action.
     autoCommit = 10;
+    # **The whole wheel closure, from cold.** This build is not the ordinary
+    # `nix build` of a Nix version: `nix/cxx-stdenv.nix` gives the closure its
+    # own compiler wrapper, so cachix holds none of it until this job has run
+    # once, and boost, openssl and Nix itself all compile here.
+    #
+    # **Measured on the runner, from cold.** Run 31605397637 is the first run
+    # of this job, so cachix held none of the closure. The build compiled 95
+    # derivations on `ubuntu-24.04` in 40 minutes, and 96 on `ubuntu-24.04-arm`
+    # in 34 minutes. The rest of each closure came from `cache.nixos.org`: 296
+    # paths and 229 paths.
+    #
+    # 120 gives three times the measurement. The number that a cap must beat is
+    # the build that hangs, and not the build that is slow: a step that stops
+    # after 2 hours reports the hang, and a step that stops after 4 hours
+    # reports the same hang and spends twice as much of the runner.
+    #
+    # **360 minutes is the hard limit of a job, and `mkJob` derives the job cap
+    # from this number.** The other steps of the job and `jobSlack` add 95, so
+    # a build cap above 265 gives a job cap that GitHub never applies: it stops
+    # the job at its own limit instead, and the run reports a cancellation
+    # rather than the step that ran out of time.
+    #
+    # **A bump of nixpkgs is the case that can exceed this.** The 296 paths
+    # above are substitutions, and a flake update can land on a revision that
+    # `cache.nixos.org` has not built yet. The step then compiles them as well.
+    # Raise this number when that happens, and record the run that measured it.
+    wheelBuild = 120;
+    # `scripts/wheel-inspect.sh` unzips the wheel and reads each object with
+    # `readelf`. It takes seconds.
+    wheelInspect = 10;
+    # `scripts/wheel-smoke.sh` pulls a Rocky Linux 9 image, installs an
+    # interpreter with `uv`, and evaluates. The pull and the interpreter are
+    # the whole of it.
+    wheelSmoke = 20;
   };
 
   # The cap of a job, derived from the caps of its steps.
@@ -202,7 +236,7 @@ let
 
   # A single cachix/install-nix-action (multi-user) install suffices for every
   # job now: the test suite owns its own daemon and local store paths
-  # entirely (see tests/support/nix_environment.py), so the CI runner's own
+  # entirely (see nanopynix_testing.nix_environment), so the CI runner's own
   # Nix install mode no longer affects what gets exercised. The remaining
   # local/daemon axis lives in `--nix-test-backends`, not in how Nix itself
   # was installed.
@@ -411,7 +445,9 @@ let
   # The full suite under UndefinedBehaviorSanitizer, against one Nix version.
   #
   # UBSan runs on its own rather than beside TSAN, although the two combine.
-  # See nix/sanitizer.nix.
+  # One sanitizer for each job keeps a red job attributable to one sanitizer.
+  # The reason used to be 2.31, which the TSAN matrix skipped, and issue #126
+  # dropped that version. See nix/sanitizer.nix.
   #
   # The AddressSanitizer job is `mkAsanTestJob` below, and it needs a libexpr
   # with no collector. `mkNoGCTestJob` is that build without the sanitizer.
@@ -471,7 +507,7 @@ let
   # and it runs in 16 seconds rather than 86. The whole suite forked: 2077
   # passed, 13 skipped, 3 GB peak, 12 minutes.
   #
-  # `tests/support/nix_runtime.py` holds the rule, and
+  # `nanopynix_testing.nix_runtime` holds the rule, and
   # `tests/meta/test_no_collector_rule.py` keeps it from going stale. Four
   # tests skip separately, through the `boehm_gc` capability that `build_info`
   # publishes: three measure the collector, and one abandons an evaluator in
@@ -578,13 +614,11 @@ let
   # existing.** It was written by hand until this file could read the
   # attribute set directly, and a gate that nobody added here ran nowhere.
   #
-  # `grpclib-transports`, `pytest-agent` and `ekn-sandbox` are the odd ones
-  # out, each being a run rather than a static tool. All three are here rather
-  # than in the `test-*` matrix because all three are version-independent:
-  # that matrix exists to run one suite against each supported Nix version.
-  # Neither subproject links Nix at all, and `ekn-sandbox` asks whether `ekn`
-  # can start where there is no trust store, which no Nix version changes.
-  # Three copies of any of them would be three identical runs.
+  # `grpclib-transports` and `pytest-agent` are the odd ones out, each being a
+  # run rather than a static tool. Both are here rather than in the `test-*`
+  # matrix because both are version-independent: that matrix exists to run one
+  # suite against each supported Nix version, and neither subproject links Nix
+  # at all. Three copies of either would be three identical runs.
   mkStaticChecksJob =
     {
       ref ? null,
@@ -609,6 +643,73 @@ let
             }";
           }
         ];
+      }
+    );
+
+  # The wheel, built and then read. Issue #120 asks for this job, and it gives
+  # the four defects that reached a finished build while no gate read any of
+  # `nix/cxx-stdenv.nix`, `nix/cxx-runtime.nix`, `nix/lower-glibc.py`,
+  # `nix/closure.nix` or `nix/nix-closure.nix`.
+  #
+  # **`auditwheel` is the floor gate, and it runs inside the build.**
+  # `nix/wheel.nix` repairs to `manylinux_2_34` and `auditwheel` refuses a tag
+  # that the objects do not support, so a raised floor fails `nix build` and
+  # never reaches the steps below. Measured twice on 2026-08-12, both times as
+  # "cannot repair ... because of the presence of too-recent versioned
+  # symbols". So this job needs no floor check of its own, and the two steps
+  # below answer what the build cannot.
+  #
+  # **One job for each architecture, and never emulation.** `runs-on` carries
+  # the difference and nothing else does: `nix/cxx-stdenv.nix` reads
+  # `stdenv.hostPlatform`, so an arm64 runner builds the aarch64 wheel with no
+  # cross configuration. An x86-64 runner with binfmt would build the same
+  # wheel under qemu, and it would take many hours.
+  mkWheelJob =
+    {
+      runner ? "ubuntu-24.04",
+      # `scripts/wheel-smoke.sh` runs the wheel, so it needs an interpreter of
+      # the wheel's own architecture. That is what the native runner gives.
+      smoke ? true,
+      ref ? null,
+      lockArtifact ? null,
+      needs ? [ ],
+    }:
+    mkJob (
+      lib.optionalAttrs (needs != [ ]) { inherit needs; }
+      // {
+        runs-on = runner;
+        # `wheel-smoke.sh` takes the container runtime from here. It defaults to
+        # podman, and a GitHub runner carries docker.
+        env.WHEEL_SMOKE_RUNTIME = "docker";
+        steps = [
+          (steps.checkout { inherit ref; })
+        ]
+        ++ lib.optional (lockArtifact != null) (steps.downloadArtifact { artifactName = lockArtifact; })
+        ++ [
+          (steps.installNix { })
+          (steps.cachix { })
+          {
+            name = "Build the wheel";
+            timeout-minutes = caps.wheelBuild;
+            run = "nix build --file . nanopynixWheel --out-link result-wheel --print-build-logs";
+          }
+          {
+            # Reads the files and runs nothing, so it answers for either
+            # architecture. It fails when an object asks the host for a C++
+            # standard library.
+            name = "Read the wheel";
+            timeout-minutes = caps.wheelInspect;
+            run = "./scripts/wheel-inspect.sh result-wheel";
+          }
+        ]
+        ++ lib.optional smoke {
+          # The check that reads nothing and runs everything: it installs the
+          # wheel on a distribution whose glibc is the floor exactly, and
+          # evaluates with it.
+          name = "Load the wheel on Rocky Linux 9";
+          timeout-minutes = caps.wheelSmoke;
+          run = "./scripts/wheel-smoke.sh result-wheel";
+        };
       }
     );
 
@@ -726,6 +827,7 @@ in
     mkAsanTestJob
     mkNoGCTestJob
     mkStaticChecksJob
+    mkWheelJob
     mkCommitSubjectJob
     mkDocsBuildJob
     mkDocsDeployJob

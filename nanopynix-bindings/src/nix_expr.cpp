@@ -23,8 +23,61 @@
 
 #include <fcntl.h>
 #include <pthread.h>
-#include <sys/syscall.h>
 #include <unistd.h>
+#ifndef __APPLE__
+// Darwin ships this header but defines no `SYS_gettid`. See the three
+// wrappers below for what stands in.
+#include <sys/syscall.h>
+#endif
+
+// Three things this file asks the OS that Linux and Darwin answer
+// differently. Each is used by the collector-owner machinery further down,
+// and each has exactly one honest Darwin equivalent.
+namespace {
+
+// The calling thread's OS-level id.
+//
+// Used for two things only: a diagnostic line, and a non-zero sentinel
+// saying the collector's owner thread has started. Neither needs the number
+// to mean anything beyond "unique to this thread, stable while it runs",
+// which is true of both of these.
+long osThreadId() {
+#ifdef __APPLE__
+    // Darwin has no `gettid`. `pthread_threadid_np` is its equivalent, and
+    // it is the same number `ps -M` and the debugger show.
+    uint64_t tid = 0;
+    pthread_threadid_np(nullptr, &tid);
+    return static_cast<long>(tid);
+#else
+    return static_cast<long>(syscall(SYS_gettid));
+#endif
+}
+
+// Whether the caller is the process's first thread.
+bool isMainThread() {
+#ifdef __APPLE__
+    return pthread_main_np() != 0;
+#else
+    // On Linux the main thread is the one whose thread id equals the pid.
+    return syscall(SYS_gettid) == getpid();
+#endif
+}
+
+// Name the CALLING thread.
+//
+// Darwin's `pthread_setname_np` takes only the name and can name no thread
+// but the caller's; Linux's takes the thread as well. Narrowing the wrapper
+// to the calling thread is what makes the two the same function rather than
+// a partial one -- and it is all any call site here wants.
+void setCallingThreadName(const char *name) {
+#ifdef __APPLE__
+    pthread_setname_np(name);
+#else
+    pthread_setname_np(pthread_self(), name);
+#endif
+}
+
+} // namespace
 
 // For `NIX_USE_BOEHMGC`, which decides whether the collector exists at all in
 // this build. Included before <gc/gc.h> because the macro is what gates that
@@ -35,6 +88,8 @@
 
 #if NIX_USE_BOEHMGC
 #  include <gc/gc.h>
+// `GC_set_start_callback` lives here, and not in <gc/gc.h>.
+#  include <gc/gc_mark.h>
 #endif
 
 #include <nix/expr/eval.hh>
@@ -569,6 +624,67 @@ static nix::SourcePath lookup_file_arg(nix::EvalState &state, std::string_view s
 // PyEvalState out-of-line methods
 // =========================================================================
 
+#if NIX_USE_BOEHMGC
+// Did the REPL environment become unreachable to the collector?
+//
+// **This is the only way to test the invariant that `repl_env_root` holds.**
+// A freed block keeps its old contents until something else takes it, so
+// reading a REPL binding back answers "yes" whether or not the environment is
+// still alive. A finalizer answers the real question, and it does not depend
+// on the block being handed away afterwards: Boehm queues one when it finds
+// the object unreachable, so any count above zero is the proof.
+//
+// `begin_repl` allocates one `nix::Env` with `GC_MALLOC`. It used to keep the
+// only pointer to it in `PyEvalState::repl_env`, and a `PyEvalState` lives in
+// the Python heap, which Boehm scans no part of. That was issue #70.
+// `py_eval.hh` gives the root that answers it, and the measurement.
+//
+// Only under NANOPYNIX_GC_REPL_ENV_PROBE, so an ordinary run registers
+// nothing. Registering a finalizer does not root an object, but it does move
+// when the block is freed, and a caller who has not asked for the probe
+// should not pay that.
+namespace {
+
+std::atomic<int64_t> repl_env_finalized{0};
+
+void repl_env_finalizer(void *, void *) {
+    repl_env_finalized.fetch_add(1, std::memory_order_relaxed);
+}
+
+bool repl_env_probe_enabled() {
+    const char *value = std::getenv("NANOPYNIX_GC_REPL_ENV_PROBE");
+    return value != nullptr && *value == '1';
+}
+
+std::atomic<int64_t> finalizer_self_test_count{0};
+
+void finalizer_self_test_callback(void *, void *) {
+    finalizer_self_test_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Allocate a block of `size` bytes, give it a finalizer, and drop it.
+//
+// Out of line and never inlined, so the frame that held the pointer is gone
+// and the next call reuses those stack slots. A conservative collector keeps
+// a block that any stale slot still names, which is the one way this control
+// can report a false negative.
+//
+// `no_order` and not `ignore_self`. Boehm refuses to finalize an object it
+// finds in a cycle of finalizable objects, and it says so with
+// "Finalization cycle involving ...". A count that stops there reads as
+// "nothing died", which is the wrong answer in the direction that hides a
+// defect. This probe asks only whether a block became unreachable, and it
+// needs no ordering between one block and the next.
+[[gnu::noinline]] void allocate_and_drop_finalizable(size_t size) {
+    void *block = GC_MALLOC(size);
+    if (block != nullptr)
+        GC_register_finalizer_no_order(block, finalizer_self_test_callback, nullptr, nullptr,
+                                          nullptr);
+}
+
+}  // namespace
+#endif
+
 PyValue PyEvalState::eval_string(const std::string &expr, const std::string &path) {
     checkThread();
     nix::Value *v;
@@ -590,8 +706,19 @@ void PyEvalState::begin_repl() {
 
     constexpr size_t repl_env_size = 32768;
     repl_static_env = std::make_shared<nix::StaticEnv>(nullptr, state->staticBaseEnv);
-    repl_env = &state->mem.allocEnv(repl_env_size);
+    // Allocate straight into the root. `repl_env_root` is the only thing that
+    // keeps this environment alive -- see its comment in `py_eval.hh`, and
+    // issue #70.
+    repl_env_root = std::allocate_shared<nix::Env *>(traceable_allocator<nix::Env *>(),
+                                                     &state->mem.allocEnv(repl_env_size));
+    repl_env = *repl_env_root;
     repl_env->up = &state->baseEnv;
+#if NIX_USE_BOEHMGC
+    // Only for the test that holds issue #70. The comment above
+    // `repl_env_finalizer` gives the question it answers.
+    if (repl_env_probe_enabled())
+        GC_register_finalizer_no_order(repl_env, repl_env_finalizer, nullptr, nullptr, nullptr);
+#endif
     repl_displ = 0;
     // The one place the size is named. Every bounds check reads it back from
     // here rather than repeating the literal -- see `repl_env_capacity`.
@@ -735,6 +862,15 @@ std::vector<std::string> PyEvalState::repl_add_attrs(PyValue attrs) {
     return names;
 }
 
+std::string PyEvalState::statistics_json() const {
+    checkThread();
+    // `statisticsJSON` walks the counter tables of the evaluator, and the
+    // report of a large evaluation is not small. The GIL is not needed for
+    // either, so a second thread keeps running while this one builds it.
+    nb::gil_scoped_release release;
+    return state->statisticsJSON();
+}
+
 std::vector<std::string> PyEvalState::repl_scope_names() const {
     checkThread();
     if (repl_env == nullptr || !repl_static_env)
@@ -793,6 +929,11 @@ nix::Value *PyValue::checkedValue() const {
     (void) evalState();
     if (!root || !*root)
         throw std::runtime_error("Nix value has been released");
+    // The wrapper checked this pointer when it took it. It checks again here
+    // because the two moments are far apart: a collection runs between them,
+    // and issue #70 is a block that the collection gave away. This is the read
+    // that every accessor makes, so it is the first place that can see it.
+    nanopynix_check_value_alignment(*root, "an accessor on a value");
     return *root;
 }
 
@@ -1418,6 +1559,17 @@ static void bind_eval_state(nb::module_ &m) {
              "line"_a, "path"_a = "<string>", nb::keep_alive<0, 1>())
         .def("repl_add_attrs", &PyEvalState::repl_add_attrs, "attrs"_a)
         .def("repl_scope_names", &PyEvalState::repl_scope_names)
+        .def("statistics_json", &PyEvalState::statistics_json,
+             "Return the evaluation statistics of this evaluator, as a JSON document.\n\n"
+             "The report holds the same fields that `NIX_SHOW_STATS=1 nix` prints. The\n"
+             "report is unreliable when one process holds more than one evaluator:\n"
+             "`nrExprs` and `nrThunks` count the process, because Nix keeps those two\n"
+             "counters in a static, and so does the switch that turns counting on. The\n"
+             "other thirteen counted fields belong to this evaluator alone. Issue #118\n"
+             "tracks the repair.\n\n"
+             "`primops`, `functions` and `attributes` tables need the `count-calls` eval\n"
+             "setting, which is off by default because the counting costs time.\n\n"
+             "Raises RuntimeError on Nix 2.31, which has no such report.")
         .def("reset_file_cache", &PyEvalState::reset_file_cache)
         .def("alloc_value", &PyEvalState::alloc_value, nb::keep_alive<0, 1>())
         .def("value_from_python", &PyEvalState::value_from_python, "obj"_a, nb::keep_alive<0, 1>());
@@ -1429,6 +1581,9 @@ static thread_local bool evaluator_thread_registered = false;
 
 // Defined below, beside the rest of the diagnostic.
 static void gc_thread_debug_log(const char *event);
+#if NIX_USE_BOEHMGC
+static void gc_stack_bounds_probe(void *recorded_base);
+#endif
 
 // The one owner of this thread's Boehm registration.
 //
@@ -1456,6 +1611,14 @@ static void gc_thread_debug_log(const char *event);
 // `GC_suspend_all` then signals a thread that is gone -- issue #72 when glibc
 // answers `EINVAL`, and issue #53 when it faults instead.
 namespace {
+// How many threads of this process hold a registration through the object
+// below. DIAGNOSTIC, for issue #70: `GC_push_all_stacks` prints
+// `Pushed %d thread stacks` under `GC_PRINT_VERBOSE_STATS=1`, and the question
+// that issue asks is whether that count ever falls below the count of threads
+// that are really registered. Reading the two numbers needs them keyed to the
+// same collection, and `gc_collection_start_probe` below does that.
+std::atomic<int> gc_registered_threads{0};
+
 struct GcThreadRegistration {
     // True when this thread holds the registration and therefore owes the
     // matching release. A `-Dgc=disabled` build still tracks it, because the
@@ -1476,8 +1639,10 @@ struct GcThreadRegistration {
         // is correct whoever made it.
         if (result != GC_SUCCESS && result != GC_DUPLICATE)
             throw std::runtime_error("could not register this thread with Boehm GC");
+        gc_stack_bounds_probe(stack_base.mem_base);
 #endif
         owned = true;
+        gc_registered_threads.fetch_add(1, std::memory_order_relaxed);
         gc_thread_debug_log("gc_thread_registration:acquired");
     }
 
@@ -1485,6 +1650,7 @@ struct GcThreadRegistration {
         if (!owned)
             return;
         owned = false;
+        gc_registered_threads.fetch_sub(1, std::memory_order_relaxed);
 #if NIX_USE_BOEHMGC
         // **The main thread keeps its registration.** Its stack stays a root
         // until the process ends, so there is no stale entry to leave: the
@@ -1492,7 +1658,7 @@ struct GcThreadRegistration {
         // Releasing it from a `thread_local` destructor would instead call
         // into the collector during static teardown, after the interpreter
         // finalizes, which is the one moment nothing else here runs.
-        if (syscall(SYS_gettid) == getpid())
+        if (isMainThread())
             return;
         if (GC_unregister_my_thread() != GC_SUCCESS)
             throw std::runtime_error("could not unregister this thread from Boehm GC");
@@ -1560,8 +1726,14 @@ static void gc_thread_debug_log(const char *event) {
     if (!gc_thread_debug_enabled())
         return;
     char line[256];
-    int length = std::snprintf(line, sizeof(line), "[nanopynix-gc-thread-debug] tid=%ld event=%s\n",
-                               static_cast<long>(syscall(SYS_gettid)), event);
+    // **The pid is not decoration.** The forkserver worker writes to the same
+    // file, and the reproduction of #70 runs four processes that all
+    // initialise the collector. A count of registrations taken over the whole
+    // file is therefore a sum, and it balances even when one process does not.
+    // Only a per-process count says whether a thread stayed registered.
+    int length = std::snprintf(line, sizeof(line),
+                               "[nanopynix-gc-thread-debug] pid=%ld tid=%ld event=%s\n",
+                               static_cast<long>(getpid()), osThreadId(), event);
     if (length <= 0)
         return;
     size_t remaining = static_cast<size_t>(length) < sizeof(line) ? static_cast<size_t>(length)
@@ -1571,6 +1743,100 @@ static void gc_thread_debug_log(const char *event) {
     ssize_t written = write(gc_thread_debug_fd(), line, remaining);
     (void) written;
 }
+
+#if NIX_USE_BOEHMGC
+// DIAGNOSTIC (temporary), for issue #70: say what upper bound the collector
+// recorded for this thread's stack, and what the real one is.
+//
+// **A wrong upper bound truncates the scan silently.**
+// `GC_push_all_stacks` takes `hi = p -> stack_end` for a thread that is not
+// the main one, and `lo` from the stack pointer saved at suspend. It then
+// pushes `[lo, hi)`. The stack grows down here, so `hi` is the **oldest** end:
+// the frames that live longest, and the ones most likely to hold the only
+// reference to a value. A `hi` below the real top leaves those frames
+// unscanned, and no counter moves.
+//
+// `GC_get_stack_base` gives what the registration recorded.
+// `pthread_getattr_np` gives what the thread really has, as the lowest address
+// and a size, so the top is the sum of the two. The two agree when the
+// registration is right.
+//
+// The probe writes the difference as well, so a reader greps for a line with a
+// non-zero one rather than comparing two hexadecimal numbers by eye.
+static void gc_stack_bounds_probe(void *recorded_base) {
+    if (!gc_thread_debug_enabled())
+        return;
+
+    // A failure to read the attributes is a fact about this platform, and not
+    // about the collector, so it reports rather than raises: the caller is a
+    // registration that must not fail for a diagnostic.
+    pthread_attr_t attr;
+    if (pthread_getattr_np(pthread_self(), &attr) != 0) {
+        gc_thread_debug_log("gc_stack_bounds:unavailable");
+        return;
+    }
+    void *low = nullptr;
+    size_t size = 0;
+    int failed = pthread_attr_getstack(&attr, &low, &size);
+    pthread_attr_destroy(&attr);
+    if (failed != 0) {
+        gc_thread_debug_log("gc_stack_bounds:unavailable");
+        return;
+    }
+
+    char *real_top = static_cast<char *>(low) + size;
+    long long shortfall = static_cast<long long>(real_top - static_cast<char *>(recorded_base));
+
+    char line[256];
+    int length = std::snprintf(line, sizeof(line),
+                               "[nanopynix-gc-thread-debug] pid=%ld tid=%ld event=stack_bounds "
+                               "recorded_top=%p real_top=%p size=%zu shortfall=%lld\n",
+                               static_cast<long>(getpid()), osThreadId(), recorded_base,
+                               static_cast<void *>(real_top), size, shortfall);
+    if (length <= 0)
+        return;
+    size_t remaining = static_cast<size_t>(length) < sizeof(line) ? static_cast<size_t>(length)
+                                                                  : sizeof(line) - 1;
+    ssize_t written = write(gc_thread_debug_fd(), line, remaining);
+    (void) written;
+}
+
+// DIAGNOSTIC (temporary), for issue #70: say how many threads this process has
+// registered, at the start of each collection.
+//
+// **The two numbers have to name the same collection.** bdwgc prints
+// `Pushed %d thread stacks` for every collection under
+// `GC_PRINT_VERBOSE_STATS=1`, and `--> Marking for collection #N` just above
+// it. This probe writes `GC_get_gc_no()` with our own count, so a reader pairs
+// the lines by that number rather than by their order in two files. The
+// question is whether the pushed count ever falls below what is registered.
+//
+// **The two numbers differ by one, and the pairing has to add it.** bdwgc
+// prints `GC_gc_no + 1` on the marking line, and it increments `GC_gc_no`
+// later in the same collection. This probe runs before that, so the collection
+// that the log calls #N is the one this probe reports as `gc_no=N-1`.
+//
+// bdwgc calls this with the allocation lock held, and before it stops the
+// world. `write` is a system call and allocates nothing, and `GC_get_gc_no`
+// reads one word, so neither can re-enter the collector.
+static void gc_collection_start_probe() {
+    if (!gc_thread_debug_enabled())
+        return;
+    char line[256];
+    int length = std::snprintf(line, sizeof(line),
+                               "[nanopynix-gc-thread-debug] pid=%ld tid=%ld event=collection "
+                               "gc_no=%lu registered=%d\n",
+                               static_cast<long>(getpid()), osThreadId(),
+                               static_cast<unsigned long>(GC_get_gc_no()),
+                               gc_registered_threads.load(std::memory_order_relaxed));
+    if (length <= 0)
+        return;
+    size_t remaining = static_cast<size_t>(length) < sizeof(line) ? static_cast<size_t>(length)
+                                                                  : sizeof(line) - 1;
+    ssize_t written = write(gc_thread_debug_fd(), line, remaining);
+    (void) written;
+}
+#endif
 
 // libstdc++'s classic std::ctype<char> facet caches narrow()/widen()
 // results lazily, unguarded by any lock (it's a plain anonymous-namespace
@@ -1703,31 +1969,20 @@ void nanopynix_start_gc_owner_thread() {
         std::promise<void> ready;
         std::future<void> started = ready.get_future();
         std::thread owner([&ready] {
-            pthread_setname_np(pthread_self(), "nix-gc-owner");
-            gc_owner_thread_id.store(static_cast<long>(syscall(SYS_gettid)), std::memory_order_release);
+            setCallingThreadName("nix-gc-owner");
+            gc_owner_thread_id.store(osThreadId(), std::memory_order_release);
             nix::initGC();
 #if NIX_USE_BOEHMGC
-            // TEMPORARY, for issue #70. Remove it with the issue.
+            // Only under NANOPYNIX_GC_THREAD_DEBUG, so a normal run installs
+            // no callback at all. bdwgc keeps one start callback, and this
+            // takes it, so anything else that wanted it must chain instead.
             //
-            // The differential for "a live pointer sits at a displacement that
-            // Boehm does not accept". `GC_push_contents_hdr` consults
-            // `GC_valid_offsets`, and it black-lists a reference at an
-            // unregistered displacement rather than marking the object. Nix
-            // registers 1 to 7, for the 3-bit discriminator that `value.hh`
-            // packs into the pointer.
-            //
-            // With every displacement valid, such a reference marks its object
-            // instead. If #70 goes away here, an unregistered displacement is
-            // the cause. If #70 survives, that whole class is excluded.
-            //
-            // The direction is always more conservative:
-            // `GC_initialize_offsets` marks every offset valid, so the
-            // collector retains more and frees less. It runs after
-            // `nix::initGC`, and on this thread, so no allocation has happened
-            // yet.
-            if (const char *all_interior = std::getenv("NANOPYNIX_GC_ALL_INTERIOR_POINTERS");
-                all_interior != nullptr && *all_interior == '1')
-                GC_set_all_interior_pointers(1);
+            // `docs/collector-and-threads.md` pairs what this writes with
+            // bdwgc's own `Pushed %d thread stacks` line, which is how the
+            // `FINISHED` flag was excluded. Keep it: the pairing needs both
+            // halves, and this half costs nothing when the flag is unset.
+            if (gc_thread_debug_enabled())
+                GC_set_start_callback(gc_collection_start_probe);
 #endif
             ready.set_value();
             // Park, and never leave. The entry that `GC_thr_init` just made
@@ -1855,6 +2110,21 @@ void nanopynix_bind_expr(nb::module_ &m) {
           "Internal: register the current dedicated evaluator thread with Boehm GC.");
     m.def("_exit_evaluator_thread", &exit_evaluator_thread,
           "Internal: unregister the current dedicated evaluator thread from Boehm GC.");
+    m.def("_check_value_alignment",
+          [](uintptr_t address) {
+              nanopynix_check_value_alignment(reinterpret_cast<const nix::Value *>(address),
+                                              "a caller of _check_value_alignment");
+          },
+          nb::arg("address"),
+          "Internal: run the value alignment check against a raw address.\n\n"
+          "The check refuses a Nix value pointer that keeps the discriminator bits "
+          "that `nix::ValueStorage` packs into the low bits of a value. Issue #70 "
+          "gives the analysis, and `docs/collector-and-threads.md` gives the core "
+          "dump.\n\n"
+          "It exists so a test can prove that the check rejects such a pointer and "
+          "accepts an aligned one. No ordinary caller can make a misaligned value, "
+          "which is the whole point, so the check is untestable without it. Remove "
+          "this together with issue #70.");
     m.def("_gc_collect", &gc_collect, nb::call_guard<nb::gil_scoped_release>(),
           "Internal: run one full Boehm collection now, on an evaluator thread.\n\n"
           "Python's gc.collect() does not reach the Nix heap. A test that drops a "
@@ -1889,6 +2159,53 @@ void nanopynix_bind_expr(nb::module_ &m) {
           "neither the caller nor `FINISHED`.\n\n"
           "Call it only on a thread that then enters and exits the evaluator "
           "hook. A build with no collector raises.");
+    m.def("_gc_finalizer_self_test",
+          [](int64_t count, int64_t size) -> int64_t {
+#if !NIX_USE_BOEHMGC
+              (void) count;
+              (void) size;
+              throw no_collector_in_this_build("cannot run the finalizer self test");
+#else
+              if (count < 1 || size < 1)
+                  throw std::runtime_error("count and size must both be positive");
+              finalizer_self_test_count.store(0, std::memory_order_relaxed);
+              for (int64_t i = 0; i < count; ++i)
+                  allocate_and_drop_finalizable(static_cast<size_t>(size));
+              GC_gcollect();
+              GC_gcollect();
+              GC_invoke_finalizers();
+              return finalizer_self_test_count.load(std::memory_order_relaxed);
+#endif
+          },
+          nb::arg("count"), nb::arg("size"),
+          "Internal, for tests: does a finalizer fire at all in this process?\n\n"
+          "Allocates `count` blocks of `size` bytes, gives each one a finalizer, "
+          "drops every reference, collects, and answers how many finalizers ran. "
+          "It is the control for `_gc_repl_env_finalized`: that count means "
+          "nothing until this one shows the machinery works at the same size.\n\n"
+          "A few blocks survive a correct run, because conservative scanning "
+          "keeps one that a stale stack slot still names. Read the number, and "
+          "not an exact equality.");
+    m.def("_gc_repl_env_finalized",
+          []() -> int64_t {
+#if !NIX_USE_BOEHMGC
+              throw no_collector_in_this_build("cannot count REPL environment finalizers");
+#else
+              // The finalizers Boehm queued run when something allocates, or
+              // on demand. Ask for them, so the count is current.
+              GC_invoke_finalizers();
+              return repl_env_finalized.load(std::memory_order_relaxed);
+#endif
+          },
+          "Internal, for tests: how many REPL environments the collector freed.\n\n"
+          "`begin_repl` allocates one `nix::Env` with the collector and keeps the "
+          "only pointer to it in a `PyEvalState`, which lives in the Python heap. "
+          "Boehm scans no part of that heap. This counts the environments the "
+          "collector found unreachable, so any number above zero says the block "
+          "was live to Nix and garbage to Boehm.\n\n"
+          "It counts nothing unless NANOPYNIX_GC_REPL_ENV_PROBE is 1, because "
+          "registering a finalizer changes when a block is freed, and a caller "
+          "who has not asked for the probe should not pay that.");
     m.def("_gc_stats", &gc_stats,
           "Internal: the Boehm counters, for a test that must measure the Nix heap.\n\n"
           "`non_gc_bytes` is the interesting one. Every `nix::allocRootValue` is one "
@@ -1912,6 +2229,38 @@ void nanopynix_bind_expr(nb::module_ &m) {
         auto entries = nix::EvalSettings::parseNixPath(value);
         return {entries.begin(), entries.end()};
     }, "value"_a = nb::none());
+    // A lambda over `std::string`, and not the static itself: `isPseudoUrl`
+    // takes a `std::string_view`, which would need <nanobind/stl/string_view.h>
+    // and a temporary that outlives the call. One copy of a short string is
+    // the cheaper answer.
+    // `nix::Counter::enabled` is one static for the whole process, and Nix
+    // sets it from `NIX_SHOW_STATS` when libnixexpr loads. Every increment of
+    // every counter tests it, so Nix made it a static on purpose: a per
+    // evaluator flag would be a shared write on the hot path of the evaluator.
+    // The scope of this function is therefore the process, and not one
+    // evaluator, and `statistics` reports zero for each counted field until
+    // something turns it on.
+    m.def("set_eval_counters_enabled",
+          [](bool enabled) { nix::Counter::enabled = enabled; }, "enabled"_a,
+          "Turn the evaluation counters of the process on, or off.\n\n"
+          "The counters back the numeric fields of `EvalState.statistics_json`, such\n"
+          "as `values`, `envs` and `nrFunctionCalls`. Nix leaves them off unless\n"
+          "`NIX_SHOW_STATS` is set, because each increment costs an atomic write.\n\n"
+          "This setting belongs to the process, and not to one evaluator, so an\n"
+          "evaluator cannot count while another one beside it does not. Issue #118\n"
+          "tracks the repair, and the reason that Nix keeps a static.");
+    m.def("eval_counters_enabled", []() { return nix::Counter::enabled; },
+          "Report whether the evaluation counters of the process are on.");
+
+    m.def("is_pseudo_url",
+          [](const std::string &value) { return nix::EvalSettings::isPseudoUrl(value); }, "value"_a,
+          "Report whether `lookup_file_arg` downloads this string as a tarball.\n\n"
+          "True for a `channel:` reference, and for a URL whose scheme Nix "
+          "downloads (`http`, `https`, `file`, `channel`, `git`, `s3`, `ssh`).\n\n"
+          "This is the first test that `eval_file` and `EvalState.file` apply to "
+          "their argument, so a caller that classifies such an argument itself "
+          "asks this rather than repeating the list of schemes. The list belongs "
+          "to Nix, and it changes with the Nix version.");
     m.def("list_eval_settings_metadata_json", []() {
         bool readOnlyMode = false;
         nix::EvalSettings evalSettings{readOnlyMode};

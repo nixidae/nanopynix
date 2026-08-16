@@ -298,6 +298,10 @@ static std::string metadata_json(PyEvalState &es, PyLockedFlake &lf) {
         // all three.
         j["path"] = store->printStorePath(store->toStorePath(flake.path.path.abs()).first);
         j["locks"] = lockedFlake.lockFile.toJSON().first;
+        // No version difference is left in the whole lock-file surface:
+        // `InputAttrPath`, `Node::Edge`, `findInput`, `toJSON` and
+        // `getFingerprint` are identical in Nix 2.34 and 2.35. `getFingerprint`
+        // took a `ref<Store>` below the supported floor.
         auto fingerprint = lockedFlake.getFingerprint(*store, es.fetchSettings);
         if (fingerprint)
             j["fingerprint"] = fingerprint->to_string(nix::HashFormat::Base16, false);

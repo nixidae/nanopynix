@@ -24,6 +24,14 @@
 
 struct PyValue;
 
+// `traceable_allocator` is at global scope in both builds, and needs no
+// `#if` here. With the collector it comes from `<gc/gc_allocator.h>`, which
+// `nix/expr/eval-gc.hh` includes; without it, that same header defines a shim
+// of `std::allocator` under the same name and also at global scope. Writing
+// `nix::traceable_allocator` compiles with the collector, because the name is
+// then found in the enclosing global scope, and fails without it. Only the
+// `-nogc` variant catches that, and it did.
+
 struct PyEvalState {
     using SettingsMap = std::map<std::string, std::string>;
 
@@ -40,6 +48,35 @@ struct PyEvalState {
     /// body calls `init`.
     const std::thread::id owner = std::this_thread::get_id();
     std::shared_ptr<nix::StaticEnv> repl_static_env;
+
+    /// The root that keeps the REPL environment alive, and the only one.
+    ///
+    /// `begin_repl` allocates one `nix::Env` with `GC_MALLOC`, and `repl_env`
+    /// below is a plain pointer inside this object. A `PyEvalState` lives in
+    /// the Python heap, and Boehm scans no part of that heap, so a plain
+    /// pointer roots nothing: the collector frees the environment while the
+    /// REPL scope is open, and the block comes back as something else.
+    ///
+    /// `traceable_allocator` allocates with `GC_MALLOC_UNCOLLECTABLE`, which
+    /// Boehm treats as a root and scans. This is how `nix::EvalState` roots
+    /// its own base environment -- `baseEnvP` in `src/libexpr/eval.cc` is the
+    /// same `std::allocate_shared<Env *>` -- and how `nix::allocRootValue`
+    /// roots a value. Upstream's REPL takes the other route and derives
+    /// `NixRepl` from `gc`, which puts the whole object in the collector's
+    /// heap. Either roots it; a raw member of a Python object does not.
+    ///
+    /// Measured, on the reproduction that `docs/collector-and-threads.md`
+    /// gives. A finalizer on the environment, and one collection with the
+    /// scope open:
+    ///
+    ///     state of the scope             environments collected
+    ///     open, nothing evaluated                             1
+    ///     open, one deep evaluation                           1
+    ///
+    /// Issue #70.
+    std::shared_ptr<nix::Env *> repl_env_root;
+
+    /// The REPL environment. `repl_env_root` above is what keeps it alive.
     nix::Env *repl_env = nullptr;
     size_t repl_displ = 0;
     /// How many bindings `repl_env` has room for, remembered from the
@@ -138,6 +175,15 @@ struct PyEvalState {
     std::optional<PyValue> repl_process_line(const std::string &line, const std::string &path = "<string>");
     std::vector<std::string> repl_add_attrs(PyValue attrs);
     std::vector<std::string> repl_scope_names() const;
+
+    /// The evaluation statistics of this evaluator, as a JSON document.
+    ///
+    /// `nix` the command writes the same report when `NIX_SHOW_STATS` is set,
+    /// and it writes it to stderr or to a file. An embedded evaluator reads
+    /// neither, so `nix-2.35-count-calls.patch` splits a `statisticsJSON` out
+    /// of `EvalState::printStatistics`. That patch reaches 2.34 and every
+    /// later version, and it does not reach 2.31.
+    std::string statistics_json() const;
     void reset_file_cache();
     PyValue alloc_value();
 

@@ -115,9 +115,73 @@ patch in place:
 | default | 30 | 1 |
 | `GC_FREE_SPACE_DIVISOR=64` | 15 | 5 |
 
+**Measured again, on today's code, at 2.34.8 and on one machine.** The arm
+below is the soak alone, and the amplified setting is a pair:
+
+| arm | heap settings | collector | runs | failures |
+|---|---|---|---|---|
+| default | default | on | 12 | 0 |
+| amplified | 8 MiB, divisor 64 | on | 12 | 3 |
+| amplified, inproc alone | 8 MiB, divisor 64 | on | 8 | 4 |
+| control | 8 MiB, divisor 64 | **off** | 8 | 0 |
+
+**The control is the row that decides it.** It holds each heap setting of the
+amplified arm and adds `GC_DONT_GC=1`, so the process takes the same memory
+pressure and the same heap layout, and collects nothing. Every failure goes
+away. Memory pressure is therefore not the cause, and the heap layout is not
+the cause. Collection is.
+
+Two of the three failures of the amplified arm are SIGSEGV. The third is #70's own symptom, and it is the
+first sighting of that symptom since the collector gained an owner thread:
+
+```
+… while evaluating list element at index 265468
+error: cannot convert a function to JSON
+at «string»:1:19:
+     1| builtins.genList (x: x) 12000000
+```
+
+`genList (x: x)` gives a list of integers, and Nix read element 265468 as a
+function. That is a live object which the collector reclaimed and handed out
+again, which is what this issue says.
+
+**Amplification needs both settings.** `GC_FREE_SPACE_DIVISOR` alone changes
+nothing while the heap has slack, and `eval-gc.cc:88` gives it 384 MiB of
+slack unless `GC_INITIAL_HEAP_SIZE` is set. Measured with `_gc_stats` on an
+evaluator thread, over the same workload:
+
+| setting | collections |
+|---|---|
+| default | 6 |
+| `GC_FREE_SPACE_DIVISOR=64` | 6 |
+| `GC_INITIAL_HEAP_SIZE=8388608` | 63 |
+| both | 129 |
+
+The soak is heavier than that workload and exhausts the 384 MiB heap, so the
+divisor does act there; the table above is why the pair is the arm to use.
+Note that `ci/steps.nix` raises `GC_INITIAL_HEAP_SIZE` to 2 GiB for the TSan
+soak, which moves the other way on purpose, and says so.
+
+### The narrow reproduction
+
+The inproc soak alone, under the amplified pair, fails **4 runs in 8**, at
+about 10 seconds for each run:
+
+    GC_INITIAL_HEAP_SIZE=8388608 GC_FREE_SPACE_DIVISOR=64 \
+        pytest -m soak -k inproc --soak-seed=0 --nix-test-backends local
+
+That replaces "the whole suite, about 1 failure in 5 runs of 8 minutes" as the
+reproduction of #70. Every arm that was too expensive against the old one is
+affordable against this one.
+
+**Select the soak with `-m soak`, and name no path.** A path argument moves
+pytest's rootdir, and `discover_roster` reads `nanopynix/tests` under the root
+it is given. The roster then comes back empty. That state used to skip, and it
+now fails.
+
 ### Two evaluators are enough for #70
 
-The full suite died once in `tests/nanopynix/rpc/test_log_backpressure.py`,
+The full suite died once in `nanopynix/tests/rpc/test_log_backpressure.py`,
 with two `nix-eval_0` threads live, in `nix::ExprVar::eval`. The earlier note
 said "the four-evaluator test", and that is too narrow.
 
@@ -170,6 +234,69 @@ call out, rebuild, and build an evaluator on the main thread:
 Two runs decide it. Prefer this over a rate: the soak below could not
 reproduce the failure often enough to measure either side.
 
+### #70: the REPL environment had no root
+
+**`PyEvalState::begin_repl` allocated one `nix::Env` with `GC_MALLOC` and kept
+the only pointer to it in a plain member.** A `PyEvalState` lives in the Python
+heap. Boehm scans its own heap, the stacks of the threads it knows, and the
+memory it hands out as uncollectable. It scans no part of the Python heap, so
+that member rooted nothing, and the collector freed the environment while the
+REPL scope was open.
+
+Every observation of the crash follows from that one fact.
+
+| observation | what it follows from |
+|---|---|
+| frame #4 is in `_ext.so`, directly under `ExprVar::eval` | `EvalState::eval` is in libnixexpr and cannot inline into our module, so the caller is one of the three `parsedExpr->eval(*state, *repl_env, *v)` calls, and all three are REPL functions |
+| the faulting pointer is 2 past a 16-byte boundary | `pdListN` is 2, so the word is a `Value` payload and not a `Value *` |
+| the memory holds a repeating array of values | the environment's block was handed to a list |
+| `mov (%r12),%rax` reads the same address and does not fault | the page is mapped, and only the alignment is wrong |
+| the alignment check at the boundary never fires | the pointer is made and used inside libnixexpr, and no `PyValue` holds it |
+
+**The measurement.** A finalizer on the environment answers the question
+directly, and it does not need the freed block to be handed away afterwards.
+
+The control comes first, because a probe that never fires proves nothing. The
+machinery finalizes 200 of 200 blocks of 64 bytes, and 20 of 20 at the
+environment's own size. Use `GC_register_finalizer_no_order`: Boehm refuses to
+finalize an object it finds in a cycle of finalizable objects, and a count that
+stops there reads as "nothing died".
+
+Then, with exactly one environment in flight -- a plain evaluator drives every
+collection, so a count can only mean the scope under test:
+
+| state of the REPL scope | unrooted | rooted |
+|---|---|---|
+| open, nothing evaluated | **1 collected** | 0 |
+| open, one deep evaluation | **1 collected** | 0 |
+| after close | 1 | 1 |
+
+The last row still fires, so the environment is released when the scope closes
+rather than leaked.
+
+**The correction.** `PyEvalState::repl_env_root` holds it now:
+`std::allocate_shared<nix::Env *>` with `traceable_allocator`, which allocates
+with `GC_MALLOC_UNCOLLECTABLE`. That is the mechanism Nix uses for the same
+problem: `baseEnvP` in `src/libexpr/eval.cc` is the identical call, and
+`nix::allocRootValue` is the same idea for a value. Upstream's REPL takes the
+other route and derives `NixRepl` from `gc`, which puts the whole object into
+the collector's heap. Either roots it. A raw member of a Python object does
+not.
+
+**`repl_env` was the only one.** Every other Nix pointer in these bindings is a
+local variable, which the collector reaches through the stack of a registered
+thread, or a `nix::RootValue`, which is already a root.
+
+`nanopynix/tests/inproc/test_repl_env_root.py` holds this. It is a
+deterministic gate and not a rate: against the unrooted bindings it fails with
+"the collector freed the REPL environment while the scope was open".
+
+**The crash arm could not have settled this, and says why the mechanism had
+to.** The amplified reproduction gave 0 SIGSEGV in 14 runs rooted, against 1 in
+8 unrooted, on one machine on one day. The documented rate for that arm is 4 in
+8, so the arm was far less sensitive than usual, and 0 against 1 decides
+nothing on its own.
+
 ## Excluded
 
 Each of these has evidence, and needs new evidence to reopen.
@@ -188,6 +315,72 @@ Each of these has evidence, and needs new evidence to reopen.
   asked whether the collector knows that one thread.
 - **A data race that ThreadSanitizer can see.** Every TSan job passes with the
   soak in it.
+- **A live pointer at a displacement that Boehm does not accept.**
+  `GC_push_contents_hdr` black-lists a reference at an unregistered offset
+  rather than marking the object it names, and Nix packs a 3-bit discriminator
+  into each `Value` pointer. `NANOPYNIX_GC_ALL_INTERIOR_POINTERS=1` marked
+  every offset valid, and the failure rate did not move:
+
+  | arm | runs | failures |
+  |---|---|---|
+  | amplified | 12 | 3 |
+  | amplified, every offset valid | 12 | 4 |
+
+  The differential was `NANOPYNIX_GC_ALL_INTERIOR_POINTERS` in `nix_expr.cpp`,
+  and the `interior` arm of `ci/experiments.nix` drove it. Both went with #70:
+  the arm stated the criterion above, the criterion was met, and the cause was
+  an environment that nothing rooted. To put the class back on the table, add
+  `GC_set_all_interior_pointers(1)` after `nix::initGC` on the owner thread
+  again. It is three lines, and the table above says what a clean arm means.
+- **A thread that the collector does not know.** Registration is balanced in a
+  run that fails with the wrong-type read: 57 registrations and 57
+  unregistrations, which is what a clean run gives.
+  `NANOPYNIX_GC_THREAD_DEBUG=1` on the short reproduction. The count is now per
+  process, and one process of the four registers every evaluator thread. A run
+  that ends in SIGSEGV instead gives an unbalanced count, because the process
+  dies with its threads live, and that says nothing.
+  **This excludes the accounting, and not the scan.** A thread that Boehm
+  knows and does not stop is a different failure, and #72 is the precedent for
+  one.
+- **A thread that stops too slowly for stop-the-world.** `GC_stop_world`
+  resends its signal to a thread that does not acknowledge in time, and it
+  logs `Resent %d signals after timeout`. It warns `Lost some threads while
+  stopping or starting world?!` when the count still does not balance. Both
+  strings are in this build of the library. `GC_PRINT_STATS=1` with
+  `GC_LOG_FILE` on eight runs of the short reproduction, of which runs 2 and 5
+  failed: **zero occurrences of either line, in all eight**. Only the banner
+  `Will retry suspend and restart signals if necessary` appears.
+
+- **The tolerated branch of our own patch.**
+  `nix/patches/boehmgc-tolerate-suspend-thread-exit-race.patch` widens
+  `GC_suspend_all` and `GC_start_world` to accept `EINVAL` beside `ESRCH`. That
+  branch runs `n_live_threads--; break;`, so it leaves a thread unsuspended and
+  leaves its entry in `GC_threads`, and the count then balances by
+  construction. It fitted every measurement this issue had.
+
+  The patch now logs from both branches, through `GC_COND_LOG_PRINTF`, so
+  `GC_PRINT_STATS=1` reports the skip. Twelve runs of the short reproduction,
+  three of which died with SIGSEGV: **zero skips at suspend and zero at resume,
+  in all twelve**. The control is exact, because the banner `Will retry suspend and
+  restart signals if necessary` comes from the same macro in the same file, and
+  it appears in every log.
+
+  **So the branch is never taken here, and #70 is not #72 under another name.**
+  Keep the log lines. They cost nothing in a normal run, and they turn the one
+  silent branch in this file into an observable one.
+- **Parallel marking.** The stats log says `Started 3 mark helper threads`, so
+  the mark phase runs on four threads. `GC_MARKERS=1` removes the helpers, and
+  the log then carries no such line.
+
+  | arm | runs | SIGSEGV | other |
+  |---|---|---|---|
+  | amplified | 12 | 3 | 0 |
+  | amplified, one marker | 12 | **4** | 2 |
+
+  The rate does not fall. **Count the SIGSEGV column, and not the runs that
+  merely failed.** The soak also fails with a `TimeoutError` from its own
+  deadline, which is a slow machine and not this issue, and one arm of this
+  investigation reported 6 against 3 by adding the two together.
 - **Multiple evaluators plus frequent collections, on their own.** The two
   multi-evaluator modules with `GC_FREE_SPACE_DIVISOR=64`: 0 failures in 10
   runs. Something else in the suite is a necessary ingredient.
@@ -218,8 +411,14 @@ Each of these has evidence, and needs new evidence to reopen.
 
 ## Not yet explained
 
-**#70.** A `Value` reads as the wrong type during evaluation. The shape fits a
-live object that the collector reclaims and then hands out again.
+**#70 is explained, and "#70: the REPL environment had no root" holds it.**
+What follows is the history of the hunt, which is kept because it says what
+each instrument could and could not see, and because the reproduction it
+built is the one to use for the next defect of this shape.
+
+Read the stack of run 31820106000 below with the answer in hand: the dying
+thread is in `repl_eval_string`, and the other two are in `eval_string`. That
+trace named the REPL path before anything else did.
 
 The reproduction used to be the **whole** test suite, at about 1 failure in 5
 runs of 8 minutes, measured locally. A narrower selection does not reproduce,
@@ -235,9 +434,38 @@ lacks the thread registration, the whole suite ran 30 times in CI:
 | 30969557667 | `develop` | 15 | 0 |
 
 The one failure in run 30966905346 was the unknown-thread abort above, and
-not this issue. So #70 has not reproduced once since the collector gained an
-owner thread, and no arm of any size can now measure whether the registration
-helped. **Reopening #70 needs a reproduction first, not another soak.**
+not this issue. So #70 did not reproduce once between the collector-owner
+change and 2026-08-14, and no arm of any size could measure whether the
+registration helped.
+
+**That paragraph asked for a reproduction before another soak, and the
+amplified soak above is it.** The arm to run is the pair of Boehm settings,
+and not the divisor alone. Read "The collector is in the causal path of #70"
+for the rates and for the command.
+
+**The streak ended, and the soak is the new reproduction.** Run 31820106000
+is a full matrix on `ci-develop` at `0349648a`. Its `test-local-nix_2_35` job
+died with SIGSEGV in the **soak**, 0.6 seconds in, with three evaluator
+threads live and the same frame as before:
+
+```
+Thread 0x00007f9d3c3fe6c0 [nix-eval_0]:  _objects.py:534 in eval_string
+Current thread 0x00007f9d3ffff6c0 [nix-eval_0]:  _objects.py:543 in repl_eval_string
+Thread 0x00007f9d387fd6c0 [nix-eval_0]:  _objects.py:534 in eval_string
+
+libnixexpr.so.2.35.1, at nix::ExprVar::eval(nix::EvalState&, nix::Env&, nix::Value&)+0x120
+```
+
+Four lanes were in flight, and one of them
+(`test_a_cancelled_interruptible_operation_frees_the_evaluator`) closes an
+evaluator, which is the condition this issue is named for. The same job on
+the same commit then passed three times out of three, so the rate is about 1
+in 4 on this job.
+
+**This matters because the soak is 0.6 seconds where the whole suite was 8
+minutes.** An arm that forces collection was not affordable against the old
+reproduction. Against this one it is. Issue #70 carries the lane composition
+and the run links.
 
 The registration (`99f74d82`) landed after that measurement, and the streak
 continues on code that carries it. Run 31050794050 is a full matrix on
@@ -267,6 +495,238 @@ whether the registration helped. **Do not report a clean amplified arm as
 evidence for a fix.** Find an amplifier that reproduces, or use the one-line
 differential above, which decides in two runs.
 
+### Stop-the-world reaches every thread
+
+Four measurements say the same thing. All are on the short reproduction, and
+each covers a run that failed:
+
+| question | instrument | answer |
+|---|---|---|
+| does Boehm have an entry for every thread? | `NANOPYNIX_GC_THREAD_DEBUG=1` | yes, 57 and 57 |
+| does any thread fail to acknowledge in time? | `Resent %d signals after timeout` | never, 0 of 12 |
+| does the count of live threads ever drop? | `Lost some threads...` | never, 0 of 12 |
+| does a thread get skipped at suspend or resume? | the log added to our patch | never, 0 of 12 |
+
+`GC_stop_world` waits until the acknowledgement count equals the count of live
+threads, and it logs only when that wait passes 100 ms. Zero `Resent` lines
+therefore mean that **every registered thread acknowledged the suspend signal,
+on every one of the 117 collections of a failing run.** Parallel marking is
+excluded separately, above.
+
+**Reaching a thread is not the same as scanning its stack.**
+`GC_push_all_stacks` runs after the world stops, and it can miss a stack in two
+ways that none of the four measurements above covers. Both are measured below,
+and both are excluded:
+
+1. **The `FINISHED` flag.** The loop runs `if (p -> flags & FINISHED)
+   continue;`, and it does not count such an entry. `GC_unregister_my_thread`
+   sets that flag for a joinable thread. A thread that unregisters and keeps
+   running therefore keeps its stack out of every later collection.
+2. **The recorded bounds.** For a thread that is not the main one, the loop
+   takes `hi = p -> stack_end`, which `GC_register_my_thread` recorded from
+   `GC_get_stack_base` at registration. It takes `lo` from the stack pointer
+   saved at suspend. A wrong `hi` leaves the top of the stack unscanned, and
+   nothing reports it.
+
+**The `FINISHED` flag is measured, and it is excluded.**
+`GC_PRINT_VERBOSE_STATS=1` prints `Pushed %d thread stacks` for each
+collection. Reading it took two instruments, because a count on its own belongs
+to no process and to no collection:
+
+- `boehmgc-log-file-pid.patch` expands the first `%d` of `GC_LOG_FILE` to the
+  process id, so each process gets its own log.
+- `gc_collection_start_probe` in `nix_expr.cpp` writes the count of threads
+  **we** registered, keyed by `GC_get_gc_no()`, at the start of each
+  collection. A reader pairs the two files by that number, and adds one,
+  because bdwgc prints `GC_gc_no + 1` on the marking line.
+
+Twelve runs, one of which died with SIGSEGV. In the process that owns every
+evaluator thread, the pairing covers all but the first collection of the run,
+which happens before the probe is installed:
+
+| run | collections paired | of, in that process | deficits | pushed minus registered |
+|---|---|---|---|---|
+| SIGSEGV | 14 | 15 | **0** | always 1 |
+| clean | 55 | 56 | **0** | always 1 |
+| clean | 57 | 58 | **0** | always 1 |
+
+The offset of one is the thread that owns the collector. It takes its entry
+from `GC_INIT`, and not from the registration that the counter follows.
+
+**No collection ever pushed fewer stacks than were registered.** So no entry
+carried `FINISHED` while its thread was still registered, and the first
+miss-path is closed.
+
+**The recorded bound is measured too, and it is exact.**
+`gc_stack_bounds_probe` runs at each registration. It takes what the collector
+recorded, through `GC_get_stack_base`, and what the thread really has, through
+`pthread_getattr_np` and `pthread_attr_getstack`, and writes the difference.
+Ten runs, two of which died with SIGSEGV, 57 registrations in a run that
+completes:
+
+```
+recorded_top=0x7a8f38000000 real_top=0x7a8f38000000 size=62914560 shortfall=0
+```
+
+**Every registration in every run gives `shortfall=0`.** The two agree to the
+byte, on a 60 MiB stack, and the recorded top differs for each thread, so the
+probe reads a real value rather than a constant.
+
+One limit of this instrument: it compares the bound at the moment of
+registration. A stack that moved afterwards would not show here. These are
+pthread stacks of a fixed size, so none moves, and the main thread does not use
+this path at all -- `GC_push_all_stacks` takes `GC_stackbottom` for the entry
+that carries `MAIN_THREAD`.
+
+**Read the log of the right process.** The `nix` command on the `PATH` of the
+dev shell links a different, unpatched collector, so a `nix` subprocess
+inherits `GC_LOG_FILE` and writes the name with the `%d` still in it. Three of
+them do that in each run. Those logs are not this process, and the pid in the
+name is what tells them apart.
+
+### The lost root is not a thread stack
+
+Six measurements now cover every step from "Boehm knows the thread" to "Boehm
+pushed the whole of its stack", and each one covers a run that crashed:
+
+| question | instrument | answer |
+|---|---|---|
+| does Boehm have an entry for every thread? | `NANOPYNIX_GC_THREAD_DEBUG=1` | yes |
+| does a thread fail to acknowledge the suspend? | `Resent %d signals after timeout` | never |
+| does the live-thread count ever drop? | `Lost some threads...` | never |
+| is a thread skipped at suspend or resume? | the log in our patch | never |
+| does a collection skip a registered thread's stack? | `Pushed %d thread stacks`, paired | never |
+| is the recorded stack bound short? | `gc_stack_bounds_probe` | never, 0 bytes |
+
+Parallel marking is excluded separately. **So the collection marked from the
+whole of every stack of every live thread, and it still freed a live value.**
+
+**The remaining family is a root that is not a thread stack.** A `Value`
+reachable only through memory the collector does not trace is invisible to a
+correct scan of every stack. One candidate is already excluded: `PyValue` holds
+a `nix::RootValue`, which `nix::allocRootValue` builds with
+`traceable_allocator`, and bdwgc's `traceable_allocator::allocate` calls
+`GC_MALLOC_UNCOLLECTABLE`. That block is traced and never collected, so a
+`PyValue` in Python's own heap still keeps its `Value` alive.
+
+The question to answer next is which other structure holds a `nix::Value *`, or
+a `nix::Env *`, across a point where a collection can happen, and whether the
+memory that holds it is traced.
+
+### What the core dump says the crash is
+
+A core dump of the SIGSEGV. The crashing thread is `nix::ExprVar::eval`, which
+is the frame that every report of this issue names.
+
+**Pin the closure before you make the crash.** `systemd-coredump` keeps the
+core, and the core names the store paths of every library it loaded. A store
+collection removes the dev environment of a previous `direnv` build as soon as
+nothing refers to it, and then gdb resolves no symbol in `libnixexpr` and none
+in the bindings. Three cores of this investigation were lost that way. Take a
+root first, and the crash after:
+
+```
+nix-store --add-root ./keep --indirect -r "$(direnv exec . python -c \
+  'import nanopynix_bindings,pathlib;print(pathlib.Path(nanopynix_bindings.__file__).parent)' \
+  | grep -o '^/nix/store/[^/]*')"
+```
+
+**The fault is an alignment fault, and not an access to memory that is not
+there.** The instruction is `movdqa (%r12),%xmm0`, and `%r12` is
+`0x713dd60fb012`. `movdqa` needs an address that is a multiple of 16, and that
+address is a multiple of 2. The proof that the page is present is 60
+instructions earlier in the same function: `mov (%r12),%rax` reads the same
+address and does not fault.
+
+**The pointer carries a discriminator.** `class ValueStorage` is `alignas(16)`
+and packs 3 bits into the low bits of `payload[0]`, so a real `Value *` always
+ends in 0. Take those bits off `0x713dd60fb012` and the result is
+`0x713dd60fb010`, which is a multiple of 16.
+
+**The memory it names is the collected heap, and it holds well-formed values.**
+`GC_least_plausible_heap_addr` is `0x713d6e7f01bb` and
+`GC_greatest_plausible_heap_addr` is `0x713de04ef5e6`, so the address is inside
+the heap of the collector. The bytes there repeat every 32:
+
+```
+0x713dd60fb000:  0x0000713dd66d1695   0x0000713dd60fb012
+0x713dd60fb010:  0x0000000000000009   0x0000000000041032
+0x713dd60fb020:  0x0000713dd66d1695   0x0000713dd60fb032
+0x713dd60fb030:  0x0000000000000009   0x0000000000041031
+```
+
+Read as `Value`, each pair is coherent. The one at `...000` has
+`payload[0] & 7 == 5`, which is `pdPairOfPointers`, and its `payload[1]` is the
+address of the next `Value` with 2 in the low bits. The one at `...010` has
+`payload[0] & 7 == 1`, which is `pdSingleDWord`, an internal type of 1, and a
+payload that counts down by one for each pair. **This is live data, and not
+rubbish.**
+
+`%rax` at the fault is `0x1032000000000000`, which is exactly the eight bytes
+that start at `...012`. So the dispatch read its discriminator from an address
+two bytes into a `Value`, got 0 in the low bits, took that for
+`pdUninitialized`, and fell through to the 16-byte copy.
+
+**The shape that fits is an `Env` whose memory now holds an array of values.**
+`Env` is `{ Env * up; Value * values[0]; }`, so `values[0]` sits 8 bytes in.
+Eight bytes into this block is `0x713dd60fb012`, which is `payload[1]` of the
+first `Value` of the array. A read of `env->values[0]` therefore returns the
+tagged second word of a `Value`, and that is precisely the pointer that faults.
+
+State this one carefully: `%r8` holds the address that was read, and it is a
+register the unwinder cannot recover, so it reads 0 in the dump. The
+identification of `0x713dd60fb000` as the env is **inferred from the layout,
+and not read out of the core.**
+
+**So the failure is a use of collected memory after that memory was given to
+something else**, which is the shape this issue always had. What is new is that
+the reused block is now identified, and the fingerprint is cheap to recognise
+again: a `Value *` whose low three bits are not 0.
+
+**The bad pointer does not cross the boundary of the bindings.**
+`nanopynix_check_value_alignment` refuses such a pointer where a value enters a
+wrapper and where an accessor reads one, and
+`nanopynix/tests/bindings/test_value_alignment_check.py` proves that it refuses
+one. Fourteen runs of the short reproduction, two of which died with SIGSEGV:
+**the check fired in neither.**
+
+That is a result and not a disappointment. No `PyValue` holds the bad pointer.
+`ExprVar::eval` reads it out of an `Env` and faults on it, entirely inside
+libnixexpr. So the block that the collector reused is reached through Nix's own
+environment chain, and the search belongs there rather than in anything this
+repository hands across.
+
+**That narrowing found it.** The `Env` was the REPL environment, and nothing
+rooted it. "#70: the REPL environment had no root", above, gives the analysis.
+
+### The remaining family
+
+**`std::make_shared<nix::EvalState>` is not that structure. Do not change it.**
+`py_eval.hh` builds the evaluator with the default allocator, and
+`libcmd/command.cc:169` builds one with
+`std::allocate_shared<EvalState>(traceable_allocator<EvalState>(), ...)`. That
+difference reads like a defect and is not one. Nix itself uses plain
+`std::make_shared<EvalState>` in `nix/main.cc`, `prefetch.cc`,
+`nix-build/nix-build.cc`, `upgrade-nix.cc` and
+`nix-instantiate/nix-instantiate.cc`. The one call in `libcmd` is the exception.
+
+The design is what makes both correct: every member of `EvalState` that refers
+to collected memory carries its own root.
+
+| member | what roots it |
+|---|---|
+| `baseEnvP` | `std::allocate_shared<Env *>(traceable_allocator<Env *>(), ...)` |
+| `fileEvalCache` | `traceable_allocator` on its nodes |
+| `internalPrimOps` | `traceable_allocator` on its nodes |
+| `vImportedDrvToDerivation` | a `RootValue`, so `allocRootValue` |
+| `Value::vTrue`, `Value::vFalse` | static storage, which Boehm scans |
+
+`mem.exprs` is the one that looks wrong and is not. It is a
+`std::pmr::monotonic_buffer_resource` over the ordinary heap, and `ExprString`
+and `ExprPath` each hold a `Value` inside it. Those values point into that same
+arena and not into collected memory, which is what the comment above
+`ExprString::v` states. The arena belongs to the evaluator and outlives them.
+
 ## The instruments, and what each one cannot see
 
 **Do not read a green sanitizer job as evidence against a collector bug.**
@@ -294,16 +754,26 @@ timing. Use a post-mortem core through `coredumpctl`.
 
 The selection of #53, before the fix, crashed 6 times in 6, in 48 seconds:
 
-    pytest tests/nanopynix/test_logging.py tests/nanopynix/test_verbosity.py \
-        tests/nanopynix/inproc tests/nanopynix/bindings
+    pytest nanopynix/tests/test_logging.py nanopynix/tests/test_verbosity.py \
+        nanopynix/tests/inproc nanopynix/tests/bindings
 
-#70 needs the whole suite:
+#70 fails 4 runs in 8, at about 10 seconds for each run:
 
-    pytest tests
+    GC_INITIAL_HEAP_SIZE=8388608 GC_FREE_SPACE_DIVISOR=64 \
+        pytest -m soak -k inproc --soak-seed=0 --nix-test-backends local
 
-Raise `GC_FREE_SPACE_DIVISOR` to make the collector run more often. Set
-`GC_DONT_GC=1` to take the collector out of the picture, which is the control
-arm for every collector hypothesis.
+The whole suite reproduced #70 before this, at about 1 failure in 5 runs of 8
+minutes. Use the command above instead.
+
+**Both settings are necessary.** `GC_FREE_SPACE_DIVISOR` raises the collection
+rate only when the heap has no slack, and `GC_INITIAL_HEAP_SIZE` is what takes
+the slack away. The measurement is in "The collector is in the causal path of
+#70". Add `GC_DONT_GC=1` to the same command to take the collector out of the
+picture, and keep each heap setting: that is the control arm, and it fails 0
+runs in 8 where the arm above fails 4.
+
+**Select the soak with `-m soak`, and name no path.** A path argument moves
+pytest's rootdir, and the roster is read relative to it.
 
 `NANOPYNIX_GC_THREAD_DEBUG=1` logs every registration, and
 `NANOPYNIX_GC_THREAD_DEBUG_FILE` sends the log to a path. Use the file:

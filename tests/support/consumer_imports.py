@@ -24,7 +24,7 @@ Three kinds of internal, and this module reports all three:
   component of its name looks public.
 
 The third kind is why this module absorbed the older
-``tests/pynix/test_import_boundaries.py`` rather than replacing it. That guard
+``pynix/tests/test_import_boundaries.py`` rather than replacing it. That guard
 named ``nanopynix.rpc.client`` and ``nanopynix_proto``, and the underscore rule
 alone sees neither: the first has no underscore in it, and the second is a
 different distribution. The underscore rule is the wider net, the denylist
@@ -60,7 +60,6 @@ if TYPE_CHECKING:
 # root. `tests/` is absent on purpose -- see the module docstring.
 CONSUMER_ROOTS = (
     "pynix/src",
-    "ekn/src",
     "nanopynix-helpers/src",
     "docs",
 )

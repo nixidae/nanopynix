@@ -41,16 +41,19 @@ of Nix store operations are deliberately absent:
   ``add_indirect_root``. Those live on Nix's ``GcStore``, ``LogStore`` and
   ``LocalFSStore`` interfaces, which a Python store does not inherit, so there
   is nothing to override.
-:meth:`~StoreImpl.read_derivation` is dispatched because Nix declares
-``Store::readDerivation`` virtual from 2.34 on.
-``nanopynix.build_info()["capabilities"]["store_impl_read_derivation"]``
-carries the fact, the same mechanism ``dynamic_primop_registration`` uses for
-primops.
+Every operation above dispatches on every supported Nix.
+:meth:`~StoreImpl.read_derivation` needs Nix to declare
+``Store::readDerivation`` virtual, which it does from 2.32 and did not on
+2.31; ``supportedNixFloor`` is 2.34, so the method is always called. To test
+this from a caller, read
+``nanopynix.build_info()["capabilities"]["store_impl_read_derivation"]`` -- the
+same mechanism ``dynamic_primop_registration`` uses for primops.
 
-Nix does *not* read a ``.drv`` through :meth:`~StoreImpl.query_path_info`: it
-reads it through a store accessor, which a Python store without an
-``underlying_store`` cannot serve, so ``read_derivation`` against one fails
-with ``InvalidPath`` unless this hook answers.
+**A Python store cannot serve a derivation on its own**, and an earlier
+version of this note claimed it could. Nix does *not* read a ``.drv`` through
+:meth:`~StoreImpl.query_path_info`: it reads it through a store accessor,
+which a Python store without an ``underlying_store`` cannot serve, so
+``read_derivation`` against one fails with ``InvalidPath``.
 
 This is not the same thing as :mod:`nanopynix.protocols`. Those describe the
 async API that nanopynix's own engines *provide* to callers; this describes the

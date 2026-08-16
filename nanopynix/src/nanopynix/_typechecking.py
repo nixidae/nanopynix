@@ -8,7 +8,7 @@ running.
 
 Modules that use `if TYPE_CHECKING or BEARTYPING:` instead ask for that same
 name to *also* become a real runtime import when this flag is set, which
-`tests/support/beartype_hook.py` does (via the `NANOPYNIX_BEARTYPING`
+`nanopynix_testing.beartype_hook` does (via the `NANOPYNIX_BEARTYPING`
 environment variable, read below) before anything else is imported --
 because beartype's runtime checks need a real, importable object to check
 against, not a string. Flipping `typing.TYPE_CHECKING` itself for this would
@@ -34,8 +34,8 @@ actually imported -- that's a real constraint the guard existed to avoid, not
 a bug in this flag, and is handled case by case rather than assumed away.
 
 This module is deliberately dependency-free and is imported by name from
-`pynix`, `ekn` and `nanopynix_helpers` as well as from `nanopynix` itself. It
-is shared test-instrumentation plumbing rather than library API, so it stays
+`pynix` and `nanopynix_helpers` as well as from `nanopynix` itself. It is
+shared test-instrumentation plumbing rather than library API, so it stays
 private (a public re-export would be surface with no caller outside this
 repository); the usual "consumers depend on public nanopynix APIs" rule is
 waived here rather than silently broken.

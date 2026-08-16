@@ -5,7 +5,7 @@ lifetime mechanics, but callers can depend on these shared operation shapes.
 Protocols deliberately describe only behaviour common to both transports.
 See :mod:`nanopynix.store` and :mod:`nanopynix.inproc` for the two
 implementations, checked against these protocols in
-``tests/nanopynix/test_protocols.py``.
+``nanopynix/tests/test_protocols.py``.
 
 Every protocol here is ``@runtime_checkable``. That is not for callers to reach
 for ``isinstance`` in place of static typing -- it stays a structural check on
@@ -43,7 +43,7 @@ Python 3.14, plus the dict. rpc's ``Store``, ``ValueProxy``, ``EvalSession``
 and ``ReplSession`` are all ``__slots__``-based, and one ``ValueProxy`` exists
 per Nix value. The check is easy to get wrong:
 ``getattr(protocol, "__slots__")`` answers ``()`` from ``Protocol`` itself even
-when the body omits it, so ``tests/nanopynix/test_protocols.py`` asks
+when the body omits it, so ``nanopynix/tests/test_protocols.py`` asks
 ``vars(protocol)`` instead.
 """
 
@@ -199,7 +199,7 @@ class AsyncValue(Protocol):
     #
     # These three were the last members of the shared surface this protocol
     # could not describe, because inproc awaited `attr`/`list_get` and took a
-    # single `call` argument. tests/nanopynix/test_engine_parity.py's ledger
+    # single `call` argument. nanopynix/tests/test_engine_parity.py's ledger
     # carried them as Value.attr:async, Value.list_get:async and
     # Value.call:params.
 
@@ -733,6 +733,63 @@ class AsyncEvalSession[ValueT: AsyncValue = AsyncValue](AsyncVerbosityController
         ...
 
     @abstractmethod
+    async def set_eval_counters_enabled(self, enabled: bool) -> bool:
+        """Turn the evaluation counters on, or off, and report the new state.
+
+        The counters back the numeric fields of :meth:`statistics`. Nix leaves
+        them off unless ``NIX_SHOW_STATS`` is set, because each increment costs
+        an atomic write.
+
+        **The scope is a process, and not this evaluator.** On ``rpc`` that
+        process is the worker, which is why the call goes over the wire rather
+        than setting a static here. See :meth:`statistics`, and issue #118.
+        """
+        ...
+
+    @abstractmethod
+    async def statistics(self) -> dict[str, Any]:
+        """Report what this evaluator did, as ``NIX_SHOW_STATS=1 nix`` reports it.
+
+        The report holds the counts of the values, the environments and the
+        attribute sets, the time, and the state of the collector. The
+        ``primops``, ``functions`` and ``attributes`` tables need the
+        ``count-calls`` eval setting, which is off by default because the
+        counting costs time.
+
+        Nix decides the fields, and it changes them between versions. Read a
+        field that a version supplies, and do not require one.
+
+        .. warning::
+
+           **This report is unreliable when one process holds more than one
+           evaluator.** Two things belong to the process, and not to this
+           evaluator:
+
+           * ``nrExprs`` and ``nrThunks`` are static counters of
+             ``libnixexpr``, so each evaluator reports the sum of every
+             evaluator in the process.
+           * The switch that turns counting on is one static as well, so an
+             evaluator cannot count while another beside it does not.
+
+           The other thirteen counted fields belong to this evaluator alone.
+           They are still not predictable on ``inproc``, which evaluates in
+           parallel in one process, because the switch above decides them all.
+           ``rpc`` gives each worker its own process, so its numbers are
+           stable.
+
+           The three call tables need no such care. ``count_calls`` writes
+           them into the maps of one evaluator, so they are exact on both
+           engines. Issue #118 tracks the repair, and the reason that upstream
+           Nix keeps a static.
+
+           ``build_info()["capabilities"]["eval_statistics"]`` reports whether
+           this build has the report at all. It is ``True`` on every supported
+           Nix, because the patch that exposes the statistics reaches 2.34 and
+           later, and ``supportedNixFloor`` is 2.34.
+        """
+        ...
+
+    @abstractmethod
     async def lock_flake(
         self,
         ref: str,
@@ -820,7 +877,7 @@ class AsyncSession[
     :meth:`store` returns one. So a *bare* ``AsyncSession`` means
     ``AsyncSession[AsyncStore, ...]``, and neither engine is one -- correctly,
     because an engine's ``eval`` must reject the other engine's store. Annotate
-    with the parameters solved, as ``tests/nanopynix/test_protocols.py`` does,
+    with the parameters solved, as ``nanopynix/tests/test_protocols.py`` does,
     and not with the bare name.
 
     The evaluator bounds are ``[Any]`` and not the bare protocol names.

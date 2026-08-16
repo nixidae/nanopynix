@@ -6,9 +6,9 @@ extraPaths = [
   "nanopynix/src",
   "nanopynix-helpers/src",
   "pynix/src",
-  "ekn/src",
   "pytest-agent/src",
   "grpclib-transports/src",
+  "completion-spike/src",
   # The planner library of the dynamic-derivations experiment. It is stdlib
   # only, and it is not installed into the dev environment: a planner reaches
   # it through PYTHONPATH inside a build sandbox.
@@ -33,15 +33,20 @@ extraPaths = [
   # grpclib-transports/tests/test_examples.py runs.
   "grpclib-transports/docs/examples",
   "tests",
-  "tests/pynix",
+  "nanopynix/tests",
+  "pynix/tests",
   # Reached by a bare `import beartype_bootstrap` from both the sitecustomize
-  # shim beside it and tests/support/beartype_hook.py, because the directory
-  # goes on PYTHONPATH rather than being a package under `tests` -- see that
+  # shim beside it and `nanopynix_testing.beartype_hook`, because the
+  # directory goes on PYTHONPATH rather than being a package -- see that
   # module's docstring.
-  "tests/_subprocess_startup",
+  "nanopynix-testing/src/nanopynix_testing/_subprocess_startup",
   "docs",
 ]
-exclude = ["**/result*"]
+# `pynixd/` is imported and not integrated. See the same note in `ruff.toml`:
+# that tree keeps its own pyright settings at `pynixd/pyproject.toml`, and a
+# strict run from here reported 7629 errors on the day of the import. Issue
+# #131 removes this entry, one gate at a time.
+exclude = ["**/result*", "pynixd"]
 
 [[tool.pyright.executionEnvironments]]
 root = "nanopynix-bindings/src"
@@ -60,6 +65,19 @@ reportMissingModuleSource = "none"
 root = "tests"
 reportPrivateUsage = "none"
 
+# A suite reads the private surface of the thing it tests, and the LSP drivers
+# call `pynix._lsp._handlers._hover` and its peers directly. This entry says
+# for `pynix/tests/` what the one above says for `tests/`: issue #130 moved the
+# suite out from under that root, and 18 reports appeared with no code change.
+# Each suite that moves needs its own entry.
+[[tool.pyright.executionEnvironments]]
+root = "nanopynix/tests"
+reportPrivateUsage = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "pynix/tests"
+reportPrivateUsage = "none"
+
 [[tool.pyright.executionEnvironments]]
 root = "pytest-agent/tests"
 extraPaths = ["pytest-agent/tests"]
@@ -73,8 +91,9 @@ branch = true
 # `parallel = true` gives each process its own data file (merged later via
 # `coverage combine`); `sigterm` flushes data on graceful worker shutdown.
 # The forkserver helper itself is a freshly exec'd interpreter, so it only
-# picks up COVERAGE_PROCESS_START via tests/_subprocess_startup/sitecustomize.py,
-# whose directory tests/support/beartype_hook.py puts on PYTHONPATH.
+# picks up COVERAGE_PROCESS_START via the `sitecustomize.py` of
+# `nanopynix_testing`, whose directory that project's `beartype_hook` puts on
+# PYTHONPATH.
 concurrency = ["multiprocessing", "thread"]
 parallel = true
 sigterm = true

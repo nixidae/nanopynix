@@ -11,7 +11,27 @@ if (CMAKE_VERSION VERSION_LESS 3.18)
 else()
   set(DEV_MODULE Development.Module)
 endif()
-find_package(Python 3.9 COMPONENTS Interpreter ${DEV_MODULE} REQUIRED)
+# **The stable ABI is for the wheel, and for nothing else.**
+#
+# A stable ABI extension imports on every CPython from 3.12 up, so one wheel
+# serves 3.13, 3.14 and every release after it. Without it, PyPI needs one
+# wheel for each Python minor version, times three Nix versions and two
+# architectures, and each Python release rebuilds all of them.
+#
+# It is off by default, because nothing else here wants it. A package that Nix
+# builds is built for the one interpreter that Nix builds it against, so the
+# compatibility buys nothing, and nanobind states a cost for it: the stable ABI
+# stops nanobind reading the internals of the data structures of CPython
+# directly. `pynix` and the test suite take the ordinary build and keep the
+# speed.
+option(NANOPYNIX_STABLE_ABI "Build the extension against the stable ABI of CPython" OFF)
+
+# `Development.SABIModule` is what `STABLE_ABI` links against, and it is
+# optional: a CPython that ships no `libpython3.so` has no stable ABI, and
+# nanobind then ignores the flag rather than failing the build.
+find_package(Python 3.9
+  REQUIRED COMPONENTS Interpreter ${DEV_MODULE}
+  OPTIONAL_COMPONENTS Development.SABIModule)
 find_package(nanobind CONFIG REQUIRED)
 find_package(PkgConfig REQUIRED)
 
@@ -76,8 +96,17 @@ endfunction()
 # if that ever stops being true is a missing registration at runtime, so a new
 # component pulled in for its side effects alone needs `-Wl,--no-as-needed`
 # around it and a comment saying why.
+#
+# Apple's ld has no `--as-needed` -- it fails the link outright with
+# `ld: unknown option: --as-needed` rather than ignoring it. `-dead_strip_dylibs`
+# is ld64's own name for the same thing: drop a dylib the link did not
+# actually resolve a symbol from. The caveat above transfers unchanged.
 function(nanopynix_link_as_needed target)
-  target_link_options(${target} PRIVATE "LINKER:--as-needed")
+  if(APPLE)
+    target_link_options(${target} PRIVATE "LINKER:-dead_strip_dylibs")
+  else()
+    target_link_options(${target} PRIVATE "LINKER:--as-needed")
+  endif()
 endfunction()
 
 # --- the extension ---
@@ -94,7 +123,16 @@ endfunction()
 # dlopening ABI-coupled C++ plugins named by someone's nix.conf. --as-needed prunes whatever this build does not actually resolve
 # a symbol from, so the union costs nothing but says plainly which Nix
 # components the bindings are built against.
+# `STABLE_ABI` is a positional argument of `nanobind_add_module`, so the option
+# above becomes a list that is either empty or holds that one word.
+if (NANOPYNIX_STABLE_ABI)
+  set(NANOPYNIX_ABI_FLAG STABLE_ABI)
+else()
+  set(NANOPYNIX_ABI_FLAG)
+endif()
+
 nanobind_add_module(_ext
+  ${NANOPYNIX_ABI_FLAG}
   src/nanopynix_module.cpp
   src/nix_errors.cpp
   src/nix_signals.cpp
@@ -136,8 +174,55 @@ nanopynix_link_as_needed(_ext)
 # Here, and not in `cmakeFlags` of `package.nix`: each entry there becomes its
 # own `-Ccmake.args=` token and must hold no space, so it cannot carry both
 # this and the linker flag of a sanitizer build.
-target_link_options(_ext PRIVATE
-  "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/export.map")
+#
+# NOT ON APPLE, and this one is a judgement rather than a substitution.
+# ld64 has no `--version-script` at all; its nearest relative is
+# `-exported_symbols_list`, which takes a flat list of names and cannot
+# express `local: *`. So there is nothing to translate this into, and the
+# question becomes whether the problem it solves exists on Mach-O.
+#
+# It probably does not. The 23 boost functions are a hazard because ELF
+# resolves a symbol through a flat lookup scope, so the copy CPython's
+# `dlopen` scope finds first wins over the one inside `libnixexpr.so`.
+# Mach-O binds two-level by default: a reference records the library it came
+# from, so libnixexpr keeps calling its own `~wrapexcept()` no matter what
+# this bundle exports. nanobind also passes its own
+# `-Wl,@…/darwin-ld-cpython.sym` here, which is the Darwin way of saying
+# what an extension exports.
+#
+# Measured on aarch64-darwin, on the extension built without the map --
+# every failure the map was written to prevent, and its two neighbours from
+# the table in `package.nix`:
+#
+#   builtins.throw                ThrownError          (not SystemError)
+#   throw inside a list           ThrownError
+#   abort                         EvalError
+#   an undefined variable         UndefinedVarError
+#   a failed assert               AssertionError
+#   find_roots() on a LocalStore  193 roots             (dynamic_cast works)
+#   the process afterwards        alive                 (no double free)
+#
+# So translation and `dynamic_cast` both work, and the boost functions do
+# not shadow anything. If this ever regresses the symptom is a
+# `double free or corruption` inside `nix::ErrorInfo::~ErrorInfo`, or every
+# Nix error arriving as `SystemError` -- not a link error.
+#
+# WORTH KNOWING WHILE YOU ARE HERE: `-fvisibility-ms-compat`, which is what
+# makes this version script necessary in the first place, arrived with the
+# **zig** build (9ea7cc82, "let a type cross the boundary to libnixexpr") and
+# the zig toolchain was removed again in da8a7327. `package.nix` says so
+# itself -- "every build here is a libstdc++ build now, so the flag guards
+# nothing that is measured today" -- and keeps it only "if a build with a
+# libc++ ever returns". Darwin IS that build. Its measured table row is
+# `-fvisibility=hidden` alone -> "translation lost", because libc++abi
+# compares `type_info` by address where libstdc++ falls back to comparing by
+# name. So on Linux the flag and this map are both zig residue; on Darwin the
+# flag is live again and only the map is ELF-specific. Do not "clean up" the
+# pair together.
+if(NOT APPLE)
+  target_link_options(_ext PRIVATE
+    "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/export.map")
+endif()
 
 # --- Install rules ---
 install(TARGETS _ext LIBRARY DESTINATION nanopynix_bindings)

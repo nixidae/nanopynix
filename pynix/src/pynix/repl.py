@@ -41,6 +41,7 @@ from pynix.target import (
     file_option,
     flake_option,
     load_repl_target,
+    repl_attr_search,
 )
 
 if TYPE_CHECKING or BEARTYPING:
@@ -531,7 +532,7 @@ async def _load_initial_target(repl: AsyncReplSession[Any], target: EvaluationTa
     """Load a command-line target into the persistent REPL scope."""
     if target.file is None and target.flake is None:
         return []
-    value = await load_repl_target(target, repl)
+    value = await load_repl_target(target, repl, attr_search=repl_attr_search())
     names = await repl.add_attrs(value)
     print_formatted_text(f"Added {len(names)} variables: {' '.join(names)}")
     return names
@@ -661,7 +662,7 @@ class Repl(ConfiguredCommand):
     """Open an interactive Nix evaluation session."""
 
     store: str = store_option("Store URI to evaluate with.")
-    file: Path | None = file_option()
+    file: str | None = file_option()
     attr: str | None = attr_option()
     flake: str | None = flake_option()
 
@@ -695,7 +696,7 @@ class Repl(ConfiguredCommand):
                         raise SystemExit(1) from exc
                     initial_sources: list[tuple[str, str]] = []
                     if target.file is not None:
-                        initial_sources.append((":load", str(target.file)))
+                        initial_sources.append((":load", target.file))
                     elif target.flake is not None:
                         initial_sources.append((":load-flake", target.flake))
                     await _run_repl_loop(

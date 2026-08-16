@@ -17,6 +17,32 @@
 }:
 
 let
+  cleanSource = import ./clean-source.nix { inherit lib; };
+
+  /*
+    One project's directory, filtered, as the `src` of its derivation.
+
+    **A raw `root + "/${name}"` copies the working directory of that project,
+    and issue #130 put a test suite in every one of them.** A local run then
+    writes `.pytest-agent/` inside the project, and that directory becomes part
+    of the source: measured at 27 MiB of 36 MiB for `nanopynix`. Size is the
+    smaller half. The directory changes on every run, so every local `pytest`
+    gave the package a new source hash and rebuilt it, along with everything
+    downstream.
+
+    Only the built overlay takes this. An editable install must point at the
+    real checkout, so it keeps the unfiltered path -- a store path there would
+    stop the install being live, which is the whole point of it.
+  */
+  projectSource =
+    dir:
+    cleanSource {
+      src = root + "/${dir}";
+      # A store name holds no `/`, and `dir` may be nested -- see `dirOf`
+      # below and the `nix-daemon-protocol` entry that needs it.
+      name = "${lib.replaceStrings [ "/" ] [ "-" ] dir}-source";
+    };
+
   protoSrc = callPackage (root + "/nanopynix-proto/generated.nix") { inherit python; };
   greeterSrc = callPackage (root + "/greeter-proto/generated.nix") { inherit python; };
 
@@ -68,7 +94,7 @@ let
       };
 
       meta = rendered.meta // {
-        license = lib.licenses.lgpl21Plus;
+        license = lib.licenses.asl20;
         platforms = lib.platforms.unix;
       };
     };
@@ -106,59 +132,92 @@ let
       };
     };
 
-    nanopynix = _pySelf: rendered: nixLinked rendered // {
-      # No LD_PRELOAD of the TSAN runtime here, deliberately. It used to be
-      # set, reasoning that the bindings get dlopen()ed into whatever process
-      # imports nanopynix -- but a derivation's `env` is its *build*
-      # environment and reaches no consumer, so it never served that purpose.
-      # What it did do was preload libtsan into every process this build runs,
-      # `uv` included, and TSAN then reported data races inside uv's own Rust
-      # code and failed the build with exit 66 -- before a single test ran.
-      # That is the whole reason all three test-tsan-* jobs were red.
-      #
-      # Nothing here needs it: this is the pure-Python distribution, the
-      # builders have no `pythonImportsCheck` equivalent (see the comment on
-      # nanopynix-proto above), so no phase of this build ever imports
-      # nanopynix and nothing dlopens the instrumented .so.
-      #
-      # The two places that genuinely need the preload still have it, both
-      # scoped to a process that really does load the extension:
-      # nanopynix-bindings/package.nix (stubgen + pythonImportsCheck) and
-      # nanopynix/tests.nix's runner script (the pytest process itself).
-      meta = rendered.meta // {
-        license = lib.licenses.lgpl21Plus;
-        platforms = lib.platforms.unix;
+    nanopynix =
+      _pySelf: rendered:
+      nixLinked rendered
+      // {
+        # No LD_PRELOAD of the TSAN runtime here, deliberately. It used to be
+        # set, reasoning that the bindings get dlopen()ed into whatever process
+        # imports nanopynix -- but a derivation's `env` is its *build*
+        # environment and reaches no consumer, so it never served that purpose.
+        # What it did do was preload libtsan into every process this build runs,
+        # `uv` included, and TSAN then reported data races inside uv's own Rust
+        # code and failed the build with exit 66 -- before a single test ran.
+        # That is the whole reason all three test-tsan-* jobs were red.
+        #
+        # Nothing here needs it: this is the pure-Python distribution, the
+        # builders have no `pythonImportsCheck` equivalent (see the comment on
+        # nanopynix-proto above), so no phase of this build ever imports
+        # nanopynix and nothing dlopens the instrumented .so.
+        #
+        # The two places that genuinely need the preload still have it, both
+        # scoped to a process that really does load the extension:
+        # nanopynix-bindings/package.nix (stubgen + pythonImportsCheck) and
+        # nanopynix/tests.nix's runner script (the pytest process itself).
+        meta = rendered.meta // {
+          license = lib.licenses.asl20;
+          platforms = lib.platforms.unix;
+        };
       };
-    };
 
-    nanopynix-helpers = _pySelf: rendered: nixLinked rendered // {
-      meta = rendered.meta // {
-        platforms = lib.platforms.unix;
+    nanopynix-helpers =
+      _pySelf: rendered:
+      nixLinked rendered
+      // {
+        meta = rendered.meta // {
+          platforms = lib.platforms.unix;
+        };
       };
-    };
 
-    ekn = _pySelf: rendered: nixLinked rendered // {
-      # `cacert` was a `nativeBuildInputs` entry only so `postInstall` could
-      # point git at a CA bundle while generating completions. Completions
-      # are generated outside the package now (see `mkApp`), because a
-      # builders package has no propagated dependencies and so cannot run
-      # its own entry point during its build.
-      meta = rendered.meta // {
-        platforms = lib.platforms.unix;
+    pynix =
+      _pySelf: rendered:
+      nixLinked rendered
+      // {
+        meta = rendered.meta // {
+          platforms = lib.platforms.unix;
+        };
       };
-    };
-
-    pynix = _pySelf: rendered: nixLinked rendered // {
-      meta = rendered.meta // {
-        platforms = lib.platforms.unix;
-      };
-    };
 
     pytest-agent = _pySelf: rendered: {
       meta = rendered.meta // {
         platforms = lib.platforms.unix;
       };
     };
+
+    # The two projects that arrived with pynixd. Neither one reaches
+    # `nanopynix-bindings`, so neither takes `nixLinked`: each really is the
+    # same package whatever Nix is linked, and a suffix would build it once
+    # for each version of the matrix for nothing. `grpclib-transports` and
+    # `pytest-agent` are here for the same reason.
+    pynixd = _pySelf: rendered: {
+      meta = rendered.meta // {
+        platforms = lib.platforms.unix;
+      };
+    };
+    nix-daemon-protocol = _pySelf: rendered: {
+      meta = rendered.meta // {
+        platforms = lib.platforms.unix;
+      };
+    };
+
+    test-support = _pySelf: rendered: {
+      meta = rendered.meta // {
+        platforms = lib.platforms.unix;
+      };
+    };
+
+    # `nixLinked`, because this project imports nanopynix and therefore reaches
+    # the bindings. A fixture built against one Nix version does not fit
+    # another, exactly as the library it tests does not.
+    nanopynix-testing =
+      _pySelf: rendered:
+      nixLinked rendered
+      // {
+        meta = rendered.meta // {
+          license = lib.licenses.asl20;
+          platforms = lib.platforms.unix;
+        };
+      };
   };
 
   # Per-project options. No `extras` here on purpose: the renderer's `extras`
@@ -188,27 +247,51 @@ let
     grpclib-transports = { };
     nanopynix = { };
     nanopynix-helpers = { };
-    ekn = { };
     pynix = { };
+    # The helpers that every suite here shares. Editable like the rest, so a
+    # change to a helper is live in the dev shell without a rebuild.
+    test-support = { };
+    # The half of those helpers that names a Nix concept. Separate from
+    # `test-support` so that a project which never loads Nix can still take
+    # the other half.
+    nanopynix-testing = { };
     # In the set so the dev shell can install it editable -- pytest-agent is
     # developed here alongside everything else. Deliberately *not* in the
     # test runner's venv: it auto-activates on import and would start writing
     # `.pytest-agent/` run directories from CI.
     pytest-agent = { };
+    # The Nix daemon protocol proxy, and the protocol package under it. Both
+    # arrived by the merge that made this repository the nixidae monorepo,
+    # and issue #131 holds the rest of that work.
+    pynixd = { };
+    # **`dir`, because the attribute name is the distribution name.** Every
+    # other project here is a directory at the root, so the two agree and the
+    # key serves as both. This one is a project inside another project, and
+    # `pynixd/pyproject.toml` names it `nix-daemon-protocol` -- so the key
+    # has to stay that, and the path has to be said separately. A key of
+    # `pynixd/nix-daemon-protocol` would find the source and would then be a
+    # distribution nothing can depend on by name.
+    nix-daemon-protocol = {
+      dir = "pynixd/nix-daemon-protocol";
+    };
   };
+
+  # Where a project's source is, relative to the repository. The attribute
+  # name, unless the project said otherwise.
+  dirOf = name: opts: opts.dir or name;
 in
 {
   # The project directories, for `nixpkgsRootsFor`. Derived from `projects`
   # rather than written out again, so adding a project is one edit.
-  projectRoots = lib.mapAttrsToList (name: _: root + "/${name}") projects;
+  projectRoots = lib.mapAttrsToList (name: opts: root + "/${dirOf name opts}") projects;
 
   # The overlay: every project built normally.
   built =
     pySelf: _pyPrev:
     lib.mapAttrs (
-      name: _opts:
+      name: opts:
       pySelf.callPackage (ps.mkProject {
-        projectRoot = root + "/${name}";
+        projectRoot = projectSource (dirOf name opts);
         inherit python;
         extra = extraFor.${name} pySelf;
       }) { }
@@ -224,9 +307,9 @@ in
   editable =
     pySelf: _pyPrev:
     lib.mapAttrs (
-      name: _opts:
+      name: opts:
       pySelf.callPackage (ps.mkEditableProject {
-        projectRoot = root + "/${name}";
+        projectRoot = root + "/${dirOf name opts}";
         # The *project* root, not its `src/` -- `mkDerivationEditable` reads
         # the wheel's own package layout out of pyproject.toml and appends
         # the subdirectory itself. Passing `src/` produced `.../src/src` path
@@ -238,7 +321,7 @@ in
         # local-checkout-only -- under flake evaluation `root` *is* a store
         # path and the renderer rejects it outright -- which is why only the
         # dev shell uses it. See nanopynix/tests.nix.
-        root = toString (root + "/${name}");
+        root = toString (root + "/${dirOf name opts}");
         inherit python;
         extra = extraFor.${name} pySelf;
       }) { }

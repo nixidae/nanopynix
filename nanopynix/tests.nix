@@ -23,9 +23,9 @@ let
   # This replaces a `python.withPackages` list that had to name each
   # project's `.dependencies` by hand, because `withPackages` drops
   # applications together with everything they propagate -- the bug that left
-  # `kr8s` out and four ekn test modules uncollectable. A venv has no such
-  # rule: `mkVirtualEnv` resolves the declared graph, so a dependency cannot
-  # go missing without the resolution failing loudly.
+  # a native dependency out and a whole group of test modules uncollectable. A
+  # venv has no such rule: `mkVirtualEnv` resolves the declared graph, so a
+  # dependency cannot go missing without the resolution failing loudly.
   #
   # Built, not editable, unlike the dev shell. An editable install bakes an
   # absolute non-store path into the derivation, and this runner deliberately
@@ -41,7 +41,6 @@ let
     nanopynix = [ "test" ];
     nanopynix-helpers = [ ];
     pynix = [ "test" ];
-    ekn = [ ];
   };
 
   # Interpolating this path literal copies it into the store and substitutes
@@ -63,7 +62,7 @@ in
     coreutils
     gdb
     # Nix runs `git` off PATH to fetch a `git+file:` or a dirty `path:` flake
-    # input, so `tests/nanopynix/bindings/test_flake.py` needs one. The host
+    # input, so `nanopynix/tests/bindings/test_flake.py` needs one. The host
     # git worked until the ASAN job, which sets LD_PRELOAD to the sanitizer
     # runtime. That runtime links against the glibc of this closure, and the
     # loader then gives the host git a mix of two glibcs:
@@ -104,7 +103,7 @@ in
     # This runner is the gate, so it always takes the faithful path: every
     # pynix command opens its own worker, store and evaluator, exactly as the
     # real CLI does. The dev-shell default shares them across commands
-    # (tests/pynix/_shared_sessions.py) -- ~25% faster on tests/pynix, but by
+    # (pynix/tests/_shared_sessions.py) -- ~25% faster on that suite, but by
     # construction blind to anything that needs a command to get a *fresh*
     # process, store handle or evaluator. That trade belongs in the local
     # edit-run loop, not in the run that decides whether a change is good.

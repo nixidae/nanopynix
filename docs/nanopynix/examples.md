@@ -2,7 +2,7 @@
 
 Every example on this page lives under `docs/examples/` in the repository
 and is executed as part of the test suite
-(`tests/nanopynix/test_examples.py`). If the API changes in a way that
+(`nanopynix/tests/test_examples.py`). If the API changes in a way that
 breaks one of these, CI fails — the examples can't silently go stale.
 
 ## Evaluating Nix expressions
@@ -45,7 +45,8 @@ Registering a Python callable as a Nix builtin over the worker's RPC
 backchannel, plus the built-in YAML primops.
 
 ```{note}
-Requires dynamic primop registration, which every supported Nix has.
+Requires Nix >= 2.32 — primop registration is broken before it, and isn't
+expected to be fixed there.
 ```
 
 ```{literalinclude} ../examples/primops_example.py

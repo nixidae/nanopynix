@@ -48,10 +48,14 @@ static constexpr const char *OVERRIDES_ATTRIBUTE = "_nanopynix_store_overrides";
 // here rather than costing two attribute lookups under the GIL on every single
 // store operation.
 PyStoreMethods PyStoreMethods::resolve(const nb::object &py_store) {
+    // `nb::inst_name`, and not `Py_TYPE(...)->tp_name`. The stable ABI build
+    // of the wheel makes `PyTypeObject` an opaque struct, so that field does
+    // not compile there. nanobind reads the name through `PyType_GetName`,
+    // which the limited API has.
     if (!nb::hasattr(py_store, OVERRIDES_ATTRIBUTE))
         throw nb::type_error(
             ("a Python store must subclass nanopynix.StoreImpl; open_store() returned an "
-             "instance of '" + std::string(Py_TYPE(py_store.ptr())->tp_name) + "', which does not")
+             "instance of '" + nb::cast<std::string>(nb::inst_name(py_store)) + "', which does not")
                 .c_str());
 
     auto overrides = py_store.attr(OVERRIDES_ATTRIBUTE);
@@ -63,6 +67,10 @@ PyStoreMethods PyStoreMethods::resolve(const nb::object &py_store) {
     NANOPYNIX_STORE_DISPATCH_METHODS(NANOPYNIX_STORE_RESOLVE_FLAG)
 #undef NANOPYNIX_STORE_RESOLVE_FLAG
 
+    // A warning stood here for the one operation a pre-2.32 build could not
+    // dispatch: `Store::readDerivation` was non-virtual, so a store's override
+    // was never called. Issue #126 raised the supported floor to 2.34, and
+    // every supported version dispatches it, so there is nothing to warn about.
     return methods;
 }
 
@@ -173,8 +181,7 @@ void PyStoreImpl::queryPathInfoUncached(
             auto info = std::make_shared<nix::ValidPathInfo>(
                 nix::StorePath(path.to_string()),
                 nix::UnkeyedValidPathInfo(
-                    static_cast<const nix::StoreDirConfig &>(*this), nix::Hash::dummy)
-            );
+                    static_cast<const nix::StoreDirConfig &>(*this), nix::Hash::dummy));
             if (auto v = dict_entry(d, "nar_hash"))
                 info->narHash = nix::Hash::parseAny(nb::cast<std::string>(*v), nix::HashAlgorithm::SHA256);
             if (auto v = dict_entry(d, "nar_size")) info->narSize = nb::cast<uint64_t>(*v);
@@ -212,8 +219,7 @@ void PyStoreImpl::queryPathInfoUncached(
 
 void PyStoreImpl::queryRealisationUncached(
     const nix::DrvOutput & id,
-    nix::Callback<std::shared_ptr<const nix::UnkeyedRealisation>> callback
-    ) noexcept
+    nix::Callback<std::shared_ptr<const nix::UnkeyedRealisation>> callback) noexcept
 {
     if (underlying) { underlying->queryRealisation(id, std::move(callback)); return; }
     callback(nullptr);

@@ -1,13 +1,41 @@
 target-version = "py313"
 line-length = 120
 
+# `pynixd/` is imported and not integrated, and issue #131 is the work that
+# changes that. The merge that brought it in preserved both histories and
+# changed no file, so that tree still carries its own `ruff.toml`, its own
+# pyright settings and its own conventions, now at `pynixd/ruff.toml` and
+# `pynixd/pyproject.toml`. Measured on the day of the import: 28 findings
+# here, 2 files that `ruff format` would rewrite, and 7629 pyright errors.
+#
+# Reporting on it from the repository root would say that 356 files are
+# wrong, when what is true is that a second project has not yet adopted the
+# conventions of this one. Remove this line in #131, one gate at a time.
+#
+# **The asyncio question of #131 is answered, and the answer is a port.**
+# `TID251` below bans the raw asyncio primitives. pynixd is an asyncio
+# program, so the shape of the grpclib-transports exemption was the expected
+# answer, and it is the wrong one here: `pynixd/__main__.py` already starts
+# the program with `anyio.run(backend="asyncio", ...)`, so every anyio
+# primitive already works in it, and four modules already used them. The 48
+# uses were ported instead -- 13 in the library, 35 in its tests -- and
+# `pynixd/ruff.toml` bans the same names, so `checks.lint` holds the port.
+# `tests/meta/test_asyncio_ban.py` keeps the two lists equal.
+#
+# One case needed a shape rather than a rename. `anyio.Event` has no
+# `clear()`, and `ResourceGate` re-armed three of them, so `PressureFlag` in
+# `pynixd/monitor.py` replaces the event instead of resetting it.
+#
+# Note that this line matches the *basename* `pynixd`, so it also excludes
+# `pynixd/pynixd/`, which is 291 of the 1024 findings.
+#
 # `uv` wrote the `pyproject.toml` and the `uv.lock` of each project under
 # `ddrn/examples/venv-graph/projects`, and `projects/README.md` gives the
-# command and each hand edit. They are input data of an example, and not source
-# of this repository, so a finding here would only ask a reader to edit what a
-# tool generates. pyright still reads this tree, so the Python of a project
-# meets the type rules.
-exclude = ["ddrn/examples/venv-graph/projects"]
+# command and each hand edit. They are input data of an example, and not
+# source of this repository, so a finding there would only ask a reader to
+# edit what a tool generates. pyright still reads that tree, so the Python of
+# a project meets the type rules.
+extend-exclude = ["pynixd", "ddrn/examples/venv-graph/projects"]
 
 [lint]
 select = [
@@ -391,7 +419,16 @@ ignorelist = ["eval"]
 # assert (pytest idiom), reference fake/illustrative "/tmp/..." fixture
 # paths (not real temp-file usage), skip -> None annotations, and compare
 # against unnamed literal expected values
-"tests/**" = ["SLF001", "S101", "S108", "ANN201", "PLR2004"]
+#
+# **`**/tests/**` and not `tests/**`.** Issue #130 gives each project its own
+# suite, so a new `<project>/tests/` appears with every move and an entry per
+# project would be a list that a move forgets to extend. The glob matches the
+# repository's own `tests/` as well.
+#
+# It reaches a suite only, and never a `src/`: the source of a shared helper
+# gets no blanket exemption, so the private accesses in `test-support/src` and
+# `nanopynix-testing/src` carry inline noqa comments naming the rule.
+"**/tests/**" = ["SLF001", "S101", "S108", "ANN201", "PLR2004"]
 # doc/example snippets use bare assert and illustrative literal comparisons
 "docs/**" = ["S101", "PLR2004"]
 # The planner library of the dynamic-derivations experiment. Its tests follow
@@ -488,6 +525,16 @@ ignorelist = ["eval"]
 # in scope for vendoring the library, so this records the decision instead of
 # quietly making it.
 "grpclib-transports/src/grpclib_transports/**" = ["PLR0913"]
+
+# ---------------------------------------------------------------------------
+# completion-spike, the subproject that answers whether a cyclopts program can
+# have a dynamic shell completion.
+#
+# `tests/**` above is anchored at the repository root and does not reach this
+# tree, so the same allowance is stated again. Only `S101` is needed: these
+# tests assert, and they need nothing else that the rest of the repository
+# forbids.
+"completion-spike/tests/**" = ["S101"]
 # The demo CLI and the demo client that `docs/examples` and the `__main__`
 # entry point share. A hardcoded "password" and a fixed `/tmp` socket path are
 # what a demo is.
@@ -516,12 +563,25 @@ combine-as-imports = true
 # an annotation cannot be resolved.
 required-imports = ["from __future__ import annotations"]
 known-first-party = [
+  # `support` and `_shared_sessions` are `pynix/tests/`'s own modules.
+  # pytest puts that directory on `sys.path` because the suite has no
+  # `__init__.py`, so they are importable by bare name and isort cannot
+  # tell them from a third-party package without being told.
+  "_shared_sessions",
   "nanopynix",
   "nanopynix_expr",
   "nanopynix_fetchers",
   "nanopynix_flake",
   "nanopynix_store",
   "nanopynix_util",
+  "support",
+  # Named here, unlike `nanopynix` and `pynix`, which ruff finds by itself:
+  # with no `src` setting it looks for a directory of the same name beside
+  # this file, and these two are at `test-support/src/test_support` and
+  # `nanopynix-testing/src/nanopynix_testing`. Add a project the same way when
+  # its directory name and its module name differ.
+  "test_support",
+  "nanopynix_testing",
 ]
 
 [format]

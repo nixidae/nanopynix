@@ -29,7 +29,6 @@ let
     extraSpec = {
       pynix = [
         "test"
-        "ekn"
         "docs"
       ];
     };

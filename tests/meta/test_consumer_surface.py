@@ -4,7 +4,7 @@ CLAUDE.md states two rules about this boundary, and nothing checked either one.
 ``pynix`` must depend on the public APIs of ``nanopynix``, and a narrow
 dependency on a private module is acceptable only when a redesign is not
 justified. Measured before this file existed: 30 private import sites across
-``pynix``, ``ekn`` and ``nanopynix-helpers``, and none of them recorded the
+``pynix`` and ``nanopynix-helpers``, and none of them recorded the
 decision. The rule was clear, it was written down, and nothing looked.
 
 Three gates, and they are not the same kind of thing.
@@ -19,7 +19,7 @@ of ``__all__`` against the module itself belongs to #15, not here.)
 The private gate is a **ledger**. Whether to promote a private name is a
 judgement, not a derivation, so the literal below carries the decision and a
 diff against the tree makes a new one visible. This is the same shape as
-``WIRE_CLASSES`` in ``tests/nanopynix/test_exceptions_classify.py``, and it is
+``WIRE_CLASSES`` in ``nanopynix/tests/test_exceptions_classify.py``, and it is
 deliberate friction: the set cannot update itself.
 
 The engine-annotation gate is a **second ledger**, and it asks a different
@@ -110,7 +110,6 @@ _CONSTRUCTS = (
 # own value. The protocols express this with an invariant type parameter, which
 # is honest and which is exactly what makes them non-substitutable here.
 CONSUMER_ENGINE_ANNOTATIONS: dict[tuple[str, str], str] = {
-    ("ekn/src/ekn/eval.py", "Session"): _CONSTRUCTS,
     ("pynix/src/pynix/_util.py", "Session"): _CONSTRUCTS,
     ("pynix/src/pynix/_util.py", "Store"): _OWN_STORE,
     ("pynix/src/pynix/_lsp/_context.py", "Session"): _CONSTRUCTS,
@@ -194,7 +193,7 @@ def test_the_scanner_sees_an_internal_module_with_a_public_looking_name() -> Non
     """``nanopynix.rpc.client`` has no underscore, and is internal anyway.
 
     This and the test below are what the retired
-    ``tests/pynix/test_import_boundaries.py`` used to cover on its own. The
+    ``pynix/tests/test_import_boundaries.py`` used to cover on its own. The
     underscore rule sees neither shape, so deleting that guard without
     ``INTERNAL_PREFIXES`` would have lost the coverage.
     """

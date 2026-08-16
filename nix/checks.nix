@@ -12,8 +12,9 @@
 # `grpclib-transports` and `pytest-agent` are the two gates here that run
 # tests rather than a static tool, and both are here because nothing else
 # would run them. Each subproject carries its own pytest configuration, and
-# the repository's own test runner (nanopynix/tests.nix) collects `tests/`
-# and not those, so a suite that nobody names runs nowhere.
+# the repository's own test runner (nanopynix/tests.nix) collects what
+# `testpaths` in the repository `pytest.ini` names, so a suite that nobody
+# names runs nowhere.
 #
 # The two arrived at that state differently. `grpclib-transports` used to run
 # by itself: the project came from a separate repository as a nixpkgs
@@ -29,7 +30,9 @@
   pyright,
   shellcheck,
   pythonSet,
-  ekn,
+  nixos,
+  pynixd,
+  completionSpike,
 }:
 let
   # Only the trees the gates read. An allowlist, and not the shared denylist
@@ -56,9 +59,22 @@ let
       ../nanopynix-proto
       ../greeter-proto
       ../grpclib-transports
+      # The whole tree, and not the one subproject that `checks.nix-daemon-protocol`
+      # reads. `ruff.toml` stopped excluding `pynixd`, so `check-lint` and
+      # `check-format` report on it, and a gate that reads less than a
+      # developer's own `ruff check .` gives two answers to one question.
+      #
+      # An edit to any part of pynixd rebuilds all of them. Issue #131 took
+      # 320 KiB of that back: `todo/`, `research/`, `ai/` and the rest of the
+      # agent-workflow trees left the repository. The open work in them is
+      # issues #133 to #137, and the reference material moved to
+      # `pynixd/docs/notes/`.
+      ../pynixd
       ../pynix
-      ../ekn
+      ../completion-spike
       ../pytest-agent
+      ../test-support
+      ../nanopynix-testing
       ../tests
       ../tools
       ../docs
@@ -67,17 +83,19 @@ let
       # `check-shell` below. `writeShellApplication` shellchecks only the
       # scripts that it generates, and none of these is one of those.
       ../scripts
-      # The one hand-written shell file outside `scripts/`. `runCommand` puts
-      # it through `substitute`, which reads no script and checks nothing, so
-      # it arrived under the same gap that `scripts/` was in. It is the C
-      # compiler of the whole zig closure, so a fault in it is a fault in every
-      # package of that closure.
-      ../nix/zig-cc-wrapper.sh
       # The licence step of the wheel build. It runs inside a derivation, so
       # no test imports it and only these gates read it. It is also the check
       # that stops an unattributed library reaching PyPI, so a fault in it is
       # a licence fault.
       ../nix/wheel-notice.py
+      # The gate step of the same build, and here for the same reason. A
+      # fault in it is a gate that passes, which is worse than no gate.
+      ../nix/wheel-gates.py
+      # The rewrite that lowers the glibc floor of every object of the wheel
+      # closure. It runs as a setup hook inside each build, so no test imports
+      # it either, and a fault in it is a wheel that installs and then fails to
+      # load on the oldest host it claims.
+      ../nix/lower-glibc.py
       # Tracked, and therefore in scope, although it holds one module and no
       # project of its own. With it the gate reads 259 Python files, which is
       # what `ruff format --check .` reads in the dev shell. Without it the
@@ -99,14 +117,21 @@ let
     nanopynix-helpers = [ "test" ];
     pynix = [
       "test"
-      "ekn"
       "docs"
     ];
-    ekn = [ ];
     pytest-agent = [ ];
     # The `test` extra, because pyright reads grpclib-transports' own tests
     # and benchmarks and they import `greeter`, `asyncssh` and `rich`.
     grpclib-transports = [ "test" ];
+    test-support = [ "test" ];
+    nanopynix-testing = [ ];
+    # `completion-spike` itself is not a package of this set -- it is a nixpkgs
+    # `buildPythonApplication`. Its two dependencies are named directly, so
+    # that pyright can read its source and its tests. Without them pyright
+    # reported 56 errors on that tree, every one of them an unknown type
+    # reached through `cyclopts` or `pexpect`.
+    cyclopts = [ ];
+    pexpect = [ ];
   };
 
   # A second venv, holding this one library and its test extra and nothing
@@ -127,6 +152,68 @@ let
   pytestAgentEnv = pythonSet.mkVirtualEnv "pytest-agent-test-env" {
     pytest-agent = [ "test" ];
   };
+
+  # And a fourth. `test-support` holds the helpers that every suite here shares
+  # and that name no Nix concept, so its own suite must not reach anything that
+  # does: a venv with nanopynix in it would let a helper grow a dependency on
+  # the library and nothing would report it. That is the rule this project
+  # exists to keep, so the venv is what enforces it.
+  testSupportEnv = pythonSet.mkVirtualEnv "test-support-test-env" {
+    test-support = [ "test" ];
+  };
+
+  # And a fifth. `nanopynix-helpers` carries its own suite since issue #130.
+  # The repository run reaches it through `testpaths`, and this gate is what
+  # proves the suite also stands up alone, under its own rootdir and with
+  # only this project's dependencies. Its `test` extra reaches
+  # `nanopynix[test]`, which supplies pytest, `test-support` and
+  # `nanopynix-testing`.
+  helpersEnv = pythonSet.mkVirtualEnv "nanopynix-helpers-test-env" {
+    nanopynix-helpers = [ "test" ];
+  };
+
+  # And a sixth. `nix-daemon-protocol` is the wire package under `pynixd/`,
+  # and its suite is the pure half of what pynixd tests: no daemon, no Nix
+  # binary and no SSH, so it is the suite of that project that a sandbox can
+  # run. A venv holding this project alone is what proves the package stands
+  # up without pynixd, which is the reason it is a separate distribution.
+  protocolEnv = pythonSet.mkVirtualEnv "nix-daemon-protocol-test-env" {
+    nix-daemon-protocol = [ "test" ];
+  };
+
+  # And a seventh, for pynixd itself. Only its unit suite runs here. The
+  # functional suite drives a real `nix`, a real daemon and a real SSH
+  # session, and a build sandbox offers none of the three, so a gate that ran
+  # it would report the sandbox rather than the code.
+  pynixdEnv = pythonSet.mkVirtualEnv "pynixd-test-env" {
+    pynixd = [ "test" ];
+  };
+
+  # A minimum NixOS configuration, so that the module of pynixd is evaluated.
+  # `nixos` needs a boot loader, a root filesystem and a state version before
+  # it evaluates anything at all, and none of the three says anything about
+  # pynixd.
+  evalModule =
+    settings:
+    (nixos {
+      # `settings` goes in `imports`, and is not merged with `//`. The
+      # operator replaces a whole key, so `{ services.pynixd.package = ...; }
+      # // { services.pynixd.enable = true; }` loses the package.
+      imports = [
+        ../pynixd/nix/nixos
+        settings
+      ];
+      boot.loader.grub.enable = false;
+      fileSystems."/" = {
+        device = "/dev/null";
+        fsType = "ext4";
+      };
+      system.stateVersion = "25.05";
+      services.pynixd.package = pynixd;
+    }).config;
+
+  enabled = evalModule { services.pynixd.enable = true; };
+  disabled = evalModule { };
 
   mkCheck =
     name: nativeBuildInputs: command:
@@ -159,21 +246,12 @@ in
   # nanopynix/tests.nix and no hand-written file, so these three grew without a
   # gate. `-x` follows a `source`, and the scripts are the only shell here.
   #
-  # `nix/zig-cc-wrapper.sh` joins them, in a second command and not in that
-  # one. Three things make it separate:
-  #
-  # - It is `sh` and the others are bash, and one invocation takes one shell.
-  # - Its shebang is `@shell@`, the placeholder that `substitute` replaces with
-  #   the real path, so SC2239 reports it and the report is wrong.
-  # - **The rule and the reason live here, and not in the file.** `substitute`
-  #   copies that file into the store, so its hash is the hash of the C
-  #   compiler of the zig closure. A comment in it rebuilds all 39 packages.
-  #   Measured: three lines of `# shellcheck ...` asked for a rebuild of the
-  #   whole closure, and this repository builds that closure on a shared
-  #   machine of nix-community.
-  shell =
-    mkCheck "shell" [ shellcheck ]
-      "shellcheck -x scripts/*.sh && shellcheck -x --shell=sh -e SC2239 nix/zig-cc-wrapper.sh";
+  # The wheel closure needed a compiler wrapper of its own until it moved back
+  # onto the gcc stdenv of nixpkgs, and that wrapper was the second command
+  # here. It is gone, and so is the exception it needed.
+  shell = mkCheck "shell" [
+    shellcheck
+  ] "shellcheck -x scripts/*.sh";
 
   # The vendored library's own suite. See this file's header for why it is a
   # gate here and not a check phase.
@@ -187,9 +265,55 @@ in
   # `benchmarks`, which is a measurement run rather than a gate -- and whose
   # `_bench_utils` writes a dump directory beside itself at import time, in
   # what is a read-only store path here.
-  grpclib-transports =
-    mkCheck "grpclib-transports" [ grpclibEnv ]
-      "python -m pytest -p no:cacheprovider grpclib-transports/tests";
+  grpclib-transports = mkCheck "grpclib-transports" [
+    grpclibEnv
+  ] "python -m pytest -p no:cacheprovider grpclib-transports/tests";
+
+  # The wire protocol package that arrived with pynixd, gated for the same
+  # reason as the gate above it: nothing else runs this suite. `testpaths` in
+  # the repository `pytest.ini` names no directory of `pynixd/`, and the
+  # packaged runner reads that file.
+  #
+  # `tests`, spelled out, for the same reason as the gate above it: an
+  # explicit argument replaces `testpaths`, and the project also carries a
+  # `benchmarks` directory that measures rather than gates.
+  nix-daemon-protocol = mkCheck "nix-daemon-protocol" [
+    protocolEnv
+  ] "python -m pytest -p no:cacheprovider pynixd/nix-daemon-protocol/tests";
+
+  # The unit suite of pynixd, and only the unit suite. See `pynixdEnv` for why
+  # the functional half stays out.
+  #
+  # The directory of the project, and not `pynixd/tests/unit`, would collect
+  # the functional suite through `testpaths`, so the argument is the directory
+  # that this gate runs.
+  pynixd = mkCheck "pynixd" [
+    pynixdEnv
+  ] "cd pynixd && python -m pytest -p no:cacheprovider tests/unit";
+
+  # The NixOS module of pynixd, evaluated. It is the only module this
+  # repository ships, and `flake.nix` exposes it as `nixosModules.pynixd`.
+  # Nothing else reads it, so without this gate a rename of an option or a
+  # type error would first be seen by a person rebuilding their system.
+  #
+  # The second half is a regression test. `environment.systemPackages` used to
+  # sit in a second element of a `mkMerge`, outside the `mkIf cfg.enable`, so
+  # importing the module installed pynixd whether or not the service was
+  # enabled. A module that does something when it is disabled cannot be
+  # imported and left alone.
+  nixos-module =
+    let
+      unit = enabled.systemd.services.pynixd.serviceConfig;
+      installedWhenEnabled = builtins.elem pynixd enabled.environment.systemPackages;
+      installedWhenDisabled = builtins.elem pynixd disabled.environment.systemPackages;
+    in
+    assert unit.ExecStart == "${lib.getExe pynixd} daemon";
+    assert enabled.environment.etc."pynixd/pynixd.json".source != null;
+    assert installedWhenEnabled;
+    assert !installedWhenDisabled;
+    runCommand "nanopynix-check-nixos-module" { } ''
+      echo "services.pynixd evaluates, and installs nothing while disabled" > "$out"
+    '';
 
   # The plugin every other suite in this repository reports through, gated for
   # the first time. See this file's header.
@@ -208,30 +332,51 @@ in
     python -m pytest -p no:cacheprovider pytest-agent/tests
   '';
 
-  # `ekn` runs inside a Nix build sandbox from three easykubenix derivations
-  # (`_yamlToJson`, `_jsonToYAML` and `split-manifest`), and a sandbox has no
-  # ambient trust store. `ekn` could not start in one until the CA bundle
-  # moved onto the program itself -- see nix/mk-app.nix and issue #62. This
-  # derivation is that sandbox, so the crash cannot come back unseen.
+  # The shared helpers, gated for the same reason as the two gates above: the
+  # repository suite collects `tests/` and not this directory, so without this
+  # the suite of the project that every other suite depends on would run
+  # nowhere.
   #
-  # A gate here for the same reason `grpclib-transports` above is one: nothing
-  # else runs `ekn` where there are no certificates. A test under `tests/`
-  # could not, because `ekn` on the dev shell's PATH is the editable venv's own
-  # console script and not the wrapped application.
-  #
-  # The YAML 1.1 case is deliberate. `0644` reads as octal 420 there, which is
-  # the scalar semantics that this out-of-process fallback exists to keep.
-  ekn-sandbox = runCommand "nanopynix-check-ekn-sandbox" { nativeBuildInputs = [ ekn ]; } ''
-    printf 'a: 1\n---\nb: 0644\n' | ekn _yamlToJson --yaml-version yaml11 >got.json
-    printf '%s' '[{"a":1},{"b":420}]' >want.json
-    diff -u want.json got.json
-    touch "$out"
-  '';
+  # The suite of the helpers package, which moved beside the package that it
+  # tests. The directory and not `nanopynix-helpers/tests`, for the same
+  # reason as the gate below: this project carries its own `pytest.ini`.
+  nanopynix-helpers = mkCheck "nanopynix-helpers" [
+    helpersEnv
+  ] "python -m pytest -p no:cacheprovider nanopynix-helpers";
 
-  # No drift gate here, although issue #22 asks for one. Both
+  # The directory, and not `test-support/tests`. This project carries its own
+  # `pytest.ini`, so pointing pytest at the project makes `testpaths` and
+  # `anyio_mode` apply. Read that file: without `anyio_mode`, every async test
+  # here fails rather than skips.
+  #
+  # `-p no:cacheprovider` for the read-only store path, as above.
+  test-support = mkCheck "test-support" [
+    testSupportEnv
+  ] "python -m pytest -p no:cacheprovider test-support";
+
+  # The completion spike, whose suite drives fish, bash and zsh on a pty. Named
+  # here so that the `static-checks` job builds it: that job takes its list
+  # from this attribute set (ci/workflows/lib.nix), and a package that no job
+  # names is a suite that never runs.
+  #
+  # An alias, and not a `mkCheck`. The suite is the check phase of the package
+  # itself, so building the package *is* running the gate. See
+  # nix/completion-spike.nix for why that shape was chosen.
+  completion-spike = completionSpike;
+
+  # **No gate for the pynix suite, and that is not an oversight.** Issue #130
+  # moved it to `pynix/tests/`, and the two gates above exist because a moved
+  # suite would otherwise run nowhere. That suite is different: it drives a
+  # real store, a real evaluator and `nix-build`, so it runs in the CI matrix
+  # against every supported Nix version and both backends. The repository
+  # `pytest.ini` names it in `testpaths`, which is what the packaged runner
+  # reads. A derivation here would check one version inside a sandbox with no
+  # network, so it would be strictly weaker than what already runs.
+  #
+  # No drift gate here either, although issue #22 asks for one. Both
   # `check_all_settings_model_drift(include_optional=True)` and
   # `check_all_store_model_drift()` already run inside the test suite
-  # (tests/nanopynix/bindings/test_util.py, tests/nanopynix/test_stores.py),
+  # (nanopynix/tests/bindings/test_util.py, nanopynix/tests/test_stores.py),
   # and CI runs that suite against every supported Nix version on both
   # backends. A derivation here would check one version, so it would be
   # strictly weaker than what already runs, and slower to build than the four

@@ -31,7 +31,9 @@ Lifecycle and extension points
   store type, and each one has its own contract below.
 
 Plain queries and constructors
-: `build_info`, `current_system`, `get_verbosity`, `list_settings`,
+: `build_info`, `current_system`, `eval_counters_enabled`, `get_verbosity`,
+  `is_pseudo_url`,
+  `list_settings`,
   `open_store`, `eval_file`, `parse_flake_ref`, `get_flake`, `lock_flake`,
   `input_from_url` and `input_from_attrs` read state or build an object. They
   are safe to call, and the classes `EvalState`, `Value`, `BuildMode` and
@@ -56,8 +58,8 @@ bindings directly gets neither guarantee.
 `build_info` reports the Nix version this extension linked against, and the
 compile-time capabilities that the version decides. The capability flags are
 how nanopynix supports more than one Nix version from one source tree: a
-feature that one supported version has and another lacks appears here as a
-boolean rather than as a version comparison at each call site.
+feature that 2.35 has and 2.34 lacks appears here as a boolean rather than as a
+version comparison at each call site.
 
 `current_system` returns the value that `builtins.currentSystem` gives, after
 the `system` setting is applied.
@@ -155,6 +157,28 @@ the ownership rule that a bare `Value` has not got.
 
 `eval_file` evaluates one `.nix` file and returns the resulting `Value`.
 
+`set_eval_counters_enabled` turns the evaluation counters on, and
+`eval_counters_enabled` reports their state. The counters back the numeric
+fields of `EvalState.statistics_json`, and Nix leaves them off unless
+`NIX_SHOW_STATS` is set, because each increment costs an atomic write.
+
+**Both name the process, and not one evaluator.** `nix::Counter::enabled` is a
+static of `libnixexpr`, so an evaluator cannot count while another one beside
+it does not, and the `nrExprs` and `nrThunks` fields count every evaluator in
+the process. The report is therefore unreliable when one process holds more
+than one evaluator, and the inproc engine evaluates in parallel in one
+process. Issue #118 tracks the repair, which moves the switch and the counters
+onto the evaluator.
+
+`is_pseudo_url` reports whether Nix downloads a string as a tarball, rather
+than reading it as a path. It is the first test that `eval_file` and
+`EvalState.file` apply to their argument: `channel:nixos-unstable` and a URL
+with a scheme that Nix fetches both answer `True`, and `github:NixOS/nixpkgs`,
+`<nixpkgs>` and `./default.nix` all answer `False`. Ask this when you classify
+such an argument yourself, because the list of schemes belongs to Nix and it
+moves with the Nix version. `pynix` uses it to decide which `--file` arguments
+it hands over unchanged.
+
 `register_primop` adds a Python function to `builtins`. Registration is
 process-wide and permanent, so a name can be claimed once. `Session(primops=...)`
 is the supported route, and it also gives the rpc engine a way to run the
@@ -174,6 +198,12 @@ as unexpected rather than deliberate.
 .. autoclass:: nanopynix_bindings.expr.Value
 
 .. autofunction:: nanopynix_bindings.expr.eval_file
+
+.. autofunction:: nanopynix_bindings.expr.eval_counters_enabled
+
+.. autofunction:: nanopynix_bindings.expr.set_eval_counters_enabled
+
+.. autofunction:: nanopynix_bindings.expr.is_pseudo_url
 
 .. autofunction:: nanopynix_bindings.expr.register_primop
 

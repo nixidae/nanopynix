@@ -3,7 +3,7 @@
 A build with ``enableGC = false`` leaks by design. Nix's own package option
 says so, and it gives the condition under which that is acceptable: evaluation
 takes place within short-lived processes. An RPC worker is such a process. The
-pytest process is not, so :mod:`tests.support.nix_runtime` skips every test
+pytest process is not, so :mod:`nanopynix_testing.nix_runtime` skips every test
 that builds an evaluator inside it when the linked build has no collector.
 
 **That rule has two decay modes, and this module gates both.**
@@ -33,23 +33,30 @@ from pathlib import Path
 
 import pytest
 
-from tests.support.nix_runtime import IN_PROCESS_EVALUATOR_FIXTURES, hosts_an_evaluator
+from nanopynix_testing.nix_runtime import IN_PROCESS_EVALUATOR_FIXTURES, hosts_an_evaluator
+from tests.support.suite_roots import SCANNED_ROOTS, SUITE_ROOTS, check_roster
 from tests.support.suppressions import iter_python_files
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TESTS_DIR = REPO_ROOT / "tests"
 
+# Where a fixture may be *defined*, which is not where a test module lives.
+# Issue #130 moved `inproc_session` and its peers into `nanopynix-testing`, and
+# a scan of `tests/` alone then reported that the rule matched nothing. The
+# roster is shared, so the next move edits one file.
+FIXTURE_DIRS = SCANNED_ROOTS
+
 # Modules that construct an in-process session and are still safe to run
 # against a build with no collector. Each entry states why.
 #
-# `tests/nanopynix/inproc/test_inproc_process_env.py` is not here, and the
+# `nanopynix/tests/inproc/test_inproc_process_env.py` is not here, and the
 # reason is worth reading before adding it back. That module builds its
 # session inside a source string that it hands to a subprocess, so the scanner
 # never sees a construction and `test_every_ledger_entry_still_constructs`
 # rejects the entry as stale. The outcome is correct either way: the session
 # lives in a process that the test ends, so it returns its memory.
 LEDGER: dict[str, str] = {
-    "tests/nanopynix/test_error_boundaries.py": (
+    "nanopynix/tests/test_error_boundaries.py": (
         "builds a Session over dummy:// for its store errors, and never calls eval()"
     ),
 }
@@ -133,10 +140,15 @@ def fixture_names(source: str) -> set[str]:
 
 
 def test_the_scanner_can_see_the_test_tree() -> None:
-    """Fail loudly if the gate is pointed somewhere with no tests in it."""
-    assert TESTS_DIR.is_dir(), f"{TESTS_DIR} is missing"
-    modules = [path for path in iter_python_files(TESTS_DIR) if path.name.startswith("test_")]
-    assert len(modules) > 50, f"only {len(modules)} test module(s) under {TESTS_DIR}; the path is wrong"
+    """Fail loudly if the gate is pointed somewhere with no tests in it.
+
+    Every suite root, and not `tests/` alone. Issue #130 moved the library's
+    suite to `nanopynix/tests/`, and this check went on passing against a
+    `tests/` that no longer held the tests it was counting.
+    """
+    check_roster()
+    modules = [path for root in SUITE_ROOTS for path in iter_python_files(root) if path.name.startswith("test_")]
+    assert len(modules) > 50, f"only {len(modules)} test module(s) under {SUITE_ROOTS}; the path is wrong"
 
 
 def test_the_scanner_finds_each_construction() -> None:
@@ -166,20 +178,23 @@ def test_the_marker_reader_works_both_ways() -> None:
 def test_each_named_fixture_still_exists() -> None:
     """The first decay mode: a rename that leaves the rule matching nothing."""
     defined: set[str] = set()
-    for path in iter_python_files(TESTS_DIR):
-        defined |= fixture_names(path.read_text(encoding="utf-8"))
+    check_roster()
+    for directory in FIXTURE_DIRS:
+        for path in iter_python_files(directory):
+            defined |= fixture_names(path.read_text(encoding="utf-8"))
     missing = sorted(IN_PROCESS_EVALUATOR_FIXTURES - defined)
     assert not missing, (
-        f"IN_PROCESS_EVALUATOR_FIXTURES names {missing}, and no fixture under {TESTS_DIR} is called that. "
+        f"IN_PROCESS_EVALUATOR_FIXTURES names {missing}, and no fixture in {FIXTURE_DIRS} is called that. "
         "The no-collector rule now finds fewer tests than it did. Point "
-        "IN_PROCESS_EVALUATOR_FIXTURES in tests/support/nix_runtime.py at the new name."
+        "IN_PROCESS_EVALUATOR_FIXTURES in nanopynix_testing.nix_runtime at the new name."
     )
 
 
 def test_every_direct_construction_is_marked_or_in_the_ledger() -> None:
     """The second decay mode: a direct construction that no fixture reveals."""
     unmarked: list[str] = []
-    for path in iter_python_files(TESTS_DIR):
+    check_roster()
+    for path in (p for root in SUITE_ROOTS for p in iter_python_files(root)):
         if not path.name.startswith("test_"):
             continue
         relative = str(path.relative_to(REPO_ROOT))

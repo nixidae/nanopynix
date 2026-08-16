@@ -11,6 +11,15 @@ authors = [{ name = "Carl Andersson", email = "github@lillecarl.com" }]
 # is the only consumer and requires 3.13, so a lower floor here would claim
 # support that nothing builds or tests.
 requires-python = ">=3.13"
+# PEP 639. The repository is Apache-2.0. `nanopynix-bindings` alone is
+# LGPL-2.1-or-later, because that project links libnixexpr and libnixstore,
+# and `AGENTS.md` says why the two live together without a conflict.
+#
+# The file is a copy of the one at the root of the repository, because the
+# source root of this project is this directory, and a path above it is not in
+# the sdist.
+license = "Apache-2.0"
+license-files = [ "LICENSE" ]
 # `anyio` is a runtime dependency, not just a test one: `limits.py` builds its
 # concurrency semaphore with it and `multiprocessing.py` offloads `proc.join`
 # through its capacity-limited thread pool, both in place of the raw asyncio
@@ -28,7 +37,11 @@ ssh = ["asyncssh"]
 # environment. `rich` is what the benchmarks render their tables with.
 # `anyio` is absent because it is a runtime dependency above; `pytest-anyio`
 # mode comes from pytest.ini.
-test = ["asyncssh", "greeter-proto", "pytest", "rich"]
+#
+# `test-support` is the generic test layer of issue #130, and `pytest.ini`
+# registers its plugin. It is a *test* dependency and it must stay one: this
+# project ships four transports, and none of them may reach a test helper.
+test = ["asyncssh", "greeter-proto", "pytest", "rich", "test-support"]
 
 # No `docs` extra. This project's sphinx pages are part of the one nanopynix
 # site (docs/grpclib-transports/), so the docs toolchain is declared once, in

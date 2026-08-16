@@ -2,14 +2,14 @@
 
 /// One rendering of Nix's BuildResult, for both files that report one.
 ///
-/// A `BuildResult` carries `Success::Status` or `Failure::Status`, and the
-/// vocabulary that renders them used to be duplicated verbatim in
+/// Nix 2.32 split `BuildResult::Status` into `Success::Status` and
+/// `Failure::Status`, so reading a result takes a version branch. That branch
+/// and the vocabulary it renders used to be duplicated verbatim in
 /// `nix_expr.cpp` and `nix_store.cpp` -- around a hundred lines each, in two
-/// translation units with no way to notice they had drifted. Nix 2.32 split
-/// the single `BuildResult::Status` into those two, and each file also carried
-/// its own `NANOPYNIX_NIX_HAS_KEYED_BUILD_RESULTS` macro to name that
-/// condition. Both the branch and the macro are gone: the oldest supported Nix
-/// is 2.34, so only the split form remains.
+/// translation units with no way to notice they had drifted, plus a
+/// `NANOPYNIX_NIX_HAS_KEYED_BUILD_RESULTS` macro defined and `#undef`ed
+/// separately in both to name the condition. With one copy the condition can
+/// just be written where it is used, so the macro is gone.
 ///
 /// The strings are not an internal detail. `nanopynix.exceptions`'s
 /// `_BUILD_STATUS_EXCEPTIONS` maps them to `BuildError` subclasses, so they are
@@ -27,6 +27,9 @@
 
 #include <nix/store/build-result.hh>
 #include <nix/store/derived-path.hh>
+#include <nix/store/realisation.hh>
+#include <nix/store/store-dir-config.hh>
+#include <nix/util/signature/local-keys.hh>
 #include <nix/util/util.hh>
 
 #include <nanopynix/nix_compat_config.hh>
@@ -79,23 +82,73 @@ inline std::pair<std::string, nb::list> derived_path_parts(
     return {std::get<nix::DerivedPath::Opaque>(path.raw()).to_string(store), outputs};
 }
 
-/// The five fields `nanopynix.exceptions.build_error_from_result` and
+/// What the build produced, keyed by output name.
+///
+/// `nix build` answers its own output paths from `builtOutputs` and from
+/// nothing else, so a caller without this field has to query the store again
+/// to find its own build. The map is empty for a `DerivedPath::Opaque`
+/// request, and populated for every other one -- an input-addressed
+/// derivation included.
+///
+/// **The value type of the map differs across the supported Nix versions, and
+/// this needs no branch.** 2.34 declares `std::map<OutputName, Realisation>`
+/// and 2.35 changed it to `std::map<OutputName, UnkeyedRealisation>`.
+/// `Realisation` derives from `UnkeyedRealisation`, and both fields read here
+/// are members of the base, so one expression compiles against all three.
+///
+/// The 2.34-only `Realisation::id` stays unread on purpose: it is a
+/// `DrvOutput` naming the derivation the caller already holds, and its own
+/// shape changed in the same release (`Hash drvHash` became
+/// `StorePath drvPath`).
+///
+/// **`BuildResult`'s timing fields are absent for a different reason.**
+/// `timesBuilt`, `startTime`, `stopTime`, `cpuUser` and `cpuSystem` never
+/// reach a caller of `buildPathsWithResults` on 2.34 or 2.35.
+/// `Goal::doneSuccess` assigns `buildResult.inner` alone, and
+/// `DerivationTrampolineGoal` -- the goal those versions hand back -- finishes
+/// by building a fresh `Success` from a status and this map, so every timing
+/// field keeps its default of `0` or `nullopt`. Nix `git` corrects it, by
+/// copying the whole child result first. Reporting a build that took zero
+/// seconds on two of three versions is worse than reporting nothing, so
+/// nothing here reports them. Issue #142 holds the measurement.
+inline nb::dict built_outputs_to_dict(const auto &builtOutputs, const nix::StoreDirConfig &store) {
+    nb::dict out;
+    for (const auto &[name, realisation] : builtOutputs) {
+        nb::dict entry;
+        entry["out_path"] = store.printStorePath(realisation.outPath);
+        nb::list signatures;
+        for (const auto &signature : nix::Signature::toStrings(realisation.signatures))
+            signatures.append(signature);
+        entry["signatures"] = signatures;
+        out[name.c_str()] = entry;
+    }
+    return out;
+}
+
+/// The six fields `nanopynix.exceptions.build_error_from_result` and
 /// `nanopynix.models.BuildResult` read.
 inline nb::dict to_dict(
         const std::string &drv_path,
         const nb::list &outputs,
         bool success,
         const std::string &status,
-        const std::string &error_msg) {
+        const std::string &error_msg,
+        const nb::dict &built_outputs) {
     nb::dict d;
     d["drv_path"] = drv_path;
     d["outputs"] = outputs;
     d["success"] = success;
     d["status"] = status;
     d["error_msg"] = error_msg;
+    d["built_outputs"] = built_outputs;
     return d;
 }
 
+/// Nix splits the build status into a success half and a failure half.
+///
+/// Nix 2.31 had one flat enum instead, and no `HashMismatch` at all: that
+/// member arrived with the split. Issue #126 raised the supported floor to
+/// 2.34, so the flat form is gone from here.
 inline std::string success_status_str(nix::BuildResult::Success::Status s) {
     using enum nix::BuildResult::Success::Status;
     switch (s) {
@@ -129,10 +182,18 @@ inline std::string failure_status_str(nix::BuildResult::Failure::Status s) {
 inline nb::dict from_kbr(const nix::KeyedBuildResult &kbr, const nix::StoreDirConfig &store) {
     auto [path, outputs] = derived_path_parts(kbr.path, store);
     if (auto *success = kbr.tryGetSuccess())
-        return to_dict(path, outputs, true, success_status_str(success->status), "");
+        return to_dict(
+                path,
+                outputs,
+                true,
+                success_status_str(success->status),
+                "",
+                built_outputs_to_dict(success->builtOutputs, store));
+    // A failed build produced nothing, and Nix carries no `builtOutputs` on
+    // the failure variant at all.
     if (auto *failure = kbr.tryGetFailure())
-        return to_dict(path, outputs, false, failure_status_str(failure->status), failure->msg());
-    return to_dict(path, outputs, false, "unknown", "");
+        return to_dict(path, outputs, false, failure_status_str(failure->status), failure->msg(), nb::dict());
+    return to_dict(path, outputs, false, "unknown", "", nb::dict());
 }
 
 }  // namespace nanopynix::build_result

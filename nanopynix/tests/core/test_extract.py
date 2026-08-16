@@ -1,0 +1,231 @@
+"""Tests for _extract.py — L1 nanobind → dict converters.
+
+Needs C++ modules loaded but no Nix daemon.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from nanopynix_bindings import (
+    fetchers as nanopynix_fetchers,  # L1 Input
+    flake as nanopynix_flake,  # L1 FlakeRef, LockedFlake, parse_flake_ref
+    store as nanopynix_store,  # L1 StorePath, Store, PathInfo, BuildResult, MissingInfo
+)
+
+from nanopynix._core._extract import (
+    _attrs_map,  # pyright: ignore[reportPrivateUsage] -- test reaches into _extract's private helper for direct unit coverage, see below
+    _attrs_value,  # pyright: ignore[reportPrivateUsage] -- test reaches into _extract's private helper for direct unit coverage, see below
+    flake_ref_attrs,
+    input_attrs,
+    locked_flake,
+    locked_node,
+)
+from nanopynix.models import StorePath
+from test_support.git_fixtures import init_flake_repo
+
+if TYPE_CHECKING:
+    import nanopynix
+
+# ════════════════════════════════════════════════════════════════════
+# StorePath wrapper
+# ════════════════════════════════════════════════════════════════════
+
+
+def test_store_path_wrapper_basic():
+    sp = StorePath("/nix/store/00000000000000000000000000000000-bash-5.2")
+    assert sp.base_name == "00000000000000000000000000000000-bash-5.2"
+    assert str(sp) == "/nix/store/00000000000000000000000000000000-bash-5.2"
+    assert sp.hash_part == "00000000000000000000000000000000"
+    assert sp.name == "bash-5.2"
+
+
+def test_store_path_wrapper_single_dash_name():
+    sp = StorePath("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo")
+    assert sp.hash_part == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    assert sp.name == "foo"
+
+
+def test_store_path_wrapper_multiple_dashes():
+    sp = StorePath("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-python3.13-nanopynix-0.1.0")
+    assert sp.hash_part == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    assert sp.name == "python3.13-nanopynix-0.1.0"
+
+
+def test_store_path_wrapper_accepts_unvalidated_basename():
+    assert StorePath("justaname").base_name == "justaname"
+
+
+def test_store_path_wrapper_accepts_empty_basename():
+    assert StorePath("").base_name == ""
+
+
+# ════════════════════════════════════════════════════════════════════
+# path_info — from C++ PathInfo for a real store path
+# ════════════════════════════════════════════════════════════════════
+
+
+def test_path_info_from_real_path(store: Any, store_seeded_path: object) -> None:  # noqa: ARG001 -- store_seeded_path guarantees a non-empty store
+    """C++ query_path_info now returns a dict directly — validate shape."""
+    path_strs = store.query_all_valid_paths()
+    if not path_strs:
+        return
+    first = path_strs[0]
+    sp = nanopynix_store.StorePath(Path(first).name)
+    result = store.query_path_info(sp)  # returns dict
+
+    assert isinstance(result, dict)
+    assert "path" in result
+    assert result["path"] == first
+    assert isinstance(result["nar_hash"], str)
+    assert result["nar_hash"]
+    assert isinstance(result["nar_size"], int)
+    assert result["nar_size"] >= 0
+    assert isinstance(result["ultimate"], bool)
+    assert isinstance(result["references"], list)
+    for ref in result["references"]:  # type: ignore[reportUnknownVariableType] -- result from nanobind
+        assert isinstance(ref, str)
+
+
+def test_path_info_deriver_none(store: Any, store_seeded_path: object) -> None:  # noqa: ARG001 -- store_seeded_path guarantees a non-empty store
+    """A non-derivation path should have deriver=None."""
+    path_strs = store.query_all_valid_paths()
+    for d in path_strs:
+        sp = nanopynix_store.StorePath(Path(d).name)
+        if not sp.is_derivation():
+            result = store.query_path_info(sp)
+            assert "deriver" in result
+            if result["deriver"] is not None:
+                assert isinstance(result["deriver"], str)
+            break
+    else:
+        return
+
+
+# ════════════════════════════════════════════════════════════════════
+# build_result — from C++ BuildResult
+# ════════════════════════════════════════════════════════════════════
+
+
+def test_build_result_fields():
+    """build_result from a real build result (requires daemon)."""
+    return
+
+
+# ════════════════════════════════════════════════════════════════════
+# missing_info — from C++ MissingInfo
+# ════════════════════════════════════════════════════════════════════
+
+
+def test_missing_info_shape(store: Any):
+    """C++ query_missing now returns a dict directly — validate shape."""
+    sp = nanopynix_store.StorePath("00000000000000000000000000000000-nonexistent-1.0")
+    result = store.query_missing([sp])  # returns dict
+
+    assert isinstance(result, dict)
+    assert isinstance(result["will_build"], list)
+    assert isinstance(result["will_substitute"], list)
+    assert isinstance(result["unknown"], list)
+    assert isinstance(result["download_size"], int)
+    assert isinstance(result["nar_size"], int)
+
+
+# ════════════════════════════════════════════════════════════════════
+# input_attrs / flake_ref_attrs
+# ════════════════════════════════════════════════════════════════════
+
+
+def test_input_attrs_from_url():
+    inp = nanopynix_fetchers.input_from_url("github:NixOS/nixpkgs")
+    result = input_attrs(inp)
+    assert isinstance(result, dict)
+    assert result["type"].string_value == "github"
+    assert result["owner"].string_value == "NixOS"
+    assert result["repo"].string_value == "nixpkgs"
+
+
+def test_flake_ref_attrs():
+    fr = nanopynix_flake.parse_flake_ref("github:NixOS/nixpkgs")
+    result = flake_ref_attrs(fr)
+    assert isinstance(result, dict)
+    assert result["type"].string_value == "github"
+
+
+def test_flake_ref_attrs_vs_input_attrs():
+    """flake_ref_attrs and input_attrs produce the same shape for the same URL."""
+    fr = nanopynix_flake.parse_flake_ref("github:NixOS/nixpkgs")
+    inp = nanopynix_fetchers.input_from_url("github:NixOS/nixpkgs")
+    assert flake_ref_attrs(fr) == input_attrs(inp)
+
+
+# ════════════════════════════════════════════════════════════════════
+# _attrs_value / _attrs_map — private helpers with no other direct coverage
+# ════════════════════════════════════════════════════════════════════
+
+
+def test_attrs_value_bool_and_int_and_string_branches():
+    """input_attrs/flake_ref_attrs only ever exercise the string_value
+    fallback in practice; these dumb coverage tests pin the bool and int
+    branches of _attrs_value directly."""
+    assert _attrs_value(True).bool_value is True
+    assert _attrs_value(7).int_value == 7
+    assert _attrs_value("s").string_value == "s"
+
+
+def test_attrs_map_converts_a_plain_dict():
+    """_attrs_map has no current callers (kept as a util for future ones);
+    this dumb coverage test exercises it directly so it doesn't bit-rot."""
+    result = _attrs_map({"a": 1, "b": True, "c": "s"})
+    assert result.entries["a"].int_value == 1
+    assert result.entries["b"].bool_value is True
+    assert result.entries["c"].string_value == "s"
+
+
+# ════════════════════════════════════════════════════════════════════
+# locked_node — one node of a lock graph
+# ════════════════════════════════════════════════════════════════════
+
+
+def test_locked_node_carries_both_references():
+    result = locked_node(
+        {
+            "locked_ref": "github:NixOS/nixpkgs/123abc",
+            "original_ref": "github:NixOS/nixpkgs/nixos-24.11",
+            "is_flake": True,
+        },
+    )
+    assert result.locked_ref == "github:NixOS/nixpkgs/123abc"
+    assert result.original_ref == "github:NixOS/nixpkgs/nixos-24.11"
+    assert result.is_flake is True
+
+
+def test_locked_node_keeps_is_flake_false():
+    """``is_flake`` is read straight from the node, and not defaulted.
+
+    The message this replaced defaulted a missing ``is_flake`` to true, because
+    it was assembled from a declared input where the key could be absent. The
+    C++ side always sets all three keys, so a false here means Nix said false.
+    """
+    result = locked_node({"locked_ref": "path:/x", "original_ref": "path:/x", "is_flake": False})
+    assert result.is_flake is False
+
+
+# ════════════════════════════════════════════════════════════════════
+# locked_flake — from C++ LockedFlake
+# ════════════════════════════════════════════════════════════════════
+
+
+def test_locked_flake_shape(eval_state: nanopynix.EvalState, tmp_path: Path):
+    """lock_flake returns a LockedFlake, extract yields expected dict shape."""
+    init_flake_repo(tmp_path, r'hello = "world";')
+
+    fr = nanopynix_flake.parse_flake_ref(str(tmp_path))
+    lf = nanopynix_flake.lock_flake(
+        eval_state,
+        fr,
+        write_lock_file=False,
+    )
+    result = locked_flake(lf)
+
+    assert isinstance(result.description, str)

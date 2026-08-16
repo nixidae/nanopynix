@@ -1,215 +1,44 @@
-"""Shared fixtures for nanopynix tests."""
+"""What is left at the root once each suite can carry its own fixtures.
+
+**Everything reusable moved out in issue #130.** A conftest reaches its own
+directory and below, so a suite that moves into its own project loses every
+fixture declared here. The Nix session fixtures are now
+``nanopynix_testing.fixtures``, and the deadline and the ``agent_notes``
+stand-in are ``test_support.plugin``.
+
+**This file registers no plugin.** ``pytest.ini`` names every one of them
+with ``-p``, and that file gives the reason: ``pytest_plugins`` is legal
+only in a top-level conftest, so a rule that holds here breaks in each
+project. One route for the whole repository is the only route that works
+from the repository root and from a project alike.
+
+What stays is what belongs to *this* run and to no project: the hard exit
+that ends the session.
+
+The order that collection must take moved to ``test_support.plugin`` with
+the suites. It was here, and here it reached ``tests/`` alone, so the
+``forked`` tests of ``nanopynix/tests/`` ran unordered and the run wedged.
+"""
 
 from __future__ import annotations
 
-import atexit
-import functools
-import importlib
-import importlib.util
-import inspect
 import os
 import sys
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING
 
-# Installs beartype's import hook and arranges the same for subprocesses; must
-# run before `import nanopynix` below. A plain `import tests.support.
-# beartype_hook` statement would be fair game for ruff's isort, which sorts
-# `nanopynix` ahead of it -- exactly backwards. Routing the side effect
-# through a function call keeps it outside anything isort will reorder.
-# `-p` in pytest.ini would be earlier still but cannot resolve the name that
-# early; see the hook's module docstring.
-importlib.import_module("tests.support.beartype_hook")
+import coverage
+import pytest
 
-import anyio  # noqa: E402 -- see hook install above
-import coverage  # noqa: E402 -- see hook install above
-import pytest  # noqa: E402 -- see hook install above
-from nanopynix_bindings import expr as nanopynix_expr, util as nanopynix_util  # noqa: E402 -- see hook install above
-
-import nanopynix  # noqa: E402 -- see hook install above
-from nanopynix.settings import DEFAULT_EXPERIMENTAL_FEATURES  # noqa: E402 -- see hook install above
-from tests.support.hang_report import hang_report  # noqa: E402 -- see hook install above
-from tests.support.subprocess_output import run_process  # noqa: E402 -- see hook install above
-
-pytest_plugins = (
-    "tests.support.lsp_environment",
-    "tests.support.nix_environment",
-    "tests.support.nix_runtime",
-)
+# Session scope, and anyio's own `anyio_backend` is module scope. Both are
+# global plugins now that `pytest.ini` registers ours with `-p`, and anyio
+# wins that tie -- every session-scoped fixture that requests it then fails
+# with `ScopeMismatch`. A conftest beats any plugin, so importing the fixture
+# here settles it. `nanopynix/tests/conftest.py` carries the same import and
+# the full account.
+from nanopynix_testing.nix_environment import anyio_backend as anyio_backend
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Generator, Iterable, Iterator
-
-    from tests.support.nix_environment import NixTestEnvironment
-
-# Async tests can hang indefinitely on a wedged subprocess/pipe instead of
-# failing (e.g. a Nix worker that stops responding never raises an error, it
-# just never wakes the awaiting task up). Every async test gets wrapped in
-# this deadline so a hang becomes a clear TimeoutError on that one test
-# instead of the whole pytest run — and therefore the whole CI job — never
-# returning. Override via NANOPYNIX_TEST_TIMEOUT for slower environments.
-_ASYNC_TEST_TIMEOUT = float(os.environ.get("NANOPYNIX_TEST_TIMEOUT", "120"))
-
-
-def _with_test_timeout(func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
-    @functools.wraps(func)
-    async def wrapper(*args: object, **kwargs: object) -> None:
-        try:
-            with anyio.fail_after(_ASYNC_TEST_TIMEOUT):
-                await func(*args, **kwargs)
-        except TimeoutError as exc:
-            # A bare TimeoutError says the test took too long and nothing
-            # about what it waited for. Five of them in one CI job (#44) gave
-            # six lines between them, so the only next step was to run CI
-            # again. The note names the tasks and threads that were still
-            # alive, which is the difference between evidence and a re-run.
-            exc.add_note(hang_report(_ASYNC_TEST_TIMEOUT))
-            raise
-
-    return wrapper
-
-
-def _pytest_agent_installed() -> bool:
-    return importlib.util.find_spec("pytest_agent") is not None
-
-
-if not _pytest_agent_installed():
-
-    class _NoopNotes:
-        """Stand-in for pytest-agent's ``agent_notes``, for runs without the plugin."""
-
-        def note(self, **values: object) -> None:
-            """Discard the recording. Notes are observability, never an assertion."""
-
-    @pytest.fixture
-    def agent_notes() -> _NoopNotes:
-        """``agent_notes`` when pytest-agent is not installed.
-
-        The packaged test runner (``nanopynix/tests.nix``) deliberately leaves
-        pytest-agent out -- it auto-activates on import, and that runner is what
-        CI executes. Without this fallback, every test that records a note
-        errors at *collection* with "fixture 'agent_notes' not found", so it
-        fails in CI on every Nix version and both backends while passing in any
-        dev shell. That is how ``test_error_detail_survives_every_boundary``
-        failed: not on its own subject matter at all.
-
-        Defined only when the real plugin is absent, so a normal run still gets
-        pytest-agent's own fixture rather than this one -- a conftest fixture
-        would otherwise shadow the plugin's.
-        """
-        return _NoopNotes()
-
-
-def pytest_addoption(parser: pytest.Parser):
-    parser.addoption(
-        "--run-temp-store-builds",
-        action="store_true",
-        default=False,
-        help="run tests that build into temporary Nix stores",
-    )
-    parser.addoption(
-        "--run-live-gc",
-        action="store_true",
-        default=False,
-        help="run tests that perform destructive live Nix garbage collection",
-    )
-    # The concurrency soak. See tests/support/soak.py for what these drive.
-    parser.addoption(
-        "--soak-seed",
-        type=int,
-        default=0,
-        help="seed that picks the soak schedule; the same seed replays the same composition",
-    )
-    parser.addoption(
-        "--soak-lanes",
-        type=int,
-        default=8,
-        help="how many soak tests run at once",
-    )
-    parser.addoption(
-        "--soak-report",
-        default=None,
-        help="write the soak schedule and outcomes to this JSON file",
-    )
-    parser.addoption(
-        "--soak-manifest",
-        default=None,
-        help="replay the composition recorded in this JSON file, ignoring --soak-seed",
-    )
-
-
-def _sanitizer_runtime_loaded() -> bool:
-    """Tell whether this process has a sanitizer runtime mapped.
-
-    The map of the process answers this, and no environment variable does.
-    `nanopynix/tests.nix` preloads the runtime, but a developer can also build
-    a sanitizer venv and call `pytest` in it.
-    """
-    try:
-        maps = Path("/proc/self/maps").read_text()
-    except OSError:
-        # Not Linux, or no procfs. The check below then does nothing, which is
-        # the same behaviour as before this check existed.
-        return False
-    return any(name in maps for name in ("libasan.so", "libtsan.so", "libubsan.so"))
-
-
-@pytest.hookimpl(trylast=True)
-def pytest_configure(config: pytest.Config):
-    config.addinivalue_line(
-        "markers",
-        "live_gc: test performs destructive live Nix garbage collection",
-    )
-    # A sanitizer writes its report with `write(2)` on file descriptor 2, and
-    # `--capture=fd` points that descriptor at a temporary file. `halt_on_error=1`
-    # then aborts the process before pytest restores the descriptor and prints
-    # the buffer, so the whole run prints *nothing* and exits 1. Measured on
-    # 2026-08-03, with issue #34 restored on purpose under the ASAN build.
-    #
-    # `--capture=sys` replaces `sys.stderr` alone and leaves the descriptor, so
-    # the report reaches the terminal and every other capture behaviour stays.
-    # This refuses the run rather than correcting it, because the capture method
-    # is fixed before any conftest loads: the capture plugin is a hookwrapper
-    # around `pytest_load_initial_conftests`, and it builds the capture manager
-    # from the command line before the inner hook loads this file.
-    if config.option.capture == "fd" and _sanitizer_runtime_loaded():
-        raise pytest.UsageError(
-            "a sanitizer runtime is loaded, and --capture=fd hides its report: "
-            "the process aborts before pytest prints the captured output, so "
-            "the run reports nothing at all. Pass --capture=sys, which keeps "
-            "file descriptor 2, or --capture=no."
-        )
-
-
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:  # noqa: ARG001 -- hookspec signature requires config arg
-    for item in items:
-        if isinstance(item, pytest.Function) and inspect.iscoroutinefunction(item.obj):
-            item.obj = _with_test_timeout(item.obj)
-
-    # pytest-forked's fork() only keeps the calling thread; any lock another
-    # thread held at fork time stays locked forever in the child. By the time
-    # any other test has touched Nix (L1 init, an inproc.Session's thread
-    # executor, an L3 worker/daemon subprocess, pynix's live-log manager
-    # thread), the pytest process is "multithreading-dirty" and forking it is
-    # a deadlock risk, not just slow. Run every @pytest.mark.forked test
-    # first, before anything else has a chance to spawn those threads.
-    # The static gates run second. A lint error or a type error is the cheapest
-    # finding in the run and needs no Nix, so it belongs near the front rather
-    # than behind several minutes of store work.
-    #
-    # After the forked tests, and not before them: each gate runs a tool
-    # through `anyio.open_process`, and the asyncio child watcher gives that
-    # child a thread of its own. The fork rule above keeps the first word.
-    def rank(item: pytest.Item) -> int:
-        if item.get_closest_marker("forked") is not None:
-            return 0
-        if item.get_closest_marker("static_gate") is not None:
-            return 1
-        return 2
-
-    # `sorted` is stable, so every group keeps the order collection gave it,
-    # including the shuffle that pytest-randomly applies.
-    items.sort(key=rank)
+    from collections.abc import Generator
 
 
 def _save_coverage_before_hard_exit() -> None:
@@ -262,229 +91,3 @@ def pytest_sessionfinish(exitstatus: int | pytest.ExitCode) -> Generator[None]:
     sys.stderr.flush()
     _save_coverage_before_hard_exit()
     os._exit(int(exitstatus))
-
-
-def pytest_runtest_setup(item: pytest.Item):
-    if "live_gc" not in item.keywords:
-        return
-    if item.config.getoption("--run-live-gc") or os.environ.get("NANOPYNIX_RUN_LIVE_GC") == "1":
-        return
-    pytest.skip("destructive live GC test; pass --run-live-gc or NANOPYNIX_RUN_LIVE_GC=1 to run")
-
-
-class StorePathRecorder:
-    """Persist default-store paths for deletion after pytest has exited."""
-
-    def __init__(self, path: Path | None) -> None:
-        self._path = path
-
-    def add(self, paths: Iterable[object]) -> None:
-        """Append paths immediately so ``os._exit`` cannot lose them."""
-        path = self._path
-        if path is None:
-            return
-        entries = "".join(f"{store_path}\n" for store_path in paths)
-        if not entries:
-            return
-        with path.open("a", encoding="utf-8") as file:
-            file.write(entries)
-            file.flush()
-            os.fsync(file.fileno())
-
-
-@pytest.fixture(scope="session")
-def store_path_recorder() -> StorePathRecorder:
-    """Record test outputs for the CI shell's post-pytest ``nix store delete``."""
-    configured_path = os.environ.get("NANOPYNIX_TEST_DELETE_PATHS_FILE")
-    if configured_path is None:
-        return StorePathRecorder(None)
-    path = Path(configured_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("", encoding="utf-8")
-    return StorePathRecorder(path)
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _init() -> None:  # type: ignore[reportUnusedFunction] -- pytest autouse fixture, wired by pytest
-    """Initialize libstore without opening a host-selected store."""
-    nanopynix_util.set_setting("build-users-group", "")
-    nanopynix_util.set_setting("require-drop-supplementary-groups", "false")
-    nanopynix.init_libstore(load_config=False)
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _configure_worker_local_stores(_init: None) -> Iterator[None]:  # type: ignore[reportUnusedFunction] -- pytest autouse fixture, wired by pytest
-    """Keep worker-owned ``local?root`` test stores independent of nixbld.
-
-    The parent process's direct libstore initialization above already sets
-    these values. RPC workers initialize libstore separately, however, and a
-    multi-user installation otherwise makes their explicit temporary local
-    stores chown pytest-owned directories to the nixbld group. ``NIX_CONFIG``
-    is inherited when each worker starts, while the daemon remains configured
-    as a real multi-user daemon.
-    """
-    original = os.environ.get("NIX_CONFIG")
-    worker_settings = "build-users-group =\nrequire-drop-supplementary-groups = false"
-    os.environ["NIX_CONFIG"] = f"{original}\n{worker_settings}" if original else worker_settings
-    try:
-        yield
-    finally:
-        if original is None:
-            os.environ.pop("NIX_CONFIG", None)
-        else:
-            os.environ["NIX_CONFIG"] = original
-
-
-@pytest.fixture(scope="session")
-def store(l1_nix_environment: NixTestEnvironment) -> Iterator[Any]:
-    """Open this run's isolated local/native-daemon Store.
-
-    Backed by ``l1_nix_environment`` (see tests/support/nix_environment.py),
-    never the host Nix installation's own store. Sync tests cannot depend on
-    the async ``shared_nix_environment``, hence the dedicated sync fixture.
-    """
-    opened = nanopynix.open_store(l1_nix_environment.store_uri)
-    try:
-        yield opened
-    finally:
-        opened.close()
-
-
-@pytest.fixture(scope="session")
-def store_seeded_path(store: Any, l1_nix_environment: NixTestEnvironment) -> Any:
-    """A StorePath added directly into this session's isolated Store.
-
-    Store-backed tests must not derive fixture paths from the host Nix
-    installation (see TODO.md); this gives them a known-valid path instead.
-    """
-    source = l1_nix_environment.root.parent / "l1-store-fixture.txt"
-    source.write_text("nanopynix L1 binding fixture\n", encoding="utf-8")
-    return store.add_to_store(str(source), name="nanopynix-l1-fixture", method="flat", hash_algo="sha256")
-
-
-@pytest.fixture(scope="session")
-def init_expr() -> None:
-    """Initialize libexpr (once per session)."""
-    nanopynix.init_libexpr()
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _register_test_primops() -> None:  # type: ignore[reportUnusedFunction] -- pytest autouse fixture, wired by pytest
-    """Register all test primops before EvalState is created."""
-    build_info: Any = nanopynix.build_info()  # type: ignore[reportUnknownVariableType, reportUnknownMemberType] -- C++ extension without type stubs
-    if not build_info["capabilities"]["dynamic_primop_registration"]:
-        return
-    nanopynix.register_primop("test_add_one", 1, ["x"], "increment by 1", lambda x: x + 1)  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    nanopynix.register_primop("test_add", 2, ["x", "y"], "add two ints", lambda x, y: x + y)  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    nanopynix.register_primop("test_shout", 1, ["s"], "uppercase a string", lambda s: s.upper())  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    nanopynix.register_primop("test_not", 1, ["b"], "negate a boolean", lambda b: not b)  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    nanopynix.register_primop("test_sum", 1, ["xs"], "sum a list of ints", sum)
-    nanopynix.register_primop("test_get", 2, ["attrs", "key"], "get attr from set", lambda attrs, key: attrs[key])  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    nanopynix.register_primop("test_null", 1, ["_x"], "always returns null", lambda _x: None)  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    nanopynix.register_primop("test_half", 1, ["x"], "divide by 2 as float", lambda x: x / 2.0)  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    nanopynix.register_primop("test_range", 1, ["n"], "range(1, n+1)", lambda n: list(range(1, n + 1)))  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    nanopynix.register_primop("test_make_attrs", 1, ["x"], "return { x = x; y = x+1; }", lambda x: {"x": x, "y": x + 1})  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    nanopynix.register_primop("test_greet", 1, ["name"], "return greeting string", lambda name: f"Hello, {name}!")  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    nanopynix.register_primop("test_double", 1, ["x"], "double an int", lambda x: x * 2)  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    nanopynix.register_primop("test_triple", 1, ["x"], "triple an int", lambda x: x * 3)  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    nanopynix.register_primop("test_overwrite", 1, ["x"], "first version", lambda x: x + 1)  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    nanopynix.register_primop("test_overwrite", 1, ["x"], "second version — wins", lambda x: x * 10)  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    nanopynix.register_primop("test_answer", 0, [], "the answer (zero arity)", lambda: 42)
-    nanopynix.register_primop("test_add4", 4, ["a", "b", "c", "d"], "add 4 ints", lambda a, b, c, d: a + b + c + d)  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    nanopynix.register_primop("test_identity_string", 1, ["s"], "return the string arg unchanged", lambda s: s)  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-
-    # Callable-returning primops (tests the Python-callable → Nix-function bridge).
-    nanopynix.register_primop("test_return_lazy_42", 0, [], "returns a zero-arg lambda → 42", lambda: lambda: 42)  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    nanopynix.register_primop(
-        "test_attrs_property",
-        1,
-        ["n"],
-        "returns { result = lambda: n * n; } (zero-arg, evaluated immediately)",
-        lambda n: {"result": lambda: n * n},  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    )
-    nanopynix.register_primop(
-        "test_attrs_fn",
-        1,
-        ["x"],
-        "returns { add = lambda y: x + y; } (1-arg callable)",
-        lambda x: {"add": lambda y: x + y},  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    )
-    nanopynix.register_primop(
-        "test_attrs_fn2",
-        1,
-        ["x"],
-        "returns { mul = lambda a, b: x * a * b; } (2-arg callable)",
-        lambda x: {"mul": lambda a, b: x * a * b},  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    )
-    nanopynix.register_primop(
-        "test_closure_fn",
-        2,
-        ["n", "prefix"],
-        "returns { greet = lambda name: prefix + ' ' + name + ' ' + str(n+2); }",
-        lambda n, prefix: {"greet": lambda name: f"{prefix} {name} {n + 2}"},  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    )
-    nanopynix.register_primop(
-        "test_callable_curry",
-        2,
-        ["a", "b"],
-        "returns a callable that takes one arg",
-        lambda _a, _b: lambda x: x * 2,  # type: ignore[reportUnknownLambdaType] -- primop callbacks receive Any from Nix
-    )
-
-
-@pytest.fixture(scope="session")
-def eval_state(store: Any, init_expr: object, _register_test_primops: object) -> Any:  # noqa: ARG001 -- init_expr and _register_test_primops are ordering-only fixture dependencies, never read here
-    """Create a session-scoped EvalState. Depends on _register_test_primops
-    so that primops are registered before EvalState processes them."""
-    return nanopynix.EvalState(store)
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _enable_default_experimental_features() -> None:  # type: ignore[reportUnusedFunction] -- pytest autouse fixture, wired by pytest
-    """Enable nanopynix's default experimental features before any store is opened.
-
-    ``nanopynix.init_libstore`` already does this, for a reason
-    documented there: enabling ``ca-derivations`` *after* a ``LocalStore`` was
-    constructed without it aborts the process (SIGABRT, not a catchable error).
-    This fixture is not a second remedy, it is an ordering guarantee -- pytest
-    does not promise that the fixture calling ``init_libstore`` runs before
-    every other fixture that opens a store, and this one is autouse and
-    session-scoped. Enabling a feature twice is a no-op, so the overlap is free.
-    """
-    for feature in DEFAULT_EXPERIMENTAL_FEATURES:
-        nanopynix.enable_experimental_feature(feature)
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _cleanup_primops() -> None:  # type: ignore[reportUnusedFunction] -- pytest autouse fixture, wired by pytest
-    """Clear C++ primop registry at process exit to avoid segfault
-    when nb::object destructors fire after Python finalization."""
-
-    class _PrimopRegistryModule(Protocol):
-        def _cleanup_primop_registry(self) -> None: ...
-
-    atexit.register(cast("_PrimopRegistryModule", nanopynix_expr)._cleanup_primop_registry)  # type: ignore[reportPrivateUsage] -- intentional cleanup of C++ state at process exit
-
-
-@pytest.fixture(scope="session")
-def repo_root() -> Path:
-    """The checkout root.
-
-    Here rather than in a suite's conftest because three suites need it --
-    tests/pynix, tests/nanopynix's error-boundary tests, and anything that
-    evaluates this repo's own flake.
-    """
-    return Path(__file__).resolve().parent.parent
-
-
-@pytest.fixture(scope="module")
-async def nixpkgs_path(repo_root: Path) -> str:
-    """The pinned nixpkgs, realised once per module.
-
-    Shared for the same reason as ``repo_root``: it used to be copy-pasted per
-    suite, which meant every copy paid the evaluation separately.
-    """
-    result = await run_process(["nix", "eval", "--impure", "--raw", "--file", str(repo_root), "pkgs.path"])
-    if result.returncode != 0:
-        raise RuntimeError(f"nix eval of pkgs.path {result.describe()}")
-    return result.stdout.strip()

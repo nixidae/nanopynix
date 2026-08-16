@@ -10,7 +10,7 @@
 # a load on a machine with that glibc shows those.
 #
 # The default image is Rocky Linux 9, whose glibc is 2.34 exactly, which is the
-# floor that `nix/zig-stdenv.nix` targets. A newer image proves less: it
+# floor that `nix/cxx-stdenv.nix` targets. A newer image proves less: it
 # satisfies a 2.34 requirement whatever the wheel really needs.
 #
 # The interpreter comes from `uv`, and not from the distribution. Rocky 9 ships
@@ -177,10 +177,41 @@ except Exception as caught:
     ) from caught
 print("casts   : find_roots on a local store, ok")
 
+# 3. An error class that **no `catch` clause names** still translates. This is
+#    a different mechanism from check 1, and it broke while check 1 passed.
+#
+#    `nix::Abort` is `MakeError(Abort, EvalError)`, and `src/nix_errors.cpp`
+#    names no `Abort`. So the extension holds no type information for it, and
+#    libc++abi has to walk the base classes of the thrown type instead of
+#    comparing one address. That walk starts with
+#    `dynamic_cast<const __class_type_info *>(thrown_type)`, over the *type
+#    information object itself*. The cast needs one
+#    `__cxxabiv1::__si_class_type_info` for the process, and every object of
+#    the wheel carried its own until `nix/cxx-runtime.nix` gave them one
+#    shared C++ runtime.
+try:
+    state.eval_string('abort "x"', "<smoke>").force()
+    raise AssertionError("abort did not raise")
+except errors.EvalError as caught:
+    print("bases   : Abort reached EvalError, message:", "x" in str(caught))
+except SystemError as caught:  # noqa: F841 -- named to make the report readable
+    raise AssertionError(
+        "the wheel cannot translate an error through its base classes -- see "
+        "issue #112. The objects hold more than one C++ runtime, so a "
+        "dynamic_cast over type information fails."
+    ) from caught
+
 print("RESULT  : ok")
 PYTHON
 
 echo "wheel-smoke: $image ($platform), CPython $python_version"
+# The single quotes around the body of `sh -c` are the point of it. Each `$`
+# in that body must reach the shell of the container, which reads the
+# distribution, the glibc and the interpreter of that machine. A double quote
+# would make this host answer instead, and the report would then describe the
+# host and not the container. `-e` above carries the one value that comes from
+# here.
+# shellcheck disable=SC2016
 "$runtime" run --rm --network=bridge --platform "$platform" \
     -v "$wheel_dir":/wheel:ro,z \
     -v "$work_dir/smoke.py":/smoke.py:ro,z \

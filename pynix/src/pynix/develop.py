@@ -63,6 +63,7 @@ from pynix.target import (
     EvaluationTargetError,
     attr_option,
     derivation_path,
+    dev_shell_attr_search,
     evaluate_target_locked,
     file_option,
     flake_option,
@@ -123,7 +124,7 @@ class PrintDevEnv(ConfiguredCommand):
       pynix print-dev-env --file default.nix --attr hello
       pynix print-dev-env --flake .#hello --json"""
 
-    file: Path | None = file_option()
+    file: str | None = file_option()
     attr: str | None = attr_option()
     flake: str | None = flake_option()
     store: str = store_option("Store URI to build with.")
@@ -156,7 +157,7 @@ class Develop(ConfiguredCommand):
       pynix develop --flake .# -- make -j4
       pynix develop --flake .# -- bash -c 'make | less'"""
 
-    file: Path | None = file_option()
+    file: str | None = file_option()
     attr: str | None = attr_option()
     flake: str | None = flake_option()
     store: str = store_option("Store URI to build with.")
@@ -311,7 +312,9 @@ async def build_dev_env(
             locked: AsyncLockedFlake | None = None
             try:
                 try:
-                    root, locked = await evaluate_target_locked(target, session, auto_call_file=True)
+                    root, locked = await evaluate_target_locked(
+                        target, session, auto_call_file=True, attr_search=dev_shell_attr_search()
+                    )
                     drv_path = await derivation_path(root)
                 except EvaluationTargetError as exc:
                     report_and_exit(exc)

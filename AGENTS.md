@@ -1,13 +1,17 @@
 # Useful commands
 
+A bare `pytest` runs every suite: `testpaths` in `pytest.ini` names each
+project's own. `pytest tests` now selects the self-checks and the static
+gates alone, because issue #130 moved each suite beside its project.
+
 A plain `pytest` invocation uses `--nix-test-backends local` only. This backend
 runs in-process and uses one store. CI tests the daemon backend separately, in
 the `test-daemon-*` matrix jobs and in the TSan workflows. Those jobs pass
 `--nix-test-backends local,daemon`. Pass `--nix-test-backends local,daemon`
 yourself to reproduce a daemon failure on your machine.
 
-- direnv exec . timeout 500 pytest tests
-- direnv exec . timeout 500 pytest tests --cov --cov-report=term-missing --cov-report= # coverage report. It includes the Nix worker subprocess that multiprocessing starts with the forkserver. See tests/_subprocess_startup/sitecustomize.py, which tests/support/beartype_hook.py puts on PYTHONPATH.
+- direnv exec . timeout 500 pytest
+- direnv exec . timeout 500 pytest --cov --cov-report=term-missing --cov-report= # coverage report. It includes the Nix worker subprocess that multiprocessing starts with the forkserver. See the `sitecustomize.py` of `nanopynix_testing`, which that project's `beartype_hook` puts on PYTHONPATH.
 
 The coverage table has approximately 88 lines, so agent mode does not print the
 table to the terminal. The terminal shows `[pytest-agent] coverage: NN%` for
@@ -31,12 +35,12 @@ runtime. `ruff-strict.toml` gives the reason and the measurement behind it.
 another rule.
 
 CI runs those three commands, `ruff format --check`, `shellcheck` over
-`scripts/`, the test suite of `grpclib-transports`, and one run of `ekn` with
-no trust store, in the `static-checks` job. Each one is a derivation in
+`scripts/`, and the suite of each subproject that the repository run does not
+reach, in the `static-checks` job. Each one is a derivation in
 `nix/checks.nix`, and each is a package. Build them to run a gate the way CI
 runs it, in a sandbox and not in the dev shell:
 
-- nix build --file . --no-link --keep-going checks.lint checks.lint-strict checks.format checks.types checks.shell checks.grpclib-transports checks.pytest-agent checks.ekn-sandbox
+- nix build --file . --no-link --keep-going checks.lint checks.lint-strict checks.format checks.types checks.shell checks.grpclib-transports checks.pytest-agent checks.test-support checks.nanopynix-helpers checks.nix-daemon-protocol checks.pynixd checks.nixos-module
 
 Do not use `nix flake check` for this. That command evaluates every package,
 and `packages.shell` cannot evaluate in a pure flake evaluation.
@@ -101,6 +105,20 @@ status, for diffs, for history, and for inspection of commits and changes. Do
 not run a Git porcelain command such as `git status`, `git diff`, `git commit`,
 `git checkout`, or `git reset`. Use a Git command only when the user asks for
 Git, or when a tool needs Git plumbing.
+
+**Commit each piece of work when that piece is complete and its tests pass.
+Do not collect several pieces into one commit at the end of a task.** One
+commit says one thing, and a reader can find the change that caused a defect.
+A commit that holds a package change, a defect correction and a removal
+answers no question about any of the three.
+
+The rule is a size rule as well. When a task gives two answers that stand
+alone, write two commits. `jj split <paths> -m "..."` divides the working copy
+after the fact, so the size of the commit is a decision that you take at the
+end and not at the start.
+
+Finish each task on an empty commit. Run `jj new` when the last commit of the
+task is complete, so the next task does not land inside it.
 
 `pynix` is the dogfooding consumer of nanopynix. `pynix` must depend on the
 public APIs of `nanopynix`. If `pynix` needs a library capability of general
@@ -196,6 +214,55 @@ commands:
 - `agent_notes` and `from pytest_agent import note` get a value out of a test,
   and also out of the code under test. Use them instead of a separate
   `python -c` command.
+
+# pynixd
+
+`pynixd/` is a subproject of this repository, and not a third-party
+dependency. It is a Nix daemon protocol proxy and a distributed build cache,
+in pure Python over AsyncSSH. It sits between a Nix client and a set of remote
+builders, and it caches queries, removes duplicate builds and schedules across
+backends. `pynixd/nix-daemon-protocol/` is the wire package under it, and it
+is a separate distribution because it holds the codecs alone and depends on no
+part of pynixd.
+
+**It implements in Python what nanopynix binds from C++.** `pynixd/wire.py`,
+`nar.py`, `drv_parser.py` and `store/daemon.py` answer questions that
+`nanopynix-bindings` answers through libnixstore. That is the reason the two
+trees are in one repository, and it is not a fault to correct: this suite
+already speaks the real protocol to a real `nix-daemon` through
+`--nix-test-backends local,daemon`, so a Python implementation of the other
+end is a differential test of both. Issue #131 holds the work that integrates
+the project, and it names what is decided and what is not.
+
+**It arrived by a merge of two histories that changed no file**, so it still
+carries its own conventions. Four gates of this repository excluded it, and
+two of the four take it now: `check-lint` and `check-format`. `ruff-strict`
+and pyright still exclude it, and each exclusion names its reason and points
+at #131.
+
+**Read `pynixd/AGENTS.md` before you change anything under `pynixd/`.** That
+file is the source of truth for that project, and this file does not replace
+it. Its three-tier execution pattern, its build queue and its rule of one
+pytest process at a time are all in there.
+
+**The work of pynixd is tracked in issues, like the rest of this repository.**
+It arrived with 54 files of agent-workflow notes -- `todo/`, `research/`,
+`ai/`, `progress.md`, `recurring.md`, `REASONIX.md`, `opencode.json` and the
+rest. Issue #131 read them: the finished ones are gone, the open ones are
+issues #133 to #137, and the reference material on how Nix behaves is at
+`pynixd/docs/notes/`. Do not start a second such tree. Put a task in an issue,
+and put a finding about Nix in `docs/notes/`.
+
+**The NixOS module lives at `pynixd/nix/nixos/`, and `flake.nix` exposes it
+as `nixosModules.pynixd`.** It is the one NixOS module this repository ships.
+The wrapper in `flake.nix` sets `services.pynixd.package`; the module file
+states no default, because the default it had read `pynixd/default.nix` and
+that project's own `flake.lock`, which built a second pynixd pinned apart from
+the one this repository tests. `checks.nixos-module` evaluates it.
+
+**Lix is not supported.** The project supported it, through `LIX_BIN` and the
+`--client-bin`, `--local-bin` and `--builder-bin` options. Every one of those
+is gone. Do not add a branch for a second implementation of Nix.
 
 # Issues, and how a commit closes one
 
@@ -355,6 +422,44 @@ This file follows these rules, and it is the example to copy. Apply the rules
 to text that you write or change. Do not rewrite other existing prose only to
 make that prose comply.
 
+# Licensing
+
+**The repository is Apache-2.0. `nanopynix-bindings` alone is
+LGPL-2.1-or-later.** The root `LICENSE` holds the Apache text, and
+`LICENSE.LGPL-2.1` beside it holds the other. Each project carries a copy of
+the one that applies to it, because `license-files` cannot name a path above
+the source root of a distribution.
+
+The bindings link libnixexpr and libnixstore. Nix publishes those under
+LGPL-2.1-or-later, so the licence of that project follows the library it
+links. Every other project imports the bindings at run time and links nothing.
+
+**Keep "or-later" on the bindings.** Apache-2.0 and LGPL-2.1 are incompatible
+in one direction: the patent grant of Apache-2.0 adds a term that version 2.1
+does not permit a licensee to add. That direction is code moving *into* the
+bindings from an Apache-2.0 project here, and "or-later" is what makes the
+move legal, because the bindings can be taken as LGPL-3.0 and Apache-2.0 is
+compatible with LGPL-3.0. Remove "or-later" and that move becomes a licence
+violation, silently.
+
+The other direction needs no argument. Section 6 of the LGPL exists for a work
+that uses the library, and an Apache-2.0 work that imports the bindings is
+that work.
+
+**`pynix` states both licences, because it ships both.**
+`pynix/src/pynix/get-env.sh` is Nix's own script, vendored under
+LGPL-2.1-or-later, because Nix compiles it into the `nix` binary as a
+file-static string and a consumer of the libraries has to carry a copy. Its
+`license` is `Apache-2.0 AND LGPL-2.1-or-later`, and it carries both licence
+files. `AND`, and not `OR`: a recipient gets each file under the licence that
+file names. The two do not combine, because `pynix` runs that script rather
+than links it.
+
+`tests/meta/test_licensing.py` holds each part of this that a machine can
+check: every project states a licence, the bindings state the LGPL one, every
+other project states the Apache one, and every `license-files` entry names a
+file that is really there.
+
 # Design notes
 
 **In Nix, the term "stderr" means logging. It does not mean the stderr of the
@@ -366,6 +471,27 @@ The subprocess inherits file descriptor 2 from the parent.
 
 Do not add a separate stderr pipe. Such a pipe is redundant, and it confuses
 the logging abstraction of Nix with the stderr of the operating system.
+
+# The supported Nix versions
+
+**`supportedNixFloor` in `default.nix` names the oldest Nix that this
+repository supports. It is 2.34.** One number moves the whole matrix, because
+every variant reads it. The versions that CI builds are 2.34, 2.35 and `git`.
+
+Two rules follow from it:
+
+- **Do not add a version branch to library code to keep an old Nix alive.**
+  Gate the test instead, and give the gate the upstream defect and the issue
+  to read. `nanopynix_testing.nix_markers` holds the markers, and each one
+  names what it excludes and why.
+- **Do not write a gate that the floor already answers.** A marker such as
+  `minimum="2.32"` can never skip a test when the floor is 2.34, so it reads
+  as a live constraint and is not one. Issue #126 removed nine of those.
+
+Raise the floor when an old version costs more than it reports. Issue #126 is
+the example to copy: it measured the skips, the run time and the gates that
+the version alone reached, and it recorded what the removal cost as well as
+what it saved.
 
 # Test failure discipline
 
