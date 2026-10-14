@@ -27,7 +27,7 @@ dependencies = ["anyio", "pygit2", "pexpect", "pyte"]
 test = ["pytest", "anyio"]
 
 [project.urls]
-Homepage = "https://github.com/lillecarl/nanopynix"
+Homepage = "https://github.com/nixidae/nanopynix"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/test_support"]

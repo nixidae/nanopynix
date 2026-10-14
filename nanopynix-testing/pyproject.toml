@@ -36,7 +36,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/lillecarl/nanopynix"
+Homepage = "https://github.com/nixidae/nanopynix"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nanopynix_testing"]

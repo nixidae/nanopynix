@@ -1,4 +1,4 @@
-# An easykubenix (https://github.com/Lillecarl/easykubenix) example: a
+# An easykubenix (https://github.com/nixidae/easykubenix) example: a
 # NixOS-module-style system for generating Kubernetes manifests.
 #
 # Goes through easykubenix's own real `default.nix` entry point (not a

@@ -1,6 +1,6 @@
 """easykubenix-specific inference for pynix's language server.
 
-`easykubenix <https://github.com/Lillecarl/easykubenix>`_ is a NixOS-module-
+`easykubenix <https://github.com/nixidae/easykubenix>`_ is a NixOS-module-
 style system for generating Kubernetes manifests. A file opts in with one
 directive:
 

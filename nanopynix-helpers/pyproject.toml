@@ -26,7 +26,7 @@ dependencies = ["nanopynix", "tree-sitter", "tree-sitter-nix"]
 test = ["nanopynix[test]"]
 
 [project.urls]
-Homepage = "https://github.com/lillecarl/nanopynix"
+Homepage = "https://github.com/nixidae/nanopynix"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nanopynix_helpers"]

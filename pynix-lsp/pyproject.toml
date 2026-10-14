@@ -43,7 +43,7 @@ pynix-lsp = "pynix_lsp.cli:main"
 test = ["pynix[test]", "pytest-lsp"]
 
 [project.urls]
-Homepage = "https://github.com/lillecarl/nanopynix"
+Homepage = "https://github.com/nixidae/nanopynix"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pynix_lsp"]

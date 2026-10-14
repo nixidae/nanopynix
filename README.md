@@ -1,6 +1,6 @@
 # nanopynix
 
-[![Documentation](https://img.shields.io/badge/docs-lillecarl.github.io-blue)](https://lillecarl.github.io/nanopynix/)
+[![Documentation](https://img.shields.io/badge/docs-lillecarl.github.io-blue)](https://nixidae.github.io/nanopynix/)
 [![codecov](https://codecov.io/gh/Lillecarl/nanopynix/graph/badge.svg)](https://codecov.io/gh/Lillecarl/nanopynix)
 
 nanobind-based Python bindings for Nix.
@@ -29,7 +29,7 @@ which the test suite runs.
 Open multiple `Session` instances to run differently configured Nix instances in
 parallel.
 
-[Documentation](https://lillecarl.github.io/nanopynix/)
+[Documentation](https://nixidae.github.io/nanopynix/)
 
 ---
 

@@ -56,7 +56,7 @@ test = [
 nanopynix-worker = "nanopynix.rpc.worker._worker:main"
 
 [project.urls]
-Homepage = "https://github.com/lillecarl/nanopynix"
+Homepage = "https://github.com/nixidae/nanopynix"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nanopynix"]
