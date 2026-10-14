@@ -1,3 +1,9 @@
+# A test workflow. nixidae renders it to
+# `.github/workflows/nanopynix-experiment.yml`, with nanopynix as the working
+# directory of every step. nixidae/nixidae#4.
+{
+  repo ? import ../../. { },
+}:
 # The generic experiment runner.
 #
 # **This workflow exists so that a new experiment costs no workflow file.**
@@ -27,7 +33,7 @@
 #     -f experiment=gc-soak \
 #     -f matrix='{"arm":["control","interior","amplified"],"run":[1,2,3,4,5]}'
 let
-  workflow = import ./lib.nix { };
+  workflow = import ./lib.nix { inherit repo; };
   inherit (workflow)
     steps
     caps

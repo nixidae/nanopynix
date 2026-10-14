@@ -1,5 +1,11 @@
+# A test workflow. nixidae renders it to
+# `.github/workflows/nanopynix-schedule.yml`, with nanopynix as the working
+# directory of every step. nixidae/nixidae#4.
+{
+  repo ? import ../../. { },
+}:
 let
-  workflow = import ./lib.nix { };
+  workflow = import ./lib.nix { inherit repo; };
   inherit (workflow)
     steps
     caps
@@ -20,12 +26,11 @@ let
   );
 
   # **A dispatch tests the branch that it names, and a scheduled run tests
-  # `develop`.** `github.ref_name` is the default branch on a scheduled run,
-  # and the default branch of this repository is `develop`, so the schedule
-  # keeps the behaviour that the literal gave it.
+  # `main`.** `github.ref_name` is the default branch on a scheduled run, and
+  # the default branch of nixidae is `main`.
   #
   # A dispatch needs the other half. The job selection above lets you run one
-  # job of this workflow, and a checkout of `develop` then builds code that the
+  # job of this workflow, and a checkout of `main` then builds code that the
   # job under test does not have.
   branch = "\${{ github.ref_name }}";
   matrixJob = "version-matrix";
@@ -172,14 +177,5 @@ workflow.evalWorkflow {
       ];
     };
   }
-  // dispatchable (
-    allTestJobs
-    // {
-      docs-build = workflow.mkDocsBuildJob {
-        needs = builtins.attrNames allTestJobs;
-        ref = branch;
-      };
-      docs-deploy = workflow.mkDocsDeployJob { needs = "docs-build"; };
-    }
-  );
+  // dispatchable allTestJobs;
 }

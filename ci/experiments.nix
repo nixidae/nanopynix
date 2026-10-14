@@ -1,4 +1,4 @@
-# The CI experiments, and the one interface that `on_experiment.nix` runs.
+# The CI experiments, and the one interface that `workflows/experiment.nix` runs.
 #
 # **An experiment is a package here, and not a script in a YAML file.** A
 # workflow becomes available to `workflow_dispatch` only after that workflow

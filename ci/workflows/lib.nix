@@ -1,11 +1,16 @@
-# Shared GitHub Actions job builders.  This file is imported by the rendered
-# workflow entrypoints; ci/render.py deliberately renders only on_*.nix.
+# Shared GitHub Actions job builders. Every workflow file imports it.
+# ci/render.py renders only on_*.nix, which is the Pages workflow; nixidae
+# renders the test workflows from `ciTestWorkflows` in default.nix.
 #
 # **No step here carries a script.** Every `run:` is one line, and it calls
 # either one command or a package from `ci/steps.nix`. Every value that comes
 # from a workflow expression reaches a step through `env:`. `CLAUDE.md` gives
 # the rule and `tests/meta/test_ci_step_policy.py` keeps it.
-{ }:
+{
+  # This repository's default.nix, evaluated. nixidae passes the one it
+  # built, so the workflows read the same sources.
+  repo ? import ../../. { },
+}:
 let
   # `import ../../.`, and not `builtins.getFlake`.
   #
@@ -15,14 +20,11 @@ let
   # no longer necessary: `nix build --file . <attrpath>` reaches any attribute,
   # so CI names `ciSteps.nix_2_34-tsan` directly and this file reads the same
   # attributes CI builds. The marker is gone with it.
-  repo = import ../../. { };
   inherit (repo) lib ciVersionMatrix sources;
 
-  # ghanix is its own repository now, pinned by the umbrella like any other
-  # source. It used to be `../../ghanix`, a directory here, and it moved
-  # because nixkube wants it and has no nanopynix dependency to reach it
-  # through. Nothing about the import changed but the path: it still takes
-  # `lib` and nothing else.
+  # ghanix is a source of its own in nixidae, because nixkube wants it and
+  # has no nanopynix dependency to reach it through. It takes `lib` and
+  # nothing else.
   ghalib = import sources.ghanix { inherit lib; };
   inherit (ghalib)
     steps
@@ -30,129 +32,9 @@ let
     withTimeout
     ;
 
-  # Every workflow of this repository, with the environment every job needs.
-  #
-  # It wraps ghanix's `evalWorkflow` rather than writing `env` in each
-  # `on_*.nix`, so a workflow added later cannot be the one that forgets it.
-  # A workflow that sets its own `env` wins, because it is written after the
-  # default in the `//`.
-  #
-  # **UMBRELLA_GIT makes the umbrella fetch each source over the git
-  # protocol, instead of through api.github.com.** Anonymous api.github.com
-  # allows 60 calls an hour per IP, GitHub's runners share a NAT pool, and
-  # every source a job resolves is one call. Issue #301.
-  #
-  # The token this repository installs raises that to 1000 an hour per
-  # repository. This removes the dependency instead: a `git+https://`
-  # reference spends nothing from either budget.
-  #
-  # Measured with a deliberately wrong token, which answers 401 if a request
-  # carried it. On an empty store with an empty `~/.cache/nix`,
-  # `github:NixOS/nixpkgs/<rev>?narHash=<hash>` answers 401 -- it asks the
-  # API first, and it does so even when the store path the narHash names is
-  # already valid. The same revision over git answers with the path. The
-  # store path is the same one either way.
-  # The job that resolves the umbrella once, for the whole run.
-  #
-  # **Every other job reads the answer, so no two jobs can disagree.**
-  # `nix/sources.nix` fetches the umbrella unlocked when nothing pins it, so
-  # it resolves the head of the default branch again in each job. `umbrella
-  # land` pushes the working copies, which starts the run, and the umbrella
-  # lock commit follows seconds later, so a run straddles the push and its
-  # jobs read two different revisions.
-  #
-  # Measured, nixkube run 35026926963: `build-amd64` started at 21:40:23 UTC
-  # and pushed `fc7rz74f...-cacheEnv`; the lock commit landed at 21:40:30;
-  # `build-manifests` started at 21:43:07 and asked for
-  # `zsn1x27a...-cacheEnv`, which nothing had built. Issue #301 records the
-  # same failure twice before that, once with a six second margin.
-  #
-  # **It resolves the umbrella that locks this commit, not the head of the
-  # umbrella default branch.** The head is a moving answer: it is whatever
-  # landed most recently, which for a branch nobody landed is not related to
-  # this commit at all. `ci/walkback.sh` reads
-  # `refs/umbrella/nanopynix/<revision>` from the umbrella remote instead,
-  # walking HEAD backwards to the nearest revision the umbrella has locked.
-  #
-  # git and not Nix: the runner has git, and this job must be the cheapest in
-  # the run because every other job waits for it. One `git ls-remote` and one
-  # `git rev-list`.
-  umbrellaRevJob = "umbrella-rev";
-
-  mkUmbrellaRevJob = {
-    runs-on = "ubuntu-24.04";
-    timeout-minutes = 5;
-    # This job clones a repository and reads a revision out of it. It builds
-    # nothing, so it needs none of the space, and the step is not free: it
-    # deletes tens of gigabytes and prunes every Docker image, which is
-    # minutes. The cap below is five, and it was set for a job that took
-    # seconds.
-    ghanix.freeDiskSpace.enable = false;
-    outputs.rev = "\${{ steps.resolve.outputs.rev }}";
-    steps = [
-      {
-        uses = "actions/checkout@v4";
-        # walkback walks HEAD backwards until it reaches a commit the
-        # umbrella has locked. A branch nobody landed needs its branch
-        # point, so the checkout has to reach that far back.
-        "with".fetch-depth = 100;
-      }
-      {
-        id = "resolve";
-        name = "Resolve the umbrella revision";
-        run = "ci/walkback.sh https://github.com/nixidae/nixidae nanopynix | sed 's/^/rev=/' >> \"$GITHUB_OUTPUT\"";
-      }
-    ];
-  };
-
-  # Every workflow of this repository, with the environment every job needs
-  # and the umbrella revision every job shares.
-  #
-  # It wraps ghanix's `evalWorkflow` rather than writing `env` and `needs` in
-  # each `on_*.nix`, so a workflow or a job added later cannot be the one that
-  # forgets either. A workflow that sets its own `env` wins, and so does a job.
-  #
-  # **UMBRELLA_GIT makes the umbrella fetch each source over the git
-  # protocol, instead of through api.github.com.** Anonymous api.github.com
-  # allows 60 calls an hour per IP, GitHub's runners share a NAT pool, and
-  # every source a job resolves is one call. Issue #301.
-  #
-  # The token this repository installs raises that to 1000 an hour per
-  # repository. This removes the dependency instead: a `git+https://`
-  # reference spends nothing from either budget.
-  #
-  # Measured with a deliberately wrong token, which answers 401 if a request
-  # carried it. On an empty store with an empty `~/.cache/nix`,
-  # `github:NixOS/nixpkgs/<rev>?narHash=<hash>` answers 401 -- it asks the
-  # API first, and it does so even when the store path the narHash names is
-  # already valid. The same revision over git answers with the path. The
-  # store path is the same one either way.
-  evalWorkflow =
-    workflow:
-    let
-      # `needs` is a string, a list or absent, and it has to stay whichever
-      # it was plus one name.
-      asList = n: if n == null then [ ] else if builtins.isList n then n else [ n ];
-
-      pin =
-        name: job:
-        job
-        // {
-          needs = asList (job.needs or null) ++ [ umbrellaRevJob ];
-          env = {
-            UMBRELLA_REV = "\${{ needs.${umbrellaRevJob}.outputs.rev }}";
-          } // (if job.env or null == null then { } else job.env);
-        };
-    in
-    ghalib.evalWorkflow (
-      { env = { UMBRELLA_GIT = "1"; }; }
-      // workflow
-      // {
-        jobs = builtins.mapAttrs pin workflow.jobs // {
-          ${umbrellaRevJob} = mkUmbrellaRevJob;
-        };
-      }
-    );
+  # Every workflow of this repository. nixidae renders the test workflows,
+  # and ci/render.py renders on_pages.nix here.
+  inherit (ghalib) evalWorkflow;
 
   # `default.nix` groups the version names, so this file no longer repeats the
   # variant suffixes as a second list, and `on_schedule.nix` no longer writes

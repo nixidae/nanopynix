@@ -1,11 +1,11 @@
 {
   # Where every dependency lives, as directories. nix/sources.nix says how
-  # this repository finds the umbrella that owns them.
+  # this repository finds nixidae, which holds them.
   sources ? import ./nix/sources.nix,
   system ? builtins.currentSystem,
-  # allowUnfree, because the umbrella asks for it too. Without it a build
-  # started here and a build started from the umbrella would use two
-  # different package sets.
+  # allowUnfree, because nixidae asks for it too. Without it a build started
+  # here and a build started from the nixidae root would use two different
+  # package sets.
   pkgs ? import sources.nixpkgs {
     inherit system;
     config.allowUnfree = true;
@@ -520,6 +520,20 @@ lib.throwIf (unlistedVariants != [ ])
       pythonSet
       pythonSetWith
       ;
+
+    # The workflows that run the tests. nixidae renders each one to
+    # `.github/workflows/nanopynix-<name>.yml`. They read this repository
+    # through `repo`, built from the same arguments, so they see the sources
+    # nixidae passed in.
+    ciTestWorkflows =
+      let
+        repo = import ./. { inherit sources system pkgs; };
+      in
+      {
+        commit = import ./ci/workflows/commit.nix { inherit repo; };
+        schedule = import ./ci/workflows/schedule.nix { inherit repo; };
+        experiment = import ./ci/workflows/experiment.nix { inherit repo; };
+      };
 
     inherit
       sources
