@@ -1,0 +1,32 @@
+.\" Snippet, not a page: no .TH or .SH here. Manpage opens .SH EXAMPLES itself.
+Evaluate an expression without writing a file:
+.PP
+.nf
+.RS
+pynix eval --expr '1 + 1'
+.RE
+.fi
+.PP
+Build the hello package of the flake in the current directory:
+.PP
+.nf
+.RS
+pynix build --flake .#hello
+.RE
+.fi
+.PP
+Open a development shell for that package and run make inside it:
+.PP
+.nf
+.RS
+pynix develop --flake .#hello -- make -j4
+.RE
+.fi
+.PP
+List the roots that keep store paths alive:
+.PP
+.nf
+.RS
+pynix store gc print-roots
+.RE
+.fi

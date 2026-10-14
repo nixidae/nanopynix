@@ -19,6 +19,7 @@
   makeWrapper,
   cacert,
   pyprojectUtil,
+  python3Packages,
 }:
 
 {
@@ -34,6 +35,13 @@
   # false for one that gets no completion scripts. `nix/render-completions.py`
   # says where the script comes from.
   completions ? false,
+  # True for a program that gets manual pages, and false for one that gets
+  # none. `nix/render-manpages.py` renders them from the argparse parser of
+  # the program, and `manExamples` is a store path to a roff snippet holding
+  # the hand-written EXAMPLES section of the root page. `installManPage`
+  # puts what it writes under `share/man/`.
+  manPages ? false,
+  manExamples ? null,
   # Put on the program's PATH via a wrapper. For tools the program shells out
   # to at runtime rather than imports.
   pathInputs ? [ ],
@@ -68,6 +76,28 @@ let
           --bash rendered/bash \
           --zsh rendered/zsh \
           --fish rendered/fish
+      '';
+
+  # **Rendered by argparse-manpage, from the parser of the program.** A manual
+  # page reads the command tree, so unlike the completion scripts above this
+  # imports the program out of the venv -- the same interpreter the
+  # application itself runs under. `argparse-manpage` is not in the venv; it
+  # rides on `PYTHONPATH`, so the closure of the application does not grow.
+  # `python3Packages.python` is the interpreter that package was built
+  # against. Its `sitePackages` matches the venv interpreter only while both
+  # track the same `pkgs.python3`; a skew fails loudly at the import below.
+  generatedManPages =
+    runCommand "${name}-manpages"
+      {
+        nativeBuildInputs = [
+          installShellFiles
+        ];
+      }
+      ''
+        PYTHONPATH=${python3Packages.argparse-manpage}/${python3Packages.python.sitePackages} ${venv}/bin/python ${./render-manpages.py} "$PWD/rendered"${lib.optionalString (manExamples != null) " ${lib.escapeShellArg manExamples}"}
+        count=$(ls rendered/*.1 | wc -l)
+        test "$count" -ge 1
+        installManPage rendered/*.1
       '';
 
   # **`--set-default SSL_CERT_FILE` does not work here, and the reason is the
@@ -129,7 +159,7 @@ let
 in
 symlinkJoin {
   inherit name;
-  paths = [ wrapped ] ++ lib.optional completions generatedCompletions;
+  paths = [ wrapped ] ++ lib.optional completions generatedCompletions ++ lib.optional manPages generatedManPages;
   inherit (package) meta;
   passthru = package.passthru // {
     inherit venv package;
