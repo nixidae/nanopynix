@@ -17,7 +17,7 @@ let
   pyproject-nix = import sources.pyproject-nix { inherit lib; };
 
   # huggorm, whose generated bindings are the engine of every scope.
-  huggorm = import sources.huggorm { inherit pkgs; };
+  huggorm = import sources.huggorm { inherit pkgs sources; };
 
   # Every Python package this repo needs that does *not* depend on
   # huggorm-bindings, added to the interpreter's own package set.
