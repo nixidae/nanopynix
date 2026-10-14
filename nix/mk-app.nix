@@ -86,6 +86,10 @@ let
   # `python3Packages.python` is the interpreter that package was built
   # against. Its `sitePackages` matches the venv interpreter only while both
   # track the same `pkgs.python3`; a skew fails loudly at the import below.
+  # The snippet passes quoted, not through `escapeShellArg`.
+  # `escapeShellArg` rebuilds the string with `match`, and the rebuilt
+  # string no longer references the file. The file then never becomes
+  # an input, and the sandbox hides it from the renderer.
   generatedManPages =
     runCommand "${name}-manpages"
       {
@@ -94,7 +98,7 @@ let
         ];
       }
       ''
-        PYTHONPATH=${python3Packages.argparse-manpage}/${python3Packages.python.sitePackages} ${venv}/bin/python ${./render-manpages.py} "$PWD/rendered"${lib.optionalString (manExamples != null) " ${lib.escapeShellArg manExamples}"}
+        PYTHONPATH=${python3Packages.argparse-manpage}/${python3Packages.python.sitePackages} ${venv}/bin/python ${./render-manpages.py} "$PWD/rendered"${lib.optionalString (manExamples != null) " '${manExamples}'"}
         count=$(ls rendered/*.1 | wc -l)
         test "$count" -ge 1
         installManPage rendered/*.1
