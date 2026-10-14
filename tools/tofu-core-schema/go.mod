@@ -1,4 +1,4 @@
-module github.com/lillecarl/nanopynix-tofu-core-schema
+module github.com/nixidae/nanopynix-tofu-core-schema
 
 go 1.26.4
 

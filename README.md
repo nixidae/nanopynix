@@ -1,7 +1,7 @@
 # nanopynix
 
-[![Documentation](https://img.shields.io/badge/docs-lillecarl.github.io-blue)](https://nixidae.github.io/nanopynix/)
-[![codecov](https://codecov.io/gh/Lillecarl/nanopynix/graph/badge.svg)](https://codecov.io/gh/Lillecarl/nanopynix)
+[![Documentation](https://img.shields.io/badge/docs-nixidae.github.io-blue)](https://nixidae.github.io/nanopynix/)
+[![codecov](https://codecov.io/gh/nixidae/nanopynix/graph/badge.svg)](https://codecov.io/gh/nixidae/nanopynix)
 
 nanobind-based Python bindings for Nix.
 
