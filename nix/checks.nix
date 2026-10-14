@@ -36,6 +36,7 @@
   zsh,
   ncurses,
   nix,
+  man,
   completionSpike,
   # Carries `huggorm_bindings-stubs`, which the type gate reads.
   huggorm-generated,
@@ -97,6 +98,10 @@ let
       #
       # It also brings the file into `check-lint` and `check-format`.
       ../nix/render-completions.py
+      # The renderer of the manual pages. `nix/mk-app.nix` runs it inside
+      # each application build that asks for pages, with the same reason and
+      # the same two gates as the entry above it.
+      ../nix/render-manpages.py
       # Tracked, and therefore in scope, although it holds one module and no
       # project of its own. With it the gate reads 259 Python files, which is
       # what `ruff format --check .` reads in the dev shell. Without it the
@@ -440,6 +445,61 @@ in
     # `-p no:cacheprovider`, because the source is a read-only store path.
     cd pynix/completions
     pytest . -p no:cacheprovider
+  '';
+
+  # **The manual pages `pynix` installs, rendered and read back.**
+  #
+  # Four questions. First, every command the help lists owns a page: the
+  # names come out of `pynix --help`, so a new subcommand without a page
+  # fails here rather than shipping silently. Second, every page renders
+  # without a warning. Third, no page carries an escape sequence: Python
+  # 3.14 themes argparse usage when its color detection passes, and troff
+  # cannot use the escapes. Fourth, the root page carries the hand-written
+  # text: the NAME line and one EXAMPLES entry, matched literally.
+  #
+  # The last question this gate answers is the one issue #233 asked. fish
+  # describes a command name through `whatis`, so the gate indexes the pages
+  # with `mandb` and asks `whatis` for the name. A page whose NAME section
+  # mandb cannot parse fails that lookup the way the report did.
+  #
+  # `installManPage` takes pages uncompressed, and the assembled application
+  # keeps them uncompressed. man, mandb and whatis read them as is.
+  manpages = mkCheck "manpages" [ man ] ''
+    set -eu -o pipefail
+    # A pager, a terminal and colors all shape what `man` and `pynix --help`
+    # print. The sandbox has no TTY today, so both default sanely today. The
+    # pins keep that true when the sandbox changes.
+    export PAGER=cat MANPAGER=cat TERM=dumb NO_COLOR=1
+    pages="${pynix}/share/man/man1"
+    test -f "$pages/pynix.1"
+    # Capture first, parse second: an empty file says the program did not
+    # start, and empty names say the help layout moved. Both fail loudly.
+    "${pynix}/bin/pynix" --help >"$TMPDIR/help.txt"
+    test -s "$TMPDIR/help.txt"
+    names=$(awk '/^    [a-z0-9-]+  / {print $1}' "$TMPDIR/help.txt")
+    test -n "$names"
+    for name in $names; do
+      test -f "$pages/pynix-$name.1"
+    done
+    for page in "$pages"/pynix*.1; do
+      if grep -q $'\x1b' "$page"; then
+        echo "escape sequence in $page"
+        exit 1
+      fi
+      man --local-file --warnings -l "$page" >"$TMPDIR/rendered.txt" 2>"$TMPDIR/rendered.err"
+      test ! -s "$TMPDIR/rendered.err"
+      test -s "$TMPDIR/rendered.txt"
+    done
+    man --local-file --warnings -l "$pages/pynix.1" >"$TMPDIR/root.txt" 2>"$TMPDIR/root.err"
+    test ! -s "$TMPDIR/root.err"
+    grep -q -F "pynix - command-line tool for Nix" "$TMPDIR/root.txt"
+    grep -q -F "pynix eval --expr '1 + 1'" "$TMPDIR/root.txt"
+    mkdir -p "$TMPDIR/manroot/man1"
+    cp "$pages"/pynix*.1 "$TMPDIR/manroot/man1/"
+    mandb -q -c "$TMPDIR/manroot" 2>"$TMPDIR/mandb.err"
+    test ! -s "$TMPDIR/mandb.err"
+    MANPATH="$TMPDIR/manroot" whatis pynix >"$TMPDIR/whatis.txt"
+    grep -q -F "command-line tool for Nix" "$TMPDIR/whatis.txt"
   '';
 
   completion-spike = completionSpike;
