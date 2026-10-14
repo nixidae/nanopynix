@@ -84,7 +84,7 @@ buildPythonApplication {
   meta = {
     description = "Static and dynamic shell completion for a cyclopts program";
     mainProgram = "demo";
-    license = lib.licenses.mit;
+    license = lib.licenses.asl20;
     maintainers = [ lib.maintainers.lillecarl ];
   };
 }

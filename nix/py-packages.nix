@@ -194,14 +194,14 @@ let
       };
 
       meta = rendered.meta // {
-        license = lib.licenses.mit;
+        license = lib.licenses.asl20;
         platforms = lib.platforms.unix;
       };
     };
 
     grpclib-transports = _pySelf: rendered: {
       meta = rendered.meta // {
-        license = lib.licenses.mit;
+        license = lib.licenses.asl20;
         platforms = lib.platforms.unix;
       };
     };
