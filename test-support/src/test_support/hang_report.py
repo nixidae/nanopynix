@@ -3,7 +3,7 @@
 Every async test runs under ``anyio.fail_after`` in ``tests/conftest.py``. When
 that deadline fires, the test fails with a bare ``TimeoutError`` that says the
 test took too long and nothing else. Five such failures in one CI job
-(`#44 <https://github.com/nixidae/nanopynix/issues/44>`_) produced six lines
+(`#44 <https://github.com/nixidae/nixidae/issues/73>`_) produced six lines
 of output between them, so the only available next step was to run CI again.
 
 This module builds the report that turns the next occurrence into evidence.

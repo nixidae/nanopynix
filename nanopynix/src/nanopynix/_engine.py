@@ -169,14 +169,14 @@ def build_info() -> dict[str, Any]:
 # --- Not in huggorm yet -------------------------------------------------
 #
 # Each name below is a nanopynix feature that huggorm cannot serve yet, and
-# raises until it can (huggorm#97).
+# raises until it can (nixidae/nixidae#634).
 
 #: The store operations a Python store may serve: none, until huggorm can
-#: implement a store virtual in Python (huggorm#84).
+#: implement a store virtual in Python (nixidae/nixidae#621).
 STORE_DISPATCH_METHODS: tuple[str, ...] = ()
 
 
 def register_store_implementation(scheme: str, factory: object) -> NoReturn:
-    """Claim a URI scheme for a Python store. huggorm cannot serve one yet (huggorm#84)."""
+    """Claim a URI scheme for a Python store. huggorm cannot serve one yet (nixidae/nixidae#621)."""
     del scheme, factory
     raise NotImplementedError("huggorm cannot implement a Nix store in Python yet")

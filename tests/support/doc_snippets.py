@@ -1,6 +1,6 @@
 """Published Python snippets, and the example regions they mirror.
 
-`#23 <https://github.com/nixidae/nanopynix/issues/23>`_: no test executed a
+`#23 <https://github.com/nixidae/nixidae/issues/52>`_: no test executed a
 fenced code block, and two published snippets did not work. ``README.md``
 passed ``Session(config=...)``, and no engine has ever had a ``config``
 parameter.

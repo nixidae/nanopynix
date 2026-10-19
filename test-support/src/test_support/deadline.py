@@ -6,7 +6,7 @@ run and therefore the CI job all stop returning. This wrapper turns that into
 a ``TimeoutError`` on the one test that hung.
 
 A bare ``TimeoutError`` says the test took too long and nothing else. Five of
-them in one CI job (`#44 <https://github.com/nixidae/nanopynix/issues/44>`_)
+them in one CI job (`#44 <https://github.com/nixidae/nixidae/issues/73>`_)
 gave six lines between them, so the only next step was to run CI again.
 :func:`~test_support.hang_report.hang_report` names the tasks and threads that
 were still alive, which is the difference between evidence and a re-run.
