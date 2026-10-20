@@ -61,6 +61,7 @@ ROOT_SUBCOMMANDS = frozenset(
 BUILD_OPTIONS = frozenset(
     {
         "--attr",
+        "--copy",
         "--copy-back",
         "--dry-run",
         "--eval-store",
