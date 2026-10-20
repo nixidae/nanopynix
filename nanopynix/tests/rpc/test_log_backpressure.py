@@ -99,10 +99,9 @@ async def test_the_capture_says_what_the_stall_cost(
     """
     async with rpc_session() as session, session.store() as store, session.eval(store) as evaluator:
         with anyio.fail_after(_DEADLINE_SECONDS):
-            async with session.capture_logs(max_events=_CAPTURE_CAP) as logs:
-                async with anyio.create_task_group() as tg:
-                    tg.start_soon(_stall_the_event_loop)
-                    await (await evaluator.string(_NOISY_EVALUATION)).to_python()
+            async with session.capture_logs(max_events=_CAPTURE_CAP) as logs, anyio.create_task_group() as tg:
+                tg.start_soon(_stall_the_event_loop)
+                await (await evaluator.string(_NOISY_EVALUATION)).to_python()
 
     seen = (len(logs.events), logs.truncated, logs.dropped_events)
     assert len(logs.events) == _CAPTURE_CAP, seen
