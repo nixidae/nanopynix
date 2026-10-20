@@ -17,6 +17,8 @@ validate()-first call path).
 
 from __future__ import annotations
 
+import io
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -280,10 +282,27 @@ async def test_a_bare_fragment_is_an_error() -> None:
         await resolve_file_reference("#lib.version")
 
 
-async def test_standard_input_is_refused_by_name() -> None:
-    """'-f -' reads an expression from stdin in Nix, and pynix does not yet."""
-    with pytest.raises(EvaluationTargetError, match="standard input"):
-        await resolve_file_reference("-")
+async def test_a_dash_is_standard_input_even_beside_a_file_named_dash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """'-f -' reads an expression from stdin, as in Nix, and never a file named '-'."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "-").write_text("{ }")
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{ a = 1; }"))
+
+    reference = await resolve_file_reference("-#a")
+
+    assert (reference.expression, reference.fragment, reference.arguments) == ("{ a = 1; }", "a", ())
+
+
+async def test_standard_input_is_read_once_for_every_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``build`` resolves ``--file`` twice, and a second read of a pipe is empty."""
+    monkeypatch.setattr(sys, "stdin", io.StringIO("1 + 1"))
+
+    first = await resolve_file_reference("-")
+    second = await resolve_file_reference("-")
+
+    assert first.expression == second.expression == "1 + 1"
 
 
 async def test_the_target_resolves_its_own_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

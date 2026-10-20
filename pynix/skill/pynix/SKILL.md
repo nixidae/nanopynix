@@ -51,18 +51,21 @@ A stderr line that is noise, not news, is a pynix bug: file it.
 
 ## Nix programs on stdin
 
-`pynix eval` with no `--expr` reads the expression from stdin, so a heredoc
-carries a Nix program:
+`--file -` reads the expression from stdin in every command that takes
+`--file`, so a heredoc carries a Nix program with no temporary file:
 
 ```sh
-pynix eval <<'EOF'
-let pkgs = import <nixpkgs> { }; in pkgs.hello.version
+pynix build --file - <<'EOF'
+with import <nixpkgs> { }; runCommand "x" { } "echo hi > $out"
 EOF
 ```
 
-Other commands cannot read stdin yet: `--file -` is refused and `--file
-/dev/stdin` fails (#862). For `build` and the rest, write the expression to a
-file in the scratchpad and pass `--file`.
+- Treated as a file: a function is called with its defaults, and `--attr`
+  selects. A fragment needs `=`: `--file=-#a.b`, because argparse reads a
+  separate `-#a.b` as an option.
+- `./x` names from the working directory, as with `nix --file -`.
+- `pynix eval` with neither `--expr` nor `--file` also reads stdin.
+- Not in `pynix repl`, which reads its commands from stdin.
 
 ## pynix-only
 

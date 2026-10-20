@@ -140,11 +140,13 @@ def _cache_dir() -> Path:
     return path
 
 
-def _cache_path(command: Search, target: EvaluationTarget) -> Path:
+def _cache_path(command: Search, target: EvaluationTarget, expression: str | None) -> Path:
+    # `--file -` names no file, so the expression it read is the key.
     canonical = "|".join(
         str(part)
         for part in (
             target.file,
+            expression,
             target.attr,
             target.flake,
             command.options_attr,
@@ -266,8 +268,12 @@ async def run_search(command: Search) -> None:
     except EvaluationTargetError as exc:
         report_and_exit(exc)
 
+    try:
+        reference = await target.file_reference()
+    except EvaluationTargetError as exc:
+        report_and_exit(exc)
     ask = wanted(command)
-    path = _cache_path(command, target)
+    path = _cache_path(command, target, reference.expression if reference is not None else None)
     cached = Cached() if command.update_index else load_cache(path)
     if _missing(cached, ask):
         cached = await _build_index(command, target, ask, cached)

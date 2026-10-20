@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TextIO, cast
 
+import anyio.to_thread
 from anyio import Path as AsyncPath
 from nanopynix_helpers import (
     AttrPathSearch as AttrPathSearch,
@@ -45,6 +47,40 @@ class FileReference:
     local_path: Path | None
     """The local file or directory, when the argument names one that exists."""
 
+    expression: str | None = None
+    """The Nix expression that ``--file -`` read from standard input, or ``None``.
+
+    ``arguments`` is empty then. The expression names a relative path from the
+    working directory, as ``nix --file -`` has it.
+    """
+
+
+_STDIN = "-"
+
+#: What standard input held, and the stream it came from. A command resolves
+#: ``--file`` more than once -- ``build`` asks for the local file before it
+#: evaluates -- and a second read of a pipe finds it empty.
+_stdin_text: tuple[TextIO, str] | None = None
+
+
+async def _read_stdin() -> str:
+    """Read standard input to its end once, and give each later caller the same text.
+
+    Keyed on the stream, so a caller that replaces ``sys.stdin`` reads afresh.
+    """
+    global _stdin_text  # noqa: PLW0603 -- one standard input per process, like the stream it caches
+    if _stdin_text is not None and _stdin_text[0] is sys.stdin:
+        return _stdin_text[1]
+    stream = sys.stdin
+    text: str = await anyio.to_thread.run_sync(stream.read)
+    _stdin_text = (stream, text)
+    return text
+
+
+def names_stdin(raw: str | None) -> bool:
+    """Report whether a ``--file`` argument is ``-``, with or without a fragment."""
+    return raw is not None and raw.partition("#")[0] == _STDIN
+
 
 async def _existing_local_path(candidate: str) -> Path | None:
     """Return the local path that *candidate* names, or ``None``."""
@@ -60,7 +96,7 @@ async def _existing_local_path(candidate: str) -> Path | None:
     return None
 
 
-async def resolve_file_reference(raw: str) -> FileReference:
+async def resolve_file_reference(raw: str) -> FileReference:  # noqa: PLR0911 -- one return per rule the docstring lists
     """Resolve a ``--file`` argument into what the evaluator understands.
 
     The evaluator resolves four shapes itself, in ``lookup_file_arg``: a
@@ -76,7 +112,10 @@ async def resolve_file_reference(raw: str) -> FileReference:
     tree. The file inside that tree is then evaluated as an ordinary Nix file.
     This does not read ``flake.nix``, and it is not ``--flake``.
 
-    Seven rules apply, in this order:
+    ``-`` comes first, and it is not a path: the expression on standard input,
+    as ``nix --file -`` reads it, with a fragment after it as for a file.
+
+    Seven rules apply to the rest, in this order:
 
     1. the whole argument names a local path that exists;
     2. the part before the first ``#`` names a local path that exists;
@@ -103,10 +142,12 @@ async def resolve_file_reference(raw: str) -> FileReference:
     """
     if not raw:
         raise EvaluationTargetError("--file needs a value")
-    if raw == "-":
-        raise EvaluationTargetError(
-            "--file - reads an expression from standard input, which pynix does not support yet"
-        )
+    if names_stdin(raw):
+        expression = await _read_stdin()
+        if not expression.strip():
+            raise EvaluationTargetError("--file - read no expression from standard input")
+        _, _, fragment = raw.partition("#")
+        return FileReference(arguments=(), fragment=fragment or None, local_path=None, expression=expression)
 
     # A path that exists exactly as written wins, '#' and all. A file name that
     # holds a '#' is rare, and the caller who has one wrote it deliberately.
@@ -378,7 +419,11 @@ async def evaluate_target_locked[ValueT: AsyncValue](
     locked: AsyncLockedFlake | None = None
     if target.file is not None:
         reference = await resolve_file_reference(target.file)
-        value = await open_file_reference(reference, session.file)
+        value = (
+            await open_file_reference(reference, session.file)
+            if reference.expression is None
+            else await session.string(reference.expression)
+        )
         # Auto-call first, then the fragment. The root of a fetched tree is
         # usually a function, and its attributes only exist after the call.
         # `--attr` has behaved this way since it existed, and the fragment is
@@ -488,6 +533,8 @@ async def load_repl_target[ValueT: AsyncValue](
 ) -> ValueT:
     """Load *target* into a REPL, preserving Nix's ``:load`` file semantics."""
     target.validate(required=True)
+    if names_stdin(target.file):
+        raise EvaluationTargetError("--file - reads standard input, and the REPL reads its commands there")
     if target.file is not None:
         reference = await resolve_file_reference(target.file)
         value = await open_file_reference(reference, repl.load_file)

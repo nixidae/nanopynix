@@ -354,6 +354,9 @@ def complete_file(*, prefix: str, **_: Any) -> Sequence[str]:
     path, separator, fragment = prefix.partition("#")
     if not separator:
         return _paths(prefix)
+    # `-` is standard input, and a keypress must never wait on it.
+    if path == "-":
+        return []
     return [f"{path}#{candidate}" for candidate in _answer(path, fragment)]
 
 
