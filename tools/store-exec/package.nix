@@ -6,7 +6,10 @@
 stdenv.mkDerivation {
   pname = "nanopynix-store-exec";
   version = "0-unstable";
-  src = ./.;
+  src = lib.fileset.toSource {
+    root = ./.;
+    fileset = ./store-exec.c;
+  };
 
   # Statically linked on purpose. This program's whole job is to rearrange the
   # mount table and then exec, and part of that rearrangement can be a chroot

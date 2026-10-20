@@ -5,7 +5,14 @@
 buildGoModule {
   pname = "tofu-core-schema";
   version = "0-unstable";
-  src = ./.;
+  src = lib.fileset.toSource {
+    root = ./.;
+    fileset = lib.fileset.unions [
+      ./go.mod
+      ./go.sum
+      ./main.go
+    ];
+  };
   vendorHash = "sha256-LHwzM8coXV4Q/9VWZJuftUSz3zsDWYoJUeen5rpQCkU=";
   # buildGoModule names the output binary after the module path's last
   # component (the go.mod `module` directive), not `pname` -- confirmed by
