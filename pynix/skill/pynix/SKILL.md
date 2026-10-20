@@ -42,16 +42,12 @@ Differences that bite:
 
 ## Output
 
-stdout holds only the result. stderr holds structlog records, dozens per build,
-and `--verbosity` does not silence them (#863). Send stderr to a log and read it
-on failure:
+stdout holds only the result. stderr holds what `nix` would print: warnings,
+errors, `building '...'...`, and build logs with `--print-build-logs`. A build
+that changes nothing prints nothing there. Do not discard stderr; it is where
+the error is. `--verbosity talkative` adds pynix's own progress events.
 
-```sh
-pynix build --file . --attr foo 2>"$SCRATCH/foo.log" | jq -r .outputs.out
-```
-
-A Nix error appears in that log as the `error:` lines plus a boxed Python
-error at the end.
+A stderr line that is noise, not news, is a pynix bug: file it.
 
 ## Nix programs on stdin
 

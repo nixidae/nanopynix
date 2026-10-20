@@ -500,6 +500,13 @@ The subprocess inherits file descriptor 2 from the parent.
 Do not add a separate stderr pipe. Such a pipe is redundant, and it confuses
 the logging abstraction of Nix with the stderr of the operating system.
 
+**A command of `pynix` writes its result to stdout, and everything else to
+stderr.** A caller can then filter stderr. Keep stderr quiet too, or a caller
+learns to discard all of it, and loses the error with the rest. At the default
+verbosity, a command prints what `nix` prints and nothing more. An event of
+`pynix` itself is a warning or an error, or it waits for `--verbosity
+talkative`. `pynix/tests/test_stderr.py` holds the rule.
+
 # The supported Nix versions
 
 **`supportedNixFloor` in `default.nix` names the oldest Nix that this

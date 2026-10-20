@@ -64,7 +64,12 @@ async def test_pynix_log_errors_when_build_log_unavailable(
 
 
 @asynccontextmanager
-async def _noop_forward_nix_logs(session: Any, *, print_build_logs: bool = False) -> AsyncGenerator[None]:  # noqa: ARG001 -- matches real forward_nix_logs signature
+async def _noop_forward_nix_logs(
+    session: Any,  # noqa: ARG001 -- matches real forward_nix_logs signature
+    *,
+    verbosity: Any = None,  # noqa: ARG001 -- matches real forward_nix_logs signature
+    print_build_logs: bool = False,  # noqa: ARG001 -- matches real forward_nix_logs signature
+) -> AsyncGenerator[None]:
     yield
 
 

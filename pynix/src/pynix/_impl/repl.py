@@ -39,7 +39,7 @@ from nanopynix.verbosity import normalize_log_level
 from pynix._completion import completion_prefix_at
 from pynix._markdown import render_markdown
 from pynix._nix_syntax import NIX_GRAMMAR_PATH, NIX_LANGUAGE, parse_nix
-from pynix._util import forward_nix_logs
+from pynix._util import LogGate, forward_nix_logs
 from pynix._value_render import format_json
 from pynix.repl import Repl
 from pynix.target import (
@@ -349,11 +349,13 @@ class _ReplState:
         line_editors: tuple[str, ...],
         loaded: list[tuple[str, str]],
         last_loaded: list[str],
+        log_gate: LogGate | None = None,
     ) -> None:
         self.repl = repl
         self.line_editors = line_editors
         self.loaded = loaded
         self.last_loaded = last_loaded
+        self.log_gate = log_gate
 
     async def add_attrs(self, value: Any) -> list[str]:
         self.last_loaded = await self.repl.add_attrs(value)
@@ -474,6 +476,9 @@ async def _cmd_verbosity(state: _ReplState, argument: str) -> None:
     except (TypeError, ValueError) as exc:
         print_formatted_text(f"error: {exc}")
     else:
+        # Activities reach the forwarder ungated, so it needs the new level too.
+        if argument and state.log_gate is not None:
+            state.log_gate.level = verbosity
         print_formatted_text(f"{verbosity.name.lower()} ({int(verbosity)})")
 
 
@@ -507,13 +512,14 @@ _COMMAND_HANDLERS: dict[str, Callable[[_ReplState, str], Awaitable[None]]] = {
 }
 
 
-async def _run_repl_loop(
+async def _run_repl_loop(  # noqa: PLR0913 -- keyword-only, one per piece of state the caller opens around the loop
     repl: AsyncReplSession[Any],
     prompt: Any,
     *,
     initial_loaded: list[str] | None = None,
     initial_sources: list[tuple[str, str]] | None = None,
     line_editors: tuple[str, ...] = (),
+    log_gate: LogGate | None = None,
 ) -> None:
     """Read and evaluate lines until the user exits the REPL."""
     state = _ReplState(
@@ -521,6 +527,7 @@ async def _run_repl_loop(
         line_editors=line_editors,
         loaded=list(initial_sources or []),
         last_loaded=list(initial_loaded or []),
+        log_gate=log_gate,
     )
 
     print_formatted_text(_HELP)
@@ -770,7 +777,7 @@ async def run_repl(command: Repl) -> None:
     async with nanopynix.rpc.Session(experimental_features=["flakes", "nix-command"]) as nix:
         with patch_stdout():
             async with (
-                forward_nix_logs(nix, log_file=sys.stdout),
+                forward_nix_logs(nix, log_file=sys.stdout) as log_gate,
                 nix.store(command.store) as store,
                 nix.repl(store) as repl,
             ):
@@ -797,4 +804,5 @@ async def run_repl(command: Repl) -> None:
                     initial_loaded=initial_loaded,
                     initial_sources=initial_sources,
                     line_editors=repl.line_editors,
+                    log_gate=log_gate,
                 )

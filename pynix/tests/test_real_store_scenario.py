@@ -87,11 +87,8 @@ async def test_scenario_builds_local_derivation_and_forwards_logs(
 
     assert log_path.startswith("/nix/store/")
     assert scenario.physical_path(log_path).read_text() == "log-output\n"
-    assert scenario.last_logs is not None
-    assert any(
-        entry.get("event") == "nix build log" and entry.get("message") == "pynix-log-line"
-        for entry in scenario.last_logs
-    )
+    # `--print-build-logs` prints the line as Nix does, alone on its line of stderr.
+    assert "pynix-log-line" in scenario.local_log_stderr.splitlines()
 
 
 @pytest.mark.dependency(

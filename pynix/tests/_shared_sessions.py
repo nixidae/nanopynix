@@ -131,14 +131,16 @@ class SharedSessions:
         # single command produced, and log_stream() is a fan-out subscription,
         # so each command gets its own consumer over the shared session.
         if monitor is None:
-            async with pynix_util.forward_nix_logs(session, print_build_logs=print_build_logs):
+            async with pynix_util.forward_nix_logs(session, verbosity=verbosity, print_build_logs=print_build_logs):
                 yield session
             return
         # The shared session is inproc and opened without tracking, and a
         # process holds one inproc session, so the monitor turns the
         # process-wide gate on around the command instead.
         with session.tracking_activities():
-            async with pynix_util.forward_nix_logs(session, print_build_logs=print_build_logs, monitor=monitor):
+            async with pynix_util.forward_nix_logs(
+                session, verbosity=verbosity, print_build_logs=print_build_logs, monitor=monitor
+            ):
                 yield session
 
     @contextlib.asynccontextmanager
@@ -163,7 +165,7 @@ class SharedSessions:
             return
         async with self._lock:
             session, store = await self._shared_store(store_uri)
-        async with pynix_util.forward_nix_logs(session, print_build_logs=print_build_logs):
+        async with pynix_util.forward_nix_logs(session, verbosity=verbosity, print_build_logs=print_build_logs):
             yield session, store
 
     @contextlib.asynccontextmanager
@@ -188,7 +190,7 @@ class SharedSessions:
             return
         async with self._lock:
             session, store, evaluator = await self._shared_evaluator(store_uri)
-        async with pynix_util.forward_nix_logs(session, print_build_logs=print_build_logs):
+        async with pynix_util.forward_nix_logs(session, verbosity=verbosity, print_build_logs=print_build_logs):
             yield session, store, evaluator
 
     # ── installation ───────────────────────────────────────────────────

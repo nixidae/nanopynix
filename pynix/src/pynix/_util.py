@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import functools
 import json
+import logging
+import os
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -22,10 +24,10 @@ from nanopynix._typechecking import BEARTYPING, no_runtime_type_check
 from pynix._build_monitor import MonitorState, render
 
 if TYPE_CHECKING or BEARTYPING:
-    import os
     from collections.abc import AsyncGenerator, Sequence
 
     from nanopynix_helpers import EvaluationTargetError
+    from structlog.typing import EventDict, WrappedLogger
 
     from nanopynix import AsyncEvalSession, AsyncSession, AsyncStore
 
@@ -40,6 +42,8 @@ _LOG_DRAIN_QUIET_SECONDS = 0.05
 _MIN_RESULT_EVENT_ARGS = 2
 # nom redraws on every event; four times a second shows the same thing.
 _MONITOR_REDRAW_SECONDS = 0.25
+#: What `nix` logs at when no flag names a level (`nix::verbosity`, lvlInfo).
+DEFAULT_VERBOSITY = nanopynix.LogLevel.INFO
 
 # Build-progress/error messages go here, not stdout -- so a command's
 # print_json() output stays clean, machine-parseable JSON even when the same
@@ -87,16 +91,48 @@ def report_and_exit(exc: EvaluationTargetError) -> NoReturn:
     error_exit(str(exc), cause=exc)
 
 
+class LogGate:
+    """The verbosity up to which :func:`forward_nix_logs` prints an activity.
+
+    Mutable, because a REPL's ``:verbosity`` moves the level after the
+    forwarder starts.
+    """
+
+    __slots__ = ("level",)
+
+    def __init__(self, level: nanopynix.LogLevel) -> None:
+        self.level = level
+
+
+def _python_level(verbosity: nanopynix.LogLevel) -> int:
+    """The level of pynix's own events that Nix's *verbosity* shows.
+
+    At Nix's default, only a warning or an error: a progress event of pynix is
+    not news. ``talkative`` shows them, and ``debug`` shows everything.
+    """
+    if verbosity <= nanopynix.LogLevel.INFO:
+        return logging.WARNING
+    if verbosity <= nanopynix.LogLevel.CHATTY:
+        return logging.INFO
+    return logging.DEBUG
+
+
+def _render(_logger: WrappedLogger, method_name: str, event_dict: EventDict) -> str:
+    """``warning: the event key=value``, in the shape Nix gives its own lines."""
+    event = event_dict.pop("event")
+    fields = "".join(f" {key}={value!r}" for key, value in sorted(event_dict.items()))
+    prefix = f"{method_name}: " if method_name in {"warning", "error", "critical"} else ""
+    return f"{prefix}{event}{fields}"
+
+
 @no_runtime_type_check  # file is duck-typed against TextIO -- under prompt_toolkit's
 # patch_stdout(), sys.stdout is swapped for a StdoutProxy that implements the
 # file-like write interface without being a real TextIO instance.
-def configure_logging(*, file: TextIO | None = None) -> None:
+def configure_logging(*, file: TextIO | None = None, verbosity: nanopynix.LogLevel = DEFAULT_VERBOSITY) -> None:
     structlog.configure(
+        wrapper_class=structlog.make_filtering_bound_logger(_python_level(verbosity)),
         logger_factory=structlog.PrintLoggerFactory(file=file or sys.stderr),
-        processors=[
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.KeyValueRenderer(sort_keys=True),
-        ],
+        processors=[_render],
     )
 
 
@@ -105,24 +141,27 @@ def configure_logging(*, file: TextIO | None = None) -> None:
 async def forward_nix_logs(
     session: Any,
     *,
+    verbosity: nanopynix.LogLevelInput | None = None,
     print_build_logs: bool = False,
     log_file: TextIO | None = None,
     monitor: MonitorState | None = None,
-) -> AsyncGenerator[None]:
-    """Print the session's logs while the block runs.
+) -> AsyncGenerator[LogGate]:
+    """Print the session's logs while the block runs, as Nix prints them.
+
+    *verbosity* is the session's, and ``None`` means Nix's default. It gates
+    the activities and pynix's own events; Nix gates its messages before they
+    arrive. The block receives the :class:`LogGate`, to move the level later.
 
     With ``monitor``, fold them into it and draw nom's status at the bottom
     of stderr instead, with the log above it. The caller keeps the state, so
     it can hand the monitor a plan. The session must have activity tracking on.
     """
+    gate = LogGate(DEFAULT_VERBOSITY if verbosity is None else nanopynix.normalize_log_level(verbosity))
     old_config = structlog.get_config()
     live = _start_monitor() if monitor is not None else None
     # After the monitor starts: `Live` swaps `sys.stderr` for a proxy that
     # prints above it, and structlog binds whatever `sys.stderr` is now.
-    if log_file is None:
-        configure_logging()
-    else:
-        configure_logging(file=log_file)
+    configure_logging(file=log_file, verbosity=gate.level)
     activity = _LogActivity()
     state = monitor if monitor is not None else MonitorState(started=time.monotonic())
     try:
@@ -134,13 +173,15 @@ async def forward_nix_logs(
                         session,
                         print_build_logs=print_build_logs,
                         activity=activity,
+                        gate=gate,
+                        file=log_file,
                     )
                 )
             else:
                 tg.start_soon(_monitor_nix_logs, session, live, state, activity)
                 tg.start_soon(_redraw, live, state)
             try:
-                yield
+                yield gate
             except Exception as exc:
                 # The monitor's last frame counts it. The caller prints it,
                 # after that frame, where nom prints its errors too.
@@ -208,7 +249,7 @@ async def nix_session(  # noqa: PLR0913 -- keyword-only, one per session option;
         session_factory = nanopynix.inproc.Session
     async with (
         session_factory(**kwargs) as nix,
-        forward_nix_logs(nix, print_build_logs=print_build_logs, **forward_kwargs),
+        forward_nix_logs(nix, verbosity=verbosity, print_build_logs=print_build_logs, **forward_kwargs),
     ):
         yield nix
 
@@ -368,41 +409,60 @@ async def _monitor_nix_logs(session: Any, live: Live, state: MonitorState, activ
             live.console.print(line, soft_wrap=True)
 
 
-async def _forward_nix_logs(session: Any, *, print_build_logs: bool, activity: _LogActivity) -> None:
-    logger = structlog.get_logger("pynix.nix")
+@no_runtime_type_check  # file is duck-typed against TextIO -- see configure_logging above.
+async def _forward_nix_logs(
+    session: Any,
+    *,
+    print_build_logs: bool,
+    activity: _LogActivity,
+    gate: LogGate,
+    file: TextIO | None = None,
+) -> None:
+    # Bound once, as structlog binds it: `quiet_terminal` swaps `sys.stderr`
+    # before a command that runs under it opens its session.
+    out = file if file is not None else sys.stderr
+    colour = _wants_colour(out)
     async for event in session.log_stream():
         # Counted before any filtering: a skipped event still proves the stream
         # is live, which is all the drain needs to know.
         activity.count += 1
-        if event.is_request_finalized:
+        if event.is_request_finalized or not event.is_nix_log:
             continue
-        if not event.is_nix_log:
-            continue
-        message = event.message_without_ansi
-        result_type, result_message = _result_event(event)
-        if event.action == "stop" or (event.action == "result" and result_message is None):
-            continue
-        if result_type in {_RESULT_BUILD_LOG_LINE, _RESULT_POST_BUILD_LOG_LINE}:
-            if print_build_logs:
-                logger.info(
-                    "nix build log",
-                    message=result_message,
-                    request_id=event.request_id,
-                    result_type=result_type,
-                )
-            continue
-        if event.action == "error":
-            logger.error("nix log", message=message, action=event.action, request_id=event.request_id)
-        elif event.action == "warn":
-            logger.warning("nix log", message=message, action=event.action, request_id=event.request_id)
-        else:
-            logger.info(
-                "nix log",
-                message=message,
-                action=event.action,
-                request_id=event.request_id,
-                result_type=event.result_type.name if event.result_type else None,
-            )
+        line = _nix_line(event, print_build_logs=print_build_logs, gate=gate)
+        if line is not None:
+            out.write(f"{line if colour else nanopynix.strip_ansi(line)}\n")
+
+
+def _nix_line(event: Any, *, print_build_logs: bool, gate: LogGate) -> str | None:
+    """The line ``SimpleLogger`` prints for *event*, or ``None`` for no line.
+
+    A message arrives already gated at the verbosity of the thread that raised
+    it, so a REPL evaluator at ``debug`` still shows its debug messages. An
+    activity arrives ungated; see :attr:`nanopynix.LogEvent.level`.
+    """
+    match event.action:
+        case "msg" | "warn" | "error":
+            return event.message
+        case "start":
+            text, level = event.message, event.level
+            if not text or level is None or level > gate.level:
+                return None
+            return f"{text}..."
+        case "result" if print_build_logs:
+            result_type, result_message = _result_event(event)
+            if result_type in {_RESULT_BUILD_LOG_LINE, _RESULT_POST_BUILD_LOG_LINE}:
+                return result_message
+            return None
+        case _:
+            return None
+
+
+def _wants_colour(out: Any) -> bool:
+    """Nix's rule: escape sequences reach a terminal, and nothing else."""
+    if "NO_COLOR" in os.environ:
+        return False
+    isatty = getattr(out, "isatty", None)
+    return bool(isatty()) if callable(isatty) else False
 
 
 def _result_event(event: Any) -> tuple[int | None, str | None]:
