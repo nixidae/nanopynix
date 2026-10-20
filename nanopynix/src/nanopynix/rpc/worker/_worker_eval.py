@@ -354,12 +354,9 @@ class EvalServiceHandler(EvalServiceBase):
     def eval_string(self, message: EvalStringRequest) -> ValueHandle:
         es = self._get_es(message.eval_handle)
         value = (
-            es.repl_eval_string(message.expr, message.source_name)
+            es.repl_eval_string(message.expr, message.base_dir or None)
             if es.repl_active()
-            else es.eval_string(
-                message.expr,
-                message.source_name,
-            )
+            else es.eval_string(message.expr, message.base_dir or None)
         )
         return self._export(value, message.eval_handle)
 
@@ -370,7 +367,7 @@ class EvalServiceHandler(EvalServiceBase):
 
     @worker_op
     def repl_process_line(self, message: ReplProcessLineRequest) -> ReplProcessLineResponse:
-        value = self._get_es(message.eval_handle).repl_process_line(message.line, message.source_name)
+        value = self._get_es(message.eval_handle).repl_process_line(message.line, message.base_dir or None)
         if value is None:
             return ReplProcessLineResponse(is_binding=True)
         return ReplProcessLineResponse(is_binding=False, value=self._export(value, message.eval_handle))

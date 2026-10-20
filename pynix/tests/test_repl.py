@@ -197,7 +197,7 @@ class _Repl(ReplSession):
         self.verbosity = LogLevel.NOTICE
         self.raise_on_line: str | None = None
 
-    async def line(self, text: str, path: str = "<string>", *, timeout: float | None = None) -> _Value | None:
+    async def line(self, text: str, base: str | None = None, *, timeout: float | None = None) -> _Value | None:
         if text == self.raise_on_line:
             raise NixError("ThrownError", "boom failed")
         self.lines.append(text)
@@ -242,7 +242,7 @@ class _Repl(ReplSession):
     async def string(
         self,
         expr: str,
-        path: str = "<string>",
+        base: str | None = None,
         *,
         timeout: float | None = None,
     ) -> _Value | _RunValue | _CommandValue | _EditValue | _TypedValue | _DocValue | _AttrDocValue:
@@ -271,7 +271,7 @@ class _CompletionRepl(ReplSession):
     async def string(
         self,
         expr: str,
-        path: str = "<string>",
+        base: str | None = None,
         *,
         timeout: float | None = None,
     ) -> _CompletionValue:
@@ -1120,7 +1120,7 @@ class _HangingRepl(_Repl):
         super().__init__()
         self.entered = 0
 
-    async def line(self, text: str, path: str = "<string>", *, timeout: float | None = None) -> _Value | None:
+    async def line(self, text: str, base: str | None = None, *, timeout: float | None = None) -> _Value | None:
         self.entered += 1
         signal.raise_signal(signal.SIGINT)
         # Gives the loop a chance to run the signal callback, which cancels the
@@ -1158,7 +1158,7 @@ class _AbandonedRepl(_Repl):
     executor is poisoned, so every call raises at once instead of running.
     """
 
-    async def line(self, text: str, path: str = "<string>", *, timeout: float | None = None) -> _Value | None:
+    async def line(self, text: str, base: str | None = None, *, timeout: float | None = None) -> _Value | None:
         raise EvaluatorAbandonedError("a Nix operation did not answer an interrupt within 2.0s")
 
 

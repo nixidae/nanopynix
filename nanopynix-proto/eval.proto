@@ -105,7 +105,9 @@ message EvalFileRequest {
 message EvalStringRequest {
   int64 request_id = 1000;
   string expr = 1;
-  string source_name = 2;
+  // The directory a relative path in `expr` names from. Empty is the
+  // worker's working directory; the client sends its own.
+  string base_dir = 2;
   int64 eval_handle = 100;
 }
 
@@ -124,7 +126,8 @@ message ReplLoadFileRequest {
 message ReplProcessLineRequest {
   int64 request_id = 1000;
   string line = 1;
-  string source_name = 2;
+  // As EvalStringRequest.base_dir.
+  string base_dir = 2;
   int64 eval_handle = 100;
 }
 message ReplProcessLineResponse {

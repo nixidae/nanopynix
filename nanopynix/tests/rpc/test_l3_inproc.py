@@ -340,7 +340,7 @@ async def test_session_close_closes_eval_state_and_clears_worker_values(l3_inpro
 
 async def test_eval_rpc_requires_open_eval(l3_inproc: _L3Inproc) -> None:
     with pytest.raises(GRPCError, match="call OpenEval before evaluating"):
-        await l3_inproc.worker.eval_stub.eval_string(EvalStringRequest(expr="1", source_name="<test>"))
+        await l3_inproc.worker.eval_stub.eval_string(EvalStringRequest(expr="1"))
 
     assert l3_inproc.state.handles.iter_kind(HandleKind.EVAL) == []
 

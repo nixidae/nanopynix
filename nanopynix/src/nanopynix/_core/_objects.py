@@ -762,8 +762,8 @@ class CoreEvalState:
     def discard_value(self, value: CoreValue) -> None:
         self._values.discard(value)
 
-    def eval_string(self, expression: str, path: str = "<string>") -> CoreValue:
-        return self.wrap_value(self.require_raw().eval_expr(expression, path))
+    def eval_string(self, expression: str, base: str | None = None) -> CoreValue:
+        return self.wrap_value(self.require_raw().eval_expr(expression, base))
 
     def eval_file(self, path: str) -> CoreValue:
         return self.wrap_value(self.require_raw().eval_file(path))
@@ -786,14 +786,14 @@ class CoreEvalState:
     def repl_eval_file(self, path: str) -> CoreValue:
         return self.wrap_value(self._scope().eval_file(path))
 
-    def repl_eval_string(self, expression: str, path: str) -> CoreValue:
-        return self.wrap_value(self._scope().eval_expr(expression, path))
+    def repl_eval_string(self, expression: str, base: str | None = None) -> CoreValue:
+        return self.wrap_value(self._scope().eval_expr(expression, base))
 
     def repl_load_file(self, path: str) -> CoreValue:
         return self.wrap_value(self._scope().load_file(path))
 
-    def repl_process_line(self, line: str, path: str) -> CoreValue | None:
-        raw = self._scope().process_line(line, path)
+    def repl_process_line(self, line: str, base: str | None = None) -> CoreValue | None:
+        raw = self._scope().process_line(line, base)
         return None if raw is None else self.wrap_value(raw)
 
     def repl_add_attrs(self, value: CoreValue) -> list[str]:
@@ -802,8 +802,8 @@ class CoreEvalState:
     def repl_scope_names(self) -> list[str]:
         return self._scope().names()
 
-    def repl_select(self, expression: str, path: str = "<string>") -> tuple[str, CoreValue] | None:
-        selected = self._scope().select(expression, path)
+    def repl_select(self, expression: str, base: str | None = None) -> tuple[str, CoreValue] | None:
+        selected = self._scope().select(expression, base)
         if selected is None:
             return None
         return selected.name(), self.wrap_value(selected.attrs())

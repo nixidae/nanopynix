@@ -141,7 +141,7 @@ class SharedEvalCache:
                 await session.open()
                 entry = _SharedEval(session)
                 try:
-                    entry.value = await session.string(expr, path=path)
+                    entry.value = await session.string(expr, path)
                 except NixError as exc:
                     entry.error = exc
                 self._entries[key] = entry

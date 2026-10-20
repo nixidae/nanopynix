@@ -828,8 +828,12 @@ class AsyncEvalSession[ValueT: AsyncValue = AsyncValue](AsyncVerbosityController
         ...
 
     @abstractmethod
-    async def string(self, expr: str, path: str = "<string>", /) -> ValueT:
-        """Evaluate the Nix expression ``expr``."""
+    async def string(self, expr: str, base: str | None = None, /) -> ValueT:
+        """Evaluate the Nix expression ``expr``.
+
+        A relative path in ``expr`` names from ``base``, a directory. ``None``
+        is the caller's working directory, as ``nix eval --expr`` has it.
+        """
         ...
 
     @abstractmethod
@@ -942,8 +946,11 @@ class AsyncReplSession[ValueT: AsyncValue = AsyncValue](AsyncEvalSession[ValueT]
         ...
 
     @abstractmethod
-    async def line(self, text: str, path: str = "<string>", /) -> ValueT | None:
-        """Process one Nix REPL line. Bindings return ``None``; expressions return a value."""
+    async def line(self, text: str, base: str | None = None, /) -> ValueT | None:
+        """Process one Nix REPL line. Bindings return ``None``; expressions return a value.
+
+        ``base`` is as :meth:`AsyncEvalSession.string` takes it.
+        """
         ...
 
     @abstractmethod

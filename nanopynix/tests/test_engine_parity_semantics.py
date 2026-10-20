@@ -416,6 +416,45 @@ async def _evaluates_with_a_separate_build_store(factory: Any) -> str:
         return await (await evaluator.string('"reached the evaluator"')).as_string()
 
 
+async def _relative_paths(
+    factory: Any, chdir: Callable[[Path], None], moved_to: Path, base: Path
+) -> tuple[str, str, str]:
+    """``./x`` from a string, from a string with *base*, and from a REPL line.
+
+    The working directory moves to *moved_to* after the session opens. A worker
+    process keeps the directory it started in, so only a client that sends its
+    own resolves the first and the last against *moved_to*.
+    """
+    async with factory() as session, session.store() as store, session.repl(store) as repl:
+        chdir(moved_to)
+        plain = await (await repl.string("toString ./x")).as_string()
+        based = await (await repl.string("toString ./x", str(base))).as_string()
+        line = await repl.line("toString ./x")
+        if line is None:
+            raise AssertionError("an expression line returned no value")
+        return plain, based, await line.as_string()
+
+
+async def test_both_engines_name_a_relative_path_from_the_callers_directory(
+    inproc_session: InprocSessionFactory,
+    rpc_session: RpcSessionFactory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``nix eval --expr 'toString ./x'`` answers ``$PWD/x``.
+
+    Both engines passed a source name, ``<string>``, where huggorm takes the
+    base directory, and answered ``$PWD/<string>/x``.
+    """
+    monkeypatch.chdir(tmp_path)
+    moved_to, base = tmp_path / "moved", tmp_path / "base"
+    moved_to.mkdir()
+    expected = (f"{moved_to}/x", f"{base}/x", f"{moved_to}/x")
+    assert await _relative_paths(inproc_session, monkeypatch.chdir, moved_to, base) == expected
+    monkeypatch.chdir(tmp_path)
+    assert await _relative_paths(rpc_session, monkeypatch.chdir, moved_to, base) == expected
+
+
 async def _repl_honours_a_per_call_line_editor(factory: Any) -> tuple[str, ...]:
     async with (
         factory() as session,

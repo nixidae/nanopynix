@@ -12,6 +12,7 @@ import queue
 import threading
 import weakref
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Never, Protocol, cast, runtime_checkable
 
 import anyio
@@ -119,6 +120,15 @@ class _EvalSessionOwner(Protocol):
     def _claim_eval(self, eval_session: EvalSession) -> None: ...
 
     def _release_eval(self, eval_session: EvalSession) -> None: ...
+
+
+def _base_dir(base: str | None) -> str:
+    """The directory a relative path in an expression names from, for the worker.
+
+    The client's working directory when *base* is ``None``: the worker is
+    another process, and its own working directory is not the caller's.
+    """
+    return str(Path.cwd()) if base is None else base
 
 
 def _parse_nix_type(value: Any) -> NixType | None:
@@ -586,7 +596,7 @@ class ValueProxy(AsyncValue["Store"]):
         the int/float/bool variants had no Nix counterpart at all.
         """
         if isinstance(function, str):
-            handle = await self._ctx.proxy.eval_string(EvalStringRequest(expr=function, source_name="<apply>"))
+            handle = await self._ctx.proxy.eval_string(EvalStringRequest(expr=function, base_dir=_base_dir(None)))
             function = self._ctx.value(handle.handle, handle.type)
         return await function.call(self, timeout=timeout)
 
@@ -1196,17 +1206,19 @@ class EvalSession(AsyncEvalSession["ValueProxy"]):
         handle = await self._ensure_proxy().eval_file(EvalFileRequest(path=path))
         return self._proxy_context().value(handle.handle, handle.type)
 
-    async def string(self, expr: str, path: str = "<string>", *, timeout: float | None = None) -> ValueProxy:
+    async def string(self, expr: str, base: str | None = None, *, timeout: float | None = None) -> ValueProxy:
         """Evaluate the Nix expression ``expr``.
 
         Args:
             expr: Nix source to evaluate.
-            path: Source name attributed to ``expr`` in error messages.
+            base: The directory that a relative path such as ``./x`` in
+                ``expr`` names from. ``None`` is this process's working
+                directory, and not the worker's.
             timeout: Maximum seconds to wait for evaluation to complete. None
                 (default) waits indefinitely.
         """
         handle = await self._ensure_proxy().eval_string(
-            EvalStringRequest(expr=expr, source_name=path),
+            EvalStringRequest(expr=expr, base_dir=_base_dir(base)),
         )
         return self._proxy_context().value(handle.handle, handle.type)
 
@@ -1445,14 +1457,14 @@ class ReplSession(EvalSession, AsyncReplSession["ValueProxy"]):
         self._repl_begun = False
         await super().close()
 
-    async def line(self, text: str, path: str = "<string>", *, timeout: float | None = None) -> ValueProxy | None:
+    async def line(self, text: str, base: str | None = None, *, timeout: float | None = None) -> ValueProxy | None:
         """Process one Nix REPL line.
 
         A binding such as ``x = 1`` returns ``None``. An expression returns a
         session-bound :class:`ValueProxy`.
         """
         response = await self._ensure_proxy().repl_process_line(
-            ReplProcessLineRequest(line=text, source_name=path),
+            ReplProcessLineRequest(line=text, base_dir=_base_dir(base)),
         )
         if response.is_binding:
             return None

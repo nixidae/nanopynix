@@ -1581,14 +1581,16 @@ class EvalSession(AsyncEvalSession["Value"]):
         self._own_level = int(level)
         return level
 
-    async def string(self, expr: str, path: str = "<string>") -> Value:
+    async def string(self, expr: str, base: str | None = None) -> Value:
         """Evaluate the Nix expression ``expr``.
 
         Args:
             expr: Nix source to evaluate.
-            path: Source name attributed to ``expr`` in error messages.
+            base: The directory that a relative path such as ``./x`` in
+                ``expr`` names from. ``None`` is this process's working
+                directory, as ``nix eval --expr`` has it.
         """
-        local = await self.run(self._require_core().eval_string, expr, path)
+        local = await self.run(self._require_core().eval_string, expr, base)
         return self._track_value(local)
 
     async def file(self, path: str) -> Value:
@@ -1766,13 +1768,13 @@ class ReplSession(EvalSession, AsyncReplSession["Value"]):
         self._repl_begun = False
         await super().close()
 
-    async def line(self, text: str, path: str = "<string>") -> Value | None:
+    async def line(self, text: str, base: str | None = None) -> Value | None:
         """Process one Nix REPL line.
 
         A binding such as ``x = 1`` returns ``None``. An expression returns a
         session-bound :class:`Value`.
         """
-        local = await self.run(self._require_core().repl_process_line, text, path)
+        local = await self.run(self._require_core().repl_process_line, text, base)
         return None if local is None else self._track_value(local)
 
     async def load_file(self, path: str) -> Value:
@@ -1793,7 +1795,7 @@ class ReplSession(EvalSession, AsyncReplSession["Value"]):
         name, core_value = local
         return name, self._track_value(core_value)
 
-    async def string(self, expr: str, path: str = "<string>") -> Value:
+    async def string(self, expr: str, base: str | None = None) -> Value:
         """Evaluate ``expr`` in this REPL's scope rather than the base scope.
 
         Nix keeps the REPL's bindings in a separate env whose parent is
@@ -1806,7 +1808,7 @@ class ReplSession(EvalSession, AsyncReplSession["Value"]):
         detector cannot see -- both engines have ``string`` with an identical
         signature.
         """
-        local = await self.run(self._require_core().repl_eval_string, expr, path)
+        local = await self.run(self._require_core().repl_eval_string, expr, base)
         return self._track_value(local)
 
     async def file(self, path: str) -> Value:
@@ -2041,7 +2043,7 @@ class Value(AsyncValue["Store"]):
         the int/float/bool variants had no Nix counterpart at all.
         """
         if isinstance(function, str):
-            function = await self._eval_session.string(function, "<apply>")
+            function = await self._eval_session.string(function)
         return await function.call(self)
 
     async def realise_string(self) -> str:
