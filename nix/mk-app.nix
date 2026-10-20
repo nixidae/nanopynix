@@ -42,6 +42,10 @@
   # puts what it writes under `share/man/`.
   manPages ? false,
   manExamples ? null,
+  # A directory holding one agent skill (its SKILL.md), or null. It lands at
+  # `share/skills/<name>/<directory name>`, the nixpkgs convention, so a
+  # home configuration links the skill that matches the installed program.
+  skill ? null,
   # Put on the program's PATH via a wrapper. For tools the program shells out
   # to at runtime rather than imports.
   pathInputs ? [ ],
@@ -98,11 +102,18 @@ let
         ];
       }
       ''
-        PYTHONPATH=${python3Packages.argparse-manpage}/${python3Packages.python.sitePackages} ${venv}/bin/python ${./render-manpages.py} "$PWD/rendered"${lib.optionalString (manExamples != null) " '${manExamples}'"}
+        PYTHONPATH=${python3Packages.argparse-manpage}/${python3Packages.python.sitePackages} ${venv}/bin/python ${./render-manpages.py} "$PWD/rendered"${
+          lib.optionalString (manExamples != null) " '${manExamples}'"
+        }
         count=$(ls rendered/*.1 | wc -l)
         test "$count" -ge 1
         installManPage rendered/*.1
       '';
+
+  installedSkill = runCommand "${name}-skill" { } ''
+    mkdir -p $out/share/skills/${name}
+    cp -r ${skill} $out/share/skills/${name}/${baseNameOf skill}
+  '';
 
   # **`--set-default SSL_CERT_FILE` does not work here, and the reason is the
   # whole difficulty.** A Nix build sandbox does not leave the variable unset.
@@ -163,7 +174,12 @@ let
 in
 symlinkJoin {
   inherit name;
-  paths = [ wrapped ] ++ lib.optional completions generatedCompletions ++ lib.optional manPages generatedManPages;
+  paths = [
+    wrapped
+  ]
+  ++ lib.optional completions generatedCompletions
+  ++ lib.optional manPages generatedManPages
+  ++ lib.optional (skill != null) installedSkill;
   inherit (package) meta;
   passthru = package.passthru // {
     inherit venv package;

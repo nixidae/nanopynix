@@ -320,6 +320,7 @@ let
           # Manual pages, rendered from the parser at build time. Issue #233.
           manPages = true;
           manExamples = ./pynix/man/examples.roff;
+          skill = ./pynix/skill/pynix;
         };
         # The language server, as a release application of its own.
         # Issue #107 split it out of `pynix`, so that `pygls`,
