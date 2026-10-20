@@ -13,6 +13,7 @@ from nanopynix.models import (
     LockedFlake,
     LockedNode,
     LogEvent,
+    LogLevel,
     MissingInfo,
     PathInfo,
     ResultType,
@@ -292,6 +293,18 @@ class TestLogEvent:
         assert ev.message == "a warning"
         assert ev.message_without_ansi == "a warning"
 
+    def test_each_action_reports_the_level_and_text_where_it_puts_them(self):
+        """A start puts its level second and its text fourth, after the id and before the type."""
+        start = LogEvent(request_id=1, action="start", args=[7, 5, 0, "copying 'x'", [], 0])
+
+        assert start.level == LogLevel.CHATTY
+        assert start.message == "copying 'x'"
+        assert LogEvent(request_id=1, action="msg", args=[3, "text"]).level == LogLevel.INFO
+        assert LogEvent(request_id=1, action="error", args=[0, "text", {}]).level == LogLevel.ERROR
+        assert LogEvent(request_id=1, action="warn", args=["text"]).level == LogLevel.WARN
+        assert LogEvent(request_id=1, action="stop", args=[7]).level is None
+        assert LogEvent(request_id=1, action="result", args=[7, 101, ["line"]]).level is None
+
     def test_only_an_error_action_has_a_payload(self):
         """``msg`` and ``warn`` reach Nix's logger as text, with no ErrorInfo."""
         assert LogEvent(request_id=1, action="msg", args=[3, "text"]).error_info is None
@@ -336,8 +349,10 @@ class TestLogEvent:
         ev = LogEvent(request_id=1, action="start", args=[1, 3, 100, "building", [], 0])
         assert ev.request_id == 1
         assert ev.action == "start"
-        assert ev.message is None
-        assert ev.message_without_ansi is None
+        # A start carries text, which `SimpleLogger` prints; a reader of the
+        # public model needs it to print the activity as Nix does.
+        assert ev.message == "building"
+        assert ev.message_without_ansi == "building"
 
     def test_defaults(self):
         ev = LogEvent(action="msg")

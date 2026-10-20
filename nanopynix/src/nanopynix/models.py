@@ -37,6 +37,7 @@ from nanopynix_proto.nix.common import (
     LockedFlake as LockedFlake,
     LockedNode as LockedNode,
     LogEvent as _LogEventProto,
+    LogLevel as LogLevel,
     MissingInfo as MissingInfo,
     NixLogEvent as NixLogEvent,
     NixType as NixType,
@@ -58,9 +59,13 @@ from nanopynix._ansi import strip_ansi as _strip_ansi
 #:
 #: The log pump in ``_core/_logs.py`` calls the callback with the arguments
 #: of each kind of record, and they differ: ``msg`` has a level then the text,
-#: ``warn`` has the text alone, and ``error`` has a level, the text, then the
-#: structured payload. So the text is not always last.
-_MESSAGE_INDEX: dict[str, int] = {"msg": 1, "warn": 0, "error": 1}
+#: ``warn`` has the text alone, ``error`` has a level, the text, then the
+#: structured payload, and ``start`` has an id, a level, a type, then the
+#: text. So the text is not always last.
+_MESSAGE_INDEX: dict[str, int] = {"msg": 1, "warn": 0, "error": 1, "start": 3}
+
+#: Where the level of a log action sits in ``LogEventExt.args``.
+_LEVEL_INDEX: dict[str, int] = {"msg": 0, "error": 0, "start": 1}
 
 #: Where ``logEI``'s structured payload sits, after the text.
 _ERROR_INFO_INDEX = 2
@@ -343,6 +348,26 @@ class LogEventExt(_LogEventProto):
             return None
         message = args[index]
         return message if isinstance(message, str) else None
+
+    @property
+    def level(self) -> LogLevel | None:
+        """The level Nix raised the record at, or ``None`` for an action that has none.
+
+        ``warn`` carries no level and reports ``WARN``. ``stop`` and ``result``
+        report ``None``: they belong to the activity that ``start`` opened.
+
+        **A ``start`` arrives whatever its level.** huggorm forwards every
+        activity, so that a build monitor can close what it opened. A reader
+        that prints them as Nix does compares this against its own verbosity,
+        as ``SimpleLogger::startActivity`` does.
+        """
+        if self.action == "warn":
+            return LogLevel.WARN
+        index = _LEVEL_INDEX.get(self.action or "")
+        args = self.args
+        if index is None or index >= len(args) or not isinstance(args[index], int):
+            return None
+        return LogLevel(args[index])
 
     @property
     def error_info(self) -> dict[str, Any] | None:
