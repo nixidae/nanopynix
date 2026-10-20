@@ -137,11 +137,113 @@ let
         '';
       });
 
+  cleanSource = import ./clean-source.nix { inherit lib; };
+
+  /*
+    The files of a project that its own `pyproject.toml` names.
+
+    **An allowlist, and the project writes it.** Every project here builds with
+    hatchling, which reads three keys and nothing else: `packages` under
+    `tool.hatch.build.targets.wheel`, and `license-files` and `readme` under
+    `project`. So the list of what the build reads is already in the file that
+    the build reads, and repeating it here would be a second copy to keep in
+    step. A project that adds a licence file or moves its package directory
+    gets the new source with no edit to this file.
+
+    This is a filter and not a list of paths to copy, so an entry that names
+    nothing in the checkout matches nothing and raises nothing. Two projects
+    rely on that: `nanopynix-proto` and `greeter-proto` have no `src/` at all,
+    because protoc writes every module of theirs. Both override `src` with the
+    generated tree anyway, so what this returns for them is read at evaluation
+    time and never built.
+
+    `pyproject.toml` itself is always kept: pyproject.nix reads it to render
+    the derivation, and hatchling reads it again inside the build.
+  */
+  buildInputsOf =
+    projectDir:
+    let
+      manifest = builtins.fromTOML (builtins.readFile (projectDir + "/pyproject.toml"));
+      project = manifest.project or { };
+      wheel = manifest.tool.hatch.build.targets.wheel or { };
+    in
+    [ "pyproject.toml" ]
+    ++ (wheel.packages or [ ])
+    ++ (project.license-files or [ ])
+    ++ lib.optional (project ? readme) project.readme;
+
+  /*
+    Whether *path* is *entry*, is inside it, or is a directory on the way to it.
+
+    The third case is what makes a nested entry work. `src/nanopynix` cannot be
+    reached unless the filter also says yes to `src`, and a filter that a
+    directory fails is never asked about anything under that directory.
+  */
+  isUnder =
+    prefix: entry: path:
+    let
+      relative = lib.removePrefix prefix (toString path);
+    in
+    relative == entry || lib.hasPrefix "${entry}/" relative || lib.hasPrefix "${relative}/" entry;
+
 in
-# Four entry points, all of them used: two package-set constructors, the
-# renderer wrapper each project goes through, and the roots reader that seeds
-# a set. Everything above is internal to those.
+# Five entry points, all of them used: two package-set constructors, the
+# renderer wrapper each project goes through, the roots reader that seeds
+# a set, and the source filter a project builds from. Everything above is
+# internal to those.
 {
+  /**
+    One project's directory, filtered to what its build reads, as the `src`
+    of its derivation.
+
+    **A raw project path copies the working directory of that project, and
+    nanopynix#130 put a test suite in every one of them.** A local run then
+    writes `.pytest-agent/` inside the project, and that directory becomes part
+    of the source: measured at 27 MiB of 36 MiB for `nanopynix`. The directory
+    changes on every run, so every local `pytest` gave the package a new source
+    hash and rebuilt it, along with everything downstream.
+
+    **The tracked half of the same problem is `tests/`, and nanopynix#145
+    measured it.** The `nanopynix` source was 2.2 MB over 147 files, of which
+    `tests/` was 1.3 MB over 86, so an edit to a test file rebuilt everything
+    downstream of the package.
+
+    `buildInputsOf` is the allowlist. The denylist of `clean-source.nix` still
+    runs over it, for the `__pycache__` directories that live inside `src/`.
+
+    An editable install must point at the real checkout, so it takes the
+    unfiltered path: a store path there would stop the install being live.
+
+    # Inputs
+
+    `src`
+    : The project directory, holding its `pyproject.toml`.
+
+    `name`
+    : The store name of the result.
+
+    # Type
+
+    ```
+    projectSource :: { src :: Path, name :: String } -> Path
+    ```
+  */
+  projectSource =
+    { src, name }:
+    let
+      # A trailing separator, so `removePrefix` leaves a path relative to the
+      # project and not one that starts with `/`.
+      prefix = "${toString src}/";
+      kept = buildInputsOf src;
+    in
+    cleanSource {
+      src = lib.cleanSourceWith {
+        inherit src;
+        filter = path: _type: lib.any (entry: isUnder prefix entry path) kept;
+      };
+      inherit name;
+    };
+
   /*
     The nixpkgs packages a set of our own projects depend on, read out of
     their pyproject.toml files.
