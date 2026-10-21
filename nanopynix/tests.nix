@@ -6,7 +6,6 @@
   suiteRuntime,
   version,
   sanitizer ? null,
-  sanitizerRuntime ? null,
 }:
 let
   # The tree this runner `cd`s into. `nix/source.nix` says why it is filtered
@@ -42,11 +41,6 @@ let
     pynix-lsp = [ "test" ];
   };
 
-  # Interpolating this path literal copies it into the store and substitutes
-  # the resulting store path below -- see nix/tsan-suppressions.txt for why
-  # this specific, narrowly-scoped suppression is safe (a known-permanent
-  # upstream Nix design choice, not a bug we're hiding).
-  tsanSuppressions = ../nix/tsan-suppressions.txt;
 in
 (writeShellApplication {
   name = "nanopynix-tests";
@@ -68,90 +62,9 @@ in
     # edit-run loop, not in the run that decides whether a change is good.
     export NANOPYNIX_TEST_FAITHFUL_SESSIONS=1
   ''
-  + lib.optionalString (sanitizerRuntime != null) ''
-    # The sanitizer runtime must be loaded before any other allocation in the
-    # process happens, or its shadow-memory interception silently misses
-    # things -- this matters here because the instrumented code is a native
-    # extension dlopen()'d into a plain, non-instrumented CPython interpreter,
-    # not a from-scratch instrumented executable.
-    export LD_PRELOAD="${sanitizerRuntime}''${LD_PRELOAD:+:$LD_PRELOAD}"
-  ''
-  + lib.optionalString (sanitizer != null) ''
-    # A sanitizer reports on file descriptor 2, and the default `--capture=fd`
-    # of pytest points that descriptor at a temporary file. `halt_on_error=1`
-    # aborts the process before pytest prints the buffer, so the run says
-    # nothing at all. `--capture=sys` keeps the descriptor. `tests/conftest.py`
-    # refuses the `fd` method under a sanitizer, and gives the whole reason.
-    #
-    # PYTEST_ADDOPTS goes before the command line, so a job that passes
-    # `--capture=no` still gets `no`.
-    export PYTEST_ADDOPTS="--capture=sys''${PYTEST_ADDOPTS:+ $PYTEST_ADDOPTS}"
-  ''
-  + lib.optionalString (sanitizer != null && sanitizer.name == "thread") ''
-    # halt_on_error=1: without it, a race hit deep in a loop (e.g. every
-    # empty-attrset evaluation) gets re-reported on every single occurrence
-    # instead of just the first, producing multi-million-line, unusable logs.
-    # suppressions=...: silences the curlFileTransfer worker-thread "leak"
-    # (nix/tsan-suppressions.txt) -- a permanent upstream design choice
-    # (leaked-on-purpose singleton), not a bug, that otherwise shows up in
-    # every TSAN run touching an HTTP fetch path.
-    # die_after_fork=0: `nix daemon` forks a handler process per connection
-    # and that child spawns its own worker threads -- exactly the pattern
-    # TSAN's default die_after_fork=1 refuses ("starting new threads after
-    # multi-threaded fork is not supported"). This is normal daemon behavior,
-    # not a bug, so tell TSAN to tolerate it instead of aborting the child.
-    # report_thread_leaks=0: a thread that finished and that nothing joined is
-    # not a race, and two producers of exactly that pattern are in this
-    # process by design. anyio's `WorkerThread` carries `MAX_IDLE_TIME = 10`,
-    # no `daemon=True` and no join, so an idle worker is reaped and returns;
-    # `concurrent.futures` does the same. With `halt_on_error=1` above, one
-    # such thread ends the process at exit status 66 and fails the job.
-    # Measured on commit 824beb96: 11 seed runs across the three TSAN jobs of
-    # CI run 32401477688, one of which reported a thread leak and none of
-    # which reported a race. Issue #235.
-    #
-    # This turns off one class of report and leaves races -- which
-    # `tsanSoakSeeds` in `ci/steps.nix` calls the genuine finding -- fatal. It
-    # is deliberately not a `nix/tsan-suppressions.txt` entry: the only frame
-    # in the report is CPython's `do_start_joinable_thread`, through which
-    # every Python thread here is created, so a `thread:` line would read as
-    # targeted and would not be.
-    export TSAN_OPTIONS="halt_on_error=1 history_size=7 second_deadlock_stack=1 die_after_fork=0 report_thread_leaks=0 suppressions=${tsanSuppressions}"
-  ''
-  + lib.optionalString (sanitizer != null && sanitizer.name == "undefined") ''
-    # halt_on_error: UBSan prints a violation and carries on by default, so
-    # without this the job goes green with the report sitting in its log. It is
-    # set here rather than compiled in with -fno-sanitize-recover because the
-    # compile-time form also reaches sqlite's build-time code generator, where
-    # upstream UB killed the build -- see huggorm's nix/sanitizer.nix. This
-    # puts the fatal boundary around the process under test, which is the
-    # thing being gated.
-    #
-    # print_stacktrace: a UBSan report names one source line. The line that a
-    # header gives is the line of the header, so the caller is the part that
-    # says whose defect it is.
-    export UBSAN_OPTIONS="print_stacktrace=1 halt_on_error=1"
-  ''
-  + lib.optionalString (sanitizer != null && sanitizer.name == "address") ''
-    # detect_leaks=0: this build has no Boehm collector, because libexpr
-    # refuses ASAN together with one. The evaluator therefore allocates and
-    # never releases, on purpose, and the process is the unit of reclamation.
-    # A leak checker here reports the design of the build rather than a
-    # defect. This job is for a memory error.
-    #
-    # detect_stack_use_after_return=1 is not the default, and it is the exact
-    # shape of the defect this job exists to catch: issue #34 was a
-    # stack-local `nix::fetchers::Settings` whose address outlived its frame.
-    #
-    # halt_on_error=1: ASAN continues after a report by default, so without
-    # this the job goes green with the finding sitting in its log. mkUbsanTestJob
-    # in ci/workflows/lib.nix reads the log as well, for the case of a report
-    # inside a forkserver worker that is reaped into a plain test failure.
-    export ASAN_OPTIONS="detect_leaks=0 detect_stack_use_after_return=1 halt_on_error=1 print_stacktrace=1"
-    # CPython allocates through its own arenas by default, and ASAN cannot see
-    # inside one. A report then names the arena and not the caller.
-    export PYTHONMALLOC=malloc
-  ''
+  # Every variant's rules live in huggorm's `nix/sanitizer.nix`, beside
+  # how the variant is built.
+  + lib.optionalString (sanitizer != null) sanitizer.testEnv
   + ''
     # Coverage is measured by `coverage run` and combined *after* pytest has
     # exited, rather than by pytest-cov. pytest-cov combines inside its

@@ -295,7 +295,6 @@ let
             inherit (final.nanopynix) version;
             inherit (sources) nixpkgs;
             inherit (final) sanitizer;
-            sanitizerRuntime = if final.sanitizer == null then null else final.sanitizer.runtime;
             inherit (final) pythonSet;
             # The one list that the dev shell also takes, so a tool the
             # suite needs cannot reach only one of them. See
