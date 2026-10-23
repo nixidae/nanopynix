@@ -88,10 +88,10 @@ let
 
       kr8s = pySelf.callPackage ./nix/kr8s.nix { src = sources.kr8s; };
 
-      tree-sitter-nix = pySelf.callPackage ./nix/tree-sitter-nix.nix {
+      tree-sitter-nix = pySelf.callPackage "${sources.huggorm}/nix/tree-sitter-nix.nix" {
         # This set, and not `python.pkgs`, which is the set from before
-        # these overrides ran. nix/tree-sitter-nix.nix gives the
-        # measurement.
+        # these overrides ran. huggorm's nix/tree-sitter-nix.nix gives
+        # the measurement.
         pythonPackages = pySelf;
         # `pkgs.path` (the nixpkgs source tree) would otherwise be shadowed
         # by the Python set's own PyPI package literally named "path" --
