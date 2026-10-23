@@ -14,16 +14,17 @@ from typing import TYPE_CHECKING, cast
 
 from anyio import Path as AnyioPath
 
-from nanopynix import store_exec_prefix
 from nanopynix._typechecking import BEARTYPING
-from pynix._impl.develop import physical_path_mapper
-from pynix._util import error_exit, eval_session, report_and_exit
-from pynix.target import EvaluationTarget, EvaluationTargetError, base_attr_search, evaluate_target
+from pynix import _evaluate
+from pynix._store_layout import StoreLayout
+from pynix._util import error_exit, huggorm_build_session, report_and_exit
+from pynix.target import EvaluationTarget, EvaluationTargetError
 
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import Awaitable, Callable
 
-    from nanopynix.protocols import AsyncValue
+    from huggorm import AsyncEvalState, AsyncValue
+
     from pynix.env import Shell
 
 #: The file whose store paths ``nix shell`` also puts on ``PATH``.
@@ -74,25 +75,21 @@ class ShellEnvironment:
     exec_prefix: list[str]
 
 
-async def _optional(value: AsyncValue, name: str) -> object:
-    return await value.attr(name).to_python() if await value.has_attr(name) else None
-
-
-async def output_paths(value: AsyncValue) -> list[str]:
+async def output_paths(state: AsyncEvalState, value: AsyncValue) -> list[str]:
     """Build the default outputs of the derivation *value*, and return their paths."""
-    if await _optional(value, "type") != "derivation":
+    if await _evaluate.optional_attr(state, value, "type") != "derivation":
         raise EvaluationTargetError("value is not a derivation")
-    meta = value.attr("meta") if await value.has_attr("meta") else None
-    to_install = await _optional(meta, "outputsToInstall") if meta is not None else None
-    name = await _optional(value, "outputName")
+    meta = await _evaluate.optional_set(state, value, "meta")
+    to_install = await _evaluate.optional_attr(state, meta, "outputsToInstall")
+    name = await _evaluate.optional_attr(state, value, "outputName")
     outputs = default_outputs(
-        output_specified=await _optional(value, "outputSpecified") is True,
+        output_specified=await _evaluate.optional_attr(state, value, "outputSpecified") is True,
         output_name=name if isinstance(name, str) else None,
         outputs_to_install=[str(item) for item in cast("list[object]", to_install)]
         if isinstance(to_install, list)
         else [],
     )
-    return [await value.attr(output).attr("outPath").realise_string() for output in outputs]
+    return [await _evaluate.realised_attr(state, await value.get(output), "outPath") for output in outputs]
 
 
 def _targets(command: Shell) -> list[EvaluationTarget]:
@@ -106,24 +103,26 @@ async def prepare_shell(command: Shell) -> ShellEnvironment:
     if not command.installables:
         error_exit("name at least one installable")
     try:
-        async with eval_session(
+        async with huggorm_build_session(
             command.store, verbosity=command.verbosity, print_build_logs=command.print_build_logs
-        ) as (_nix, store, session):
+        ) as (_session, store, _eval_store, state):
             roots: list[str] = []
             for target in _targets(command):
-                value = await evaluate_target(target, session, auto_call_file=True, attr_search=base_attr_search())
-                roots.extend(sorted(await output_paths(value), key=_store_path_order))
-            to_disk = await physical_path_mapper(store)
+                value = await _evaluate.evaluate_target(
+                    target, state, auto_call_file=True, attr_search=_evaluate.base_attr_search()
+                )
+                roots.extend(sorted(await output_paths(state, value), key=_store_path_order))
+            layout = await StoreLayout.of(store)
 
             async def read_propagated(path: str) -> list[str]:
-                propagated = AnyioPath(to_disk(f"{path}/{_PROPAGATED}"))
+                propagated = AnyioPath(layout.to_disk(f"{path}/{_PROPAGATED}"))
                 return (await propagated.read_text()).split() if await propagated.is_file() else []
 
             directories = await bin_directories(roots, read_propagated)
             inherited = os.environ.get("PATH", "")
             return ShellEnvironment(
                 path=os.pathsep.join([*directories, inherited]) if inherited else os.pathsep.join(directories),
-                exec_prefix=await store_exec_prefix(store),
+                exec_prefix=layout.exec_prefix(),
             )
     except EvaluationTargetError as exc:
         report_and_exit(exc)
