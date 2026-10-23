@@ -175,7 +175,8 @@ async def test_query_derivation_outputs(
     show = parse(["derivation", "show", "--file", str(nix_file), *shared_nix_environment.pynix_store_args()])
     await show.run()
     captured = capsys.readouterr()
-    drv_path = next(iter(json.loads(captured.out)))
+    # Nix's document keys each derivation by its base name.
+    drv_path = f"/nix/store/{next(iter(json.loads(captured.out)['derivations']))}"
 
     cmd = parse(
         ["store", "query-derivation-outputs", drv_path, *shared_nix_environment.pynix_store_args()],
