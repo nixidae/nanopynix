@@ -589,11 +589,15 @@ def complete(parser: argparse.ArgumentParser) -> None:
     if not os.environ.get("_ARGCOMPLETE"):
         return
     import argcomplete  # noqa: PLC0415 -- 39 modules that only a completion needs; see this function's docstring
+    import argcomplete.finders  # noqa: PLC0415 -- the same reason
 
     _let_a_hash_stay_in_the_line()
     # argcomplete runs only the actions it knows, so without this a `--file`
     # never reaches `parsed_args` and the `--attr` completer has no file.
-    argcomplete.safe_actions.add(_Once)
+    # argcomplete's docs name this set as the place for a custom action; its
+    # inferred type lists only the stock argparse ones.
+    safe_actions = typing.cast("set[type[argparse.Action]]", argcomplete.finders.safe_actions)
+    safe_actions.add(_Once)
     argcomplete.autocomplete(parser, exclude=_NOT_OFFERED)
 
 
