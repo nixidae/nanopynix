@@ -8,7 +8,13 @@ nothing, as ``nix build`` prints nothing. Issue nixidae/nixidae#863.
 from __future__ import annotations
 
 import json
+import os
+import re
+import sys
 from typing import TYPE_CHECKING
+
+import anyio
+import pytest
 
 from nanopynix_testing.nix_markers import LINUX_CHROOT_BUILD
 from pynix import parse
@@ -16,9 +22,9 @@ from pynix import parse
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import pytest
-
     from nanopynix_testing.nix_environment import NixTestEnvironment
+
+_CLI = "import sys, pynix; sys.argv[0] = 'pynix'; pynix.main()"
 
 
 def _derivation(tmp_path: Path) -> Path:
@@ -67,3 +73,50 @@ async def test_a_higher_verbosity_shows_the_activities(
     await parse([*argv, *shared_nix_environment.pynix_store_args()]).run()
 
     assert "to the store...\n" in capsys.readouterr().err
+
+
+@LINUX_CHROOT_BUILD
+@pytest.mark.parametrize("print_build_logs", [False, True], ids=["quiet", "logs"])
+async def test_the_command_prints_a_build_log_only_when_asked(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    print_build_logs: bool,
+) -> None:
+    """The real command, in a process of its own, with nothing shared.
+
+    A build logs on huggorm's process stream alone. Unread, that stream goes to
+    a fallback logger at CHATTY, which prints the builder's own output whether
+    or not the caller asked for it. Issue nixidae/nixidae#1053.
+    """
+    # A name for each case, because the cases share a store.
+    name = f"pynix-build-log-{print_build_logs}".lower()
+    nix_file = tmp_path / "loud.nix"
+    nix_file.write_text(
+        f"""
+derivation {{
+  name = "{name}";
+  system = builtins.currentSystem;
+  builder = "/bin/sh";
+  args = [ "-c" "echo from-the-builder; echo > $out" ];
+}}
+"""
+    )
+    # No configuration of the host or of the user: as `load_config=False`
+    # does for the tests in this process.
+    env = {
+        **os.environ,
+        "NIX_CONF_DIR": str(tmp_path),
+        "NIX_USER_CONF_FILES": str(tmp_path / "absent.conf"),
+        "PYNIX_CONFIG": str(tmp_path / "absent.toml"),
+    }
+    argv = [sys.executable, "-c", _CLI, "build", "--file", str(nix_file), *shared_nix_environment.pynix_store_args()]
+    if print_build_logs:
+        argv.append("--print-build-logs")
+
+    result = await anyio.run_process(argv, env=env, check=False)
+
+    err = result.stderr.decode()
+    assert result.returncode == 0, err
+    assert name in json.loads(result.stdout)["outputs"]["out"]
+    assert re.search(rf"^building '/\S+-{name}\.drv'\.\.\.$", err, re.MULTILINE), err
+    assert ("from-the-builder" in err) is print_build_logs, err
