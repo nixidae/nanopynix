@@ -402,7 +402,7 @@ async def test_the_original_derivation_is_untouched(
     after = json.loads(capsys.readouterr().out)
 
     assert before == after
-    drv_path = next(iter(before))
+    drv_path = next(iter(before["derivations"]))
     assert not drv_path.endswith("-env.drv")
     assert "get-env.sh" not in json.dumps(before)
 

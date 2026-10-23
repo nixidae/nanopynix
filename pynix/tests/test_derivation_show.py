@@ -46,9 +46,15 @@ async def test_show_file(
     )
     await cmd.run()
     captured = capsys.readouterr()
-    result = json.loads(captured.out)
+    document = json.loads(captured.out)
+    # The document `nix derivation show` prints: one key per derivation, by
+    # base name, and the format version beside them.
+    assert document["version"] == 4
+    result = document["derivations"]
 
     drv_path = next(iter(result))
+    assert drv_path.endswith("-test-drv-1.drv")
+    assert "/" not in drv_path
     drv = result[drv_path]
     assert drv["name"] == "test-drv-1"
     # `stdenvNoCC` builds for the host, so the system of this derivation is the
@@ -91,7 +97,7 @@ async def test_show_file_with_attr(
     )
     await cmd.run()
     captured = capsys.readouterr()
-    result = json.loads(captured.out)
+    result = json.loads(captured.out)["derivations"]
     drv_path = next(iter(result))
     assert result[drv_path]["name"] == "nested-hello-1"
 
@@ -104,7 +110,7 @@ async def test_show_flake(
     cmd = parse(["derivation", "show", "--flake", f"{git_flake}#hello", *shared_nix_environment.pynix_store_args()])
     await cmd.run()
     captured = capsys.readouterr()
-    result = json.loads(captured.out)
+    result = json.loads(captured.out)["derivations"]
     drv_path = next(iter(result))
     drv = result[drv_path]
     assert drv["name"] == "test-hello-1"

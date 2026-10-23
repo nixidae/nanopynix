@@ -8,6 +8,7 @@ Issue #1051 moves each command here, one at a time.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import huggorm
@@ -23,7 +24,12 @@ from huggorm.attrpath import (
 from huggorm.errors import ThrownError
 
 from nanopynix._typechecking import BEARTYPING
-from pynix.target import EvaluationTargetError, resolve_file_reference
+from pynix.target import (
+    CONFIGURATION_KINDS,
+    EvaluationTargetError,
+    configuration_message,
+    resolve_file_reference,
+)
 
 if TYPE_CHECKING or BEARTYPING:
     from huggorm import AsyncEvalState, AsyncLockedFlake, AsyncValue
@@ -222,3 +228,52 @@ async def _evaluate_selected(
         value = await select_attr(state, value, target.attr)
         selected = f"{selected}.{target.attr}" if selected else target.attr
     return value, locked, selected
+
+
+async def _attr_json(value: AsyncValue, name: str) -> object:
+    return json.loads(await (await value.get(name)).to_json())
+
+
+async def configuration_kind(state: AsyncEvalState, value: AsyncValue) -> tuple[str, str] | None:
+    """The name of *value* and its derivation attribute, when it is a configuration.
+
+    ``None`` for every other value, so a caller keeps the message it has.
+    """
+    await state.force(value)
+    if await value.type_name() != "attrs":
+        return None
+    if not await value.has("_type") or not await value.has("class"):
+        return None
+    if await _attr_json(value, "_type") != "configuration":
+        return None
+    class_name = await _attr_json(value, "class")
+    if not isinstance(class_name, str):
+        return None
+    return CONFIGURATION_KINDS.get(class_name)
+
+
+async def derivation_path(state: AsyncEvalState, value: AsyncValue, *, selected: str | None = None) -> str:
+    """Return the ``drvPath`` of *value*, which must be a derivation.
+
+    Raises :class:`EvaluationTargetError` when it is not one, so a caller
+    reports it the same way it reports a bad ``--attr``.
+
+    *selected* is the attribute path that the caller named, which the message
+    for a configuration puts in front of the path it suggests.
+
+    ``drvPath`` and not ``AsyncValue.drv_path``: that one gives the base name,
+    and it does not say which of the checks below failed.
+    """
+    await state.force(value)
+    if await value.type_name() != "attrs" or not await value.has("type"):
+        kind = await configuration_kind(state, value)
+        if kind is not None:
+            raise EvaluationTargetError(configuration_message(kind, selected))
+        raise EvaluationTargetError("value is not a derivation")
+    value_type = await _attr_json(value, "type")
+    if value_type != "derivation":
+        raise EvaluationTargetError(f"value at attribute path is not a derivation (got {value_type!r})")
+    path = await _attr_json(value, "drvPath")
+    if not isinstance(path, str):
+        raise EvaluationTargetError("failed to get derivation path")
+    return path
