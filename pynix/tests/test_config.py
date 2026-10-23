@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from typing import TYPE_CHECKING
+
+from anyio import run_process
 
 from pynix import parse
 
@@ -25,6 +29,23 @@ async def test_config_show_one_setting(capsys: pytest.CaptureFixture[str]) -> No
     data = json.loads(captured.out)
     assert set(data) == {"store"}
     assert isinstance(data["store"], str)
+
+
+async def test_config_show_reports_the_nix_path_from_the_environment() -> None:
+    """`nix-path` holds what `NIX_PATH` says, as `nix config show` prints it.
+
+    Nix copies `NIX_PATH` into the setting when libexpr starts, once per
+    process, so a child process with its own `NIX_PATH` asks.
+    """
+    script = (
+        "import sys; from pynix import main; sys.argv = ['pynix', 'config', 'show', '--setting', 'nix-path']; main()"
+    )
+    result = await run_process(
+        [sys.executable, "-c", script],
+        env={**os.environ, "NIX_PATH": "alpha=/a:beta=/b"},
+    )
+
+    assert json.loads(result.stdout) == {"nix-path": "alpha=/a beta=/b"}
 
 
 async def test_config_check(capsys: pytest.CaptureFixture[str]) -> None:
