@@ -13,41 +13,37 @@ import os
 import shutil
 import sys
 import tempfile
-from contextlib import AsyncExitStack
 from dataclasses import dataclass
 
 # A real import, not a TYPE_CHECKING one: `libpynix` resolves the annotations
 # of a command to build its parser, so `Path` has to exist as an object and not
 # just as a lazy PEP 563 string.
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import anyio.to_thread
+import huggorm
 import structlog
 from anyio import Path as AnyioPath
+from huggorm.attrpath import flake_outputs, select_attr
+from huggorm.devshell import awrite_dev_shell_derivation
+from huggorm.errors import NixError
 from rich.text import Text
 
-import nanopynix
-from nanopynix import store_exec_prefix
 from nanopynix._typechecking import BEARTYPING
-from nanopynix.exceptions import NixError
+from pynix import _evaluate
 from pynix._dev_env import GET_ENV_SH, BuildEnvironment, DevEnvError, make_rc_script, quote
-from pynix._util import error_exit, nix_session, print_json, report_and_exit
+from pynix._store_layout import StoreLayout
+from pynix._util import error_exit, huggorm_build_session, print_json, report_and_exit
 from pynix.develop import Develop, PrintDevEnv
-from pynix.target import (
-    EvaluationTarget,
-    EvaluationTargetError,
-    derivation_path,
-    dev_shell_attr_search,
-    evaluate_target_locked,
-    flake_outputs,
-    select_attr,
-)
+from pynix.target import EvaluationTarget, EvaluationTargetError
 
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import Callable
 
-    from nanopynix.protocols import AsyncLockedFlake, AsyncStore
+    from huggorm import AsyncEvalState, AsyncStore
+
+    from nanopynix.protocols import AsyncStore as NanopynixStore
 logger = structlog.get_logger("pynix.develop")
 #: What Nix puts in front of an error message of its own.
 _NIX_ERROR_PREFIX = "error: "
@@ -66,6 +62,25 @@ _INTERACTIVE_EPILOGUE = "\nshopt -s expand_aliases\n"
 #: indirect reference that the registry resolves.
 _NIXPKGS_FLAKE_REF = "nixpkgs"
 _INTERACTIVE_BASH_ATTR = "bashInteractive"
+
+
+@runtime_checkable
+class _FlakeRef(Protocol):
+    def to_string(self) -> str: ...
+
+
+@runtime_checkable
+class _LockedInput(Protocol):
+    def is_flake(self) -> bool: ...
+    def locked_ref(self) -> _FlakeRef: ...
+
+
+@runtime_checkable
+class NixpkgsLock(Protocol):
+    """What :func:`_nixpkgs_flake_ref` asks of a flake lock: huggorm's
+    ``AsyncLockedFlake``, or a test's double."""
+
+    async def find_input(self, path: list[str]) -> _LockedInput | None: ...
 
 
 @dataclass(frozen=True)
@@ -165,40 +180,35 @@ async def build_dev_env(
     except EvaluationTargetError as exc:
         report_and_exit(exc)
 
-    get_env_script = await AnyioPath(GET_ENV_SH).read_text()
+    get_env_script = await AnyioPath(GET_ENV_SH).read_bytes()
 
-    async with AsyncExitStack() as stack:
-        nix = await stack.enter_async_context(
-            nix_session(verbosity=command.verbosity, print_build_logs=command.print_build_logs),
-        )
-        build_store = await stack.enter_async_context(nix.store(command.store))
-        # One store, and no `eval_store` argument, unless the caller named a
-        # second one. Opening the same URI twice would give two Store objects
-        # that Nix has no reason to believe are the same store.
-        eval_store = build_store
-        if command.eval_store is not None:
-            eval_store = await stack.enter_async_context(nix.store(command.eval_store))
-
+    # One store unless the caller named a second one, as huggorm_build_session
+    # gives it: two Store objects for one URI are two stores to Nix.
+    async with huggorm_build_session(
+        command.store,
+        eval_store_uri=command.eval_store,
+        verbosity=command.verbosity,
+        print_build_logs=command.print_build_logs,
+    ) as (_session, build_store, eval_store, state):
         shell: InteractiveShell | None = None
-        async with nix.eval(eval_store) as session:
-            # The lock is kept past the evaluation because the interactive
-            # shell needs it: it decides which nixpkgs `bashInteractive` comes
-            # from. One `finally` covers every way out, including the
-            # `report_and_exit` above, which raises.
-            locked: AsyncLockedFlake | None = None
+        # The lock is kept past the evaluation because the interactive shell
+        # needs it: it decides which nixpkgs `bashInteractive` comes from. One
+        # `finally` covers every way out, including `report_and_exit`, which
+        # raises.
+        locked: huggorm.AsyncLockedFlake | None = None
+        try:
             try:
-                try:
-                    root, locked = await evaluate_target_locked(
-                        target, session, auto_call_file=True, attr_search=dev_shell_attr_search()
-                    )
-                    drv_path = await derivation_path(root, selected=target.selected_attr())
-                except EvaluationTargetError as exc:
-                    report_and_exit(exc)
-                if resolve_shell:
-                    shell = await _resolve_interactive_shell(session, eval_store, build_store, locked)
-            finally:
-                if locked is not None:
-                    await locked.release()
+                root, locked = await _evaluate.evaluate_target_locked(
+                    target, state, auto_call_file=True, attr_search=_evaluate.dev_shell_attr_search()
+                )
+                drv_path = await _evaluate.derivation_path(state, root, selected=target.selected_attr())
+            except EvaluationTargetError as exc:
+                report_and_exit(exc)
+            if resolve_shell:
+                shell = await _resolve_interactive_shell(state, eval_store, build_store, locked)
+        finally:
+            if locked is not None:
+                await locked.aclose()
 
         raw = await _read_dev_env(
             eval_store,
@@ -218,11 +228,13 @@ async def _read_dev_env(
     build_store: AsyncStore,
     *,
     drv_path: str,
-    get_env_script: str,
+    get_env_script: bytes,
 ) -> str:
     """Rewrite the derivation, build it, and read the JSON that it wrote."""
     try:
-        shell_drv = await eval_store.write_dev_shell_derivation(drv_path, get_env_script)
+        shell_drv = await awrite_dev_shell_derivation(
+            eval_store, await eval_store.parse_store_path(drv_path), get_env_script
+        )
     except NixError as exc:
         # The one Nix error this command expects: a derivation whose builder is
         # not bash cannot dump its environment. A traceback would say the same
@@ -231,20 +243,18 @@ async def _read_dev_env(
         # Nix carries its own colour, so the prefix is not at the start of
         # `exc.msg` and it is at the start of the plain text of the `Text`.
         # "Error:" comes from `error_exit`, so this drops the second one.
-        text = Text.from_ansi(exc.msg)
+        text = Text.from_ansi(str(exc))
         error_exit(text[len(_NIX_ERROR_PREFIX) :] if text.plain.startswith(_NIX_ERROR_PREFIX) else text, cause=exc)
-    logger.info("pynix develop building the environment", drv_path=shell_drv)
-    separate_eval_store = eval_store if eval_store is not build_store else None
-    results = await build_store.build_paths_with_results([shell_drv], eval_store=separate_eval_store)
-    for result in results:
-        if not result.success:
-            error_exit(f"failed to build the development environment: {result.error_msg or result.status}")
+    shell_drv_path = await eval_store.print_store_path(shell_drv)
+    logger.info("pynix develop building the environment", drv_path=shell_drv_path)
+    if (error := await _build_error(eval_store, build_store, shell_drv_path)) is not None:
+        error_exit(f"failed to build the development environment: {error}", cause=error)
 
     # `get-env.sh` writes to whichever output it is given, so take the first
     # output that has anything in it. develop.cc:303 does the same.
-    to_disk = await physical_path_mapper(build_store)
-    for path in await eval_store.query_derivation_outputs(shell_drv):
-        candidate = AnyioPath(to_disk(path))
+    layout = await StoreLayout.of(build_store)
+    for output in (await eval_store.query_derivation_output_map(shell_drv)).values():
+        candidate = AnyioPath(layout.to_disk(await eval_store.print_store_path(output)))
         if await candidate.is_file() and (await candidate.stat()).st_size:
             return await candidate.read_text()
     # `return`, though error_exit never returns: NoReturn is assignable to
@@ -252,7 +262,15 @@ async def _read_dev_env(
     return error_exit(f"the build environment of {drv_path} is empty")
 
 
-async def _nixpkgs_flake_ref(locked: AsyncLockedFlake | None) -> str:
+async def _build_error(eval_store: AsyncStore, build_store: AsyncStore, drv_path: str) -> NixError | None:
+    """Build every output of *drv_path*, and give the first failure, or None."""
+    derived = await build_store.parse_derived_path(f"{drv_path}^*")
+    separate_eval_store = eval_store if eval_store is not build_store else None
+    results = await build_store.build_paths_with_results([derived], eval_store=separate_eval_store)
+    return next((error for result in results if (error := result.error()) is not None), None)
+
+
+async def _nixpkgs_flake_ref(locked: NixpkgsLock | None) -> str:
     """Return the flake reference that ``bashInteractive`` comes from.
 
     ``InstallableFlake::nixpkgsFlakeRef`` (``installable-flake.cc:194``): the
@@ -269,16 +287,16 @@ async def _nixpkgs_flake_ref(locked: AsyncLockedFlake | None) -> str:
     if locked is None:
         return _NIXPKGS_FLAKE_REF
     node = await locked.find_input([_NIXPKGS_FLAKE_REF])
-    if node is None or not node.is_flake:
+    if node is None or not node.is_flake():
         return _NIXPKGS_FLAKE_REF
-    return node.locked_ref
+    return node.locked_ref().to_string()
 
 
 async def _resolve_interactive_shell(
-    session: Any,
+    state: AsyncEvalState,
     eval_store: AsyncStore,
     build_store: AsyncStore,
-    locked: AsyncLockedFlake | None,
+    locked: huggorm.AsyncLockedFlake | None,
 ) -> InteractiveShell:
     """Pick the bash an interactive dev shell runs, as ``develop.cc:645`` does.
 
@@ -290,12 +308,13 @@ async def _resolve_interactive_shell(
     readline, not the shell.
     """
     try:
-        found = await _nixpkgs_bash(session, eval_store, build_store, locked)
+        found = await _nixpkgs_bash(state, eval_store, build_store, locked)
     except (NixError, EvaluationTargetError, RuntimeError) as exc:
         # Never fatal, as at develop.cc:679: the shell still starts, and only
         # its line editing is the poorer for it. RuntimeError covers the
-        # relocated store with no store-exec helper -- see nanopynix.store_exec,
-        # which raises rather than hand back a prefix that cannot work.
+        # relocated store with no store-exec helper -- see
+        # StoreLayout.exec_prefix, which raises rather than hand back a prefix
+        # that cannot work.
         logger.info("pynix develop is falling back to the bash on PATH", reason=str(exc))
         return _fallback_shell()
     if found is None:
@@ -305,38 +324,38 @@ async def _resolve_interactive_shell(
 
 
 async def _nixpkgs_bash(
-    session: Any,
+    state: AsyncEvalState,
     eval_store: AsyncStore,
     build_store: AsyncStore,
-    locked: AsyncLockedFlake | None,
+    locked: huggorm.AsyncLockedFlake | None,
 ) -> InteractiveShell | None:
     """Build ``bashInteractive`` from nixpkgs, and find its ``bin/bash``.
 
     ``None`` when the build produced no ``bin/bash``, which
     ``develop.cc:676`` treats the same as a failed lookup.
     """
-    outputs = await flake_outputs(await session.eval_flake(await _nixpkgs_flake_ref(locked), write_lock_file=False))
-    attrpath = f"legacyPackages.{nanopynix.current_system()}.{_INTERACTIVE_BASH_ATTR}"
-    value = await select_attr(outputs, attrpath)
-    drv_path = await derivation_path(value)
+    nixpkgs = await state.lock_flake(huggorm.parse_flake_ref(await _nixpkgs_flake_ref(locked)), write_lock_file=False)
+    try:
+        outputs = await flake_outputs(state, await state.call_flake(nixpkgs))
+    finally:
+        await nixpkgs.aclose()
+    attrpath = f"legacyPackages.{huggorm.get_setting('system')}.{_INTERACTIVE_BASH_ATTR}"
+    value = await select_attr(state, outputs, attrpath)
+    drv_path = await _evaluate.derivation_path(state, value)
     logger.info("pynix develop is building the interactive shell", attrpath=attrpath)
-    results = await build_store.build_paths_with_results(
-        [drv_path],
-        eval_store=eval_store if eval_store is not build_store else None,
-    )
-    if any(not result.success for result in results):
+    if await _build_error(eval_store, build_store, drv_path) is not None:
         return None
 
-    to_disk = await physical_path_mapper(build_store)
-    for output in await eval_store.query_derivation_outputs(drv_path):
-        candidate = f"{output}/bin/bash"
-        if await AnyioPath(to_disk(candidate)).is_file():
+    layout = await StoreLayout.of(build_store)
+    for output in (await eval_store.query_derivation_output_map(await eval_store.parse_store_path(drv_path))).values():
+        candidate = f"{await eval_store.print_store_path(output)}/bin/bash"
+        if await AnyioPath(layout.to_disk(candidate)).is_file():
             return InteractiveShell(
                 path=candidate,
                 from_nixpkgs=True,
                 # Empty for an ordinary store. `nix develop` reaches the same
                 # problem through execProgramInStore.
-                exec_prefix=await store_exec_prefix(build_store),
+                exec_prefix=layout.exec_prefix(),
             )
     return None
 
@@ -346,7 +365,7 @@ def _fallback_shell() -> InteractiveShell:
     return InteractiveShell(path=shutil.which("bash") or "bash", from_nixpkgs=False, exec_prefix=[])
 
 
-async def physical_path_mapper(store: AsyncStore) -> Callable[[str], str]:
+async def physical_path_mapper(store: NanopynixStore) -> Callable[[str], str]:
     """Return a function that maps a store path to where its bytes really are.
 
     A store opened with a root reports logical ``/nix/store/...`` paths while
