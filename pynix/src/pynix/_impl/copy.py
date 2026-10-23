@@ -4,10 +4,9 @@
 what ``run`` needs. ``pynix._impl`` says why: the parser loads every subcommand
 module on every start, and none of these imports is needed to list an option.
 
-**Two stores, one session.** ``AsyncStore.copy_closure`` takes a destination
-store and refuses one that another session opened, because a single Nix thread
-drives both. So this command opens the session first and both stores under it,
-rather than reaching for :func:`pynix._util.store_session`, which opens one.
+**Two stores, one session.** The command opens the source store and its
+evaluator with :func:`pynix._util.huggorm_eval_session`, and the destination on
+the same session.
 
 **``--substitute-on-destination`` is not here.** ``copy_closure`` takes the
 keyword, so adding the flag is one line. Issue #80 puts the substituter
@@ -17,23 +16,21 @@ one. Add it with the test that proves it.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol
 
 import structlog
 
 from nanopynix._typechecking import BEARTYPING
-from pynix._util import error_exit, nix_session, print_json, report_and_exit
+from pynix import _evaluate
+from pynix._util import error_exit, huggorm_eval_session, print_json, report_and_exit
 from pynix.copy import Copy
-from pynix.target import (
-    EvaluationTarget,
-    EvaluationTargetError,
-    base_attr_search,
-    derivation_path,
-    evaluate_target,
-)
+from pynix.target import EvaluationTarget, EvaluationTargetError
 
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import Iterable
+
+    from huggorm import AsyncEvalState, AsyncStore, StorePath
 logger = structlog.get_logger("pynix.copy")
 
 #: How many stranded paths the failure message names before it says "...".
@@ -55,7 +52,7 @@ def _endpoints(command: Copy) -> tuple[str, str]:
     return source, destination
 
 
-async def _evaluated_paths(command: Copy, nix: Any, source: Any, source_uri: str) -> list[str]:
+async def _evaluated_paths(command: Copy, state: AsyncEvalState, source: AsyncStore, source_uri: str) -> list[str]:
     """The output paths of the derivation that ``--file`` or ``--flake`` names.
 
     Empty when the caller named neither. ``pynix copy`` builds nothing, so an
@@ -69,62 +66,81 @@ async def _evaluated_paths(command: Copy, nix: Any, source: Any, source_uri: str
     if target.file is None and target.flake is None:
         return []
 
-    async with nix.eval(source) as session:
-        try:
-            root = await evaluate_target(target, session, auto_call_file=True, attr_search=base_attr_search())
-            drv_path = await derivation_path(root, selected=target.selected_attr())
-        except EvaluationTargetError as exc:
-            report_and_exit(exc)
+    try:
+        root = await _evaluate.evaluate_target(
+            target, state, auto_call_file=True, attr_search=_evaluate.base_attr_search()
+        )
+        drv_path = await _evaluate.derivation_path(state, root, selected=target.selected_attr())
+    except EvaluationTargetError as exc:
+        report_and_exit(exc)
 
-    outputs = [str(path) for path in await source.query_derivation_outputs(drv_path)]
-    valid = [path for path in outputs if await source.is_valid_path(path)]
+    outputs = await source.query_derivation_output_map(await source.parse_store_path(drv_path))
+    valid = await _printed(source, await source.query_valid_paths(list(outputs.values())))
     if not valid:
         error_exit(f"{drv_path} has no output in {source_uri}: build it before you copy it")
     return valid
 
 
-async def closure_of(source: Any, paths: Iterable[str]) -> list[str]:
+async def _parsed(store: AsyncStore, paths: Iterable[str]) -> list[StorePath]:
+    return [await store.parse_store_path(path) for path in paths]
+
+
+async def _printed(store: AsyncStore, paths: Iterable[StorePath]) -> list[str]:
+    return [await store.print_store_path(path) for path in paths]
+
+
+async def closure_of(source: AsyncStore, paths: Iterable[str]) -> list[str]:
     """Every path that the copy will carry, sorted.
 
-    ``compute_fs_closure`` takes one path, so a request for several is one
-    call for each. Nix walks the references itself, which is why the command
-    does not.
+    Nix walks the references itself, which is why the command does not.
     """
-    reached: set[str] = set()
-    for path in paths:
-        reached.update(str(member) for member in await source.compute_fs_closure(path))
-    return sorted(reached)
+    return sorted(await _printed(source, await source.compute_fs_closure(await _parsed(source, paths))))
 
 
-async def _valid(store: Any, paths: Iterable[str]) -> list[str]:
-    """The subset of *paths* that *store* holds, in the order given.
+class CopyEnds(Protocol):
+    """The two stores of a copy, for :func:`copy_verified`."""
 
-    One question for each path. Nix binds no bulk `queryValidPaths` here, and
-    the closure of a request is what this walks.
-    """
-    return [path for path in paths if await store.is_valid_path(path)]
+    async def present(self, paths: list[str]) -> list[str]:
+        """The subset of *paths* that the destination holds, sorted."""
+        ...
+
+    async def copy(self, paths: list[str]) -> None:
+        """Copy *paths* and their closure from the source to the destination."""
+        ...
 
 
-async def copy_verified(  # noqa: PLR0913 -- two stores, the two path sets, and the policy; no pair of them belongs together
-    source: Any,
+@dataclass(frozen=True, slots=True)
+class StoreEnds:
+    source: AsyncStore
+    destination: AsyncStore
+    check_sigs: bool
+
+    async def present(self, paths: list[str]) -> list[str]:
+        # Nothing is substituted.
+        valid = await self.destination.query_valid_paths(await _parsed(self.destination, paths))
+        return sorted(await _printed(self.destination, valid))
+
+    async def copy(self, paths: list[str]) -> None:
+        await self.source.copy_closure(self.destination, await _parsed(self.source, paths), check_sigs=self.check_sigs)
+
+
+async def copy_verified(
+    ends: CopyEnds,
     requested: list[str],
     closure: list[str],
-    destination: Any,
     destination_uri: str,
-    *,
-    check_sigs: bool,
 ) -> tuple[list[str], list[str]]:
-    """Copy *requested* and its *closure* to *destination*, and prove that it arrived.
+    """Copy *requested* and its *closure* to the destination, and prove that it arrived.
 
     Returns the paths that were present before, and the paths that arrived.
     Exits with an error when a path that was missing is still missing.
     """
-    # **Before the copy, and one question for each path.** Nix reports
-    # nothing about what it wrote, so "what did this command copy" has
-    # to be the difference between the two stores. `query_missing` does
-    # not answer it: that one asks what a *build* would still have to
-    # do, over derived paths and substituters.
-    present = await _valid(destination, closure)
+    # **Before the copy.** Nix reports nothing about what it wrote, so
+    # "what did this command copy" has to be the difference between the
+    # two stores. `query_missing` does not answer it: that one asks what
+    # a *build* would still have to do, over derived paths and
+    # substituters.
+    present = await ends.present(closure)
     missing = [path for path in closure if path not in set(present)]
     logger.info(
         "pynix copy starting",
@@ -133,7 +149,7 @@ async def copy_verified(  # noqa: PLR0913 -- two stores, the two path sets, and 
         closure=len(closure),
         missing=len(missing),
     )
-    await source.copy_closure(list(requested), destination, check_sigs=check_sigs)
+    await ends.copy(requested)
 
     # **And again afterwards, because a copy can end quietly.**
     # `Store::addMultipleToStore` (`src/libstore/store-api.cc`) catches
@@ -147,7 +163,7 @@ async def copy_verified(  # noqa: PLR0913 -- two stores, the two path sets, and 
     # nothing, and this command reported both paths as copied. That
     # report was the difference computed above, which is what the
     # command *meant* to copy. `arrived` is what it did copy.
-    arrived = sorted(await _valid(destination, missing))
+    arrived = await ends.present(missing)
 
     stranded = [path for path in missing if path not in set(arrived)]
     if stranded:
@@ -163,8 +179,8 @@ async def run_copy(command: Copy) -> None:
     """The body of :meth:`pynix.copy.Copy.run`."""
     source_uri, destination_uri = _endpoints(command)
 
-    async with nix_session() as nix, nix.store(source_uri) as source:
-        requested = sorted({*command.paths, *await _evaluated_paths(command, nix, source, source_uri)})
+    async with huggorm_eval_session(source_uri) as (session, source, state):
+        requested = sorted({*command.paths, *await _evaluated_paths(command, state, source, source_uri)})
         if not requested:
             error_exit("name a store path, or name --file or --flake")
 
@@ -176,15 +192,8 @@ async def run_copy(command: Copy) -> None:
             # carries the full account of `error_exit`.
             error_exit(str(exc), cause=exc)
 
-        async with nix.store(destination_uri) as destination:
-            present, arrived = await copy_verified(
-                source,
-                requested,
-                closure,
-                destination,
-                destination_uri,
-                check_sigs=command.check_sigs,
-            )
+        ends = StoreEnds(source, session.store(destination_uri), check_sigs=command.check_sigs)
+        present, arrived = await copy_verified(ends, requested, closure, destination_uri)
 
     print_json(
         {

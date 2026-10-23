@@ -42,7 +42,7 @@ import nanopynix
 from nanopynix._typechecking import BEARTYPING
 from pynix import _evaluate, _impl
 from pynix._build_monitor import BuildPlan, MonitorState
-from pynix._impl.copy import closure_of, copy_verified
+from pynix._impl.copy import StoreEnds, closure_of, copy_verified
 from pynix._util import (
     error_console,
     error_exit,
@@ -140,7 +140,7 @@ async def _promote_to_host_store(nix: Any, store: Any, outputs: dict[str, str]) 
         await store.copy_closure(paths, host, check_sigs=False)
 
 
-async def _copy_outputs(nix: Any, store: Any, outputs: dict[str, str], uri: str) -> dict[str, Any]:
+async def _copy_outputs(session: AsyncSession, store: AsyncStore, outputs: dict[str, str], uri: str) -> dict[str, Any]:
     """Copy the closure of *outputs* from *store* to *uri*, and report what arrived.
 
     Signature checking is off for the reason ``_promote_to_host_store`` gives,
@@ -149,8 +149,31 @@ async def _copy_outputs(nix: Any, store: Any, outputs: dict[str, str], uri: str)
     """
     requested = sorted(set(outputs.values()))
     closure = await closure_of(store, requested)
+    ends = StoreEnds(store, session.store(uri), check_sigs=False)
+    present, arrived = await copy_verified(ends, requested, closure, uri)
+    return {"to": uri, "copied": arrived, "alreadyPresent": present}
+
+
+@dataclass(frozen=True, slots=True)
+class _NanopynixEnds:
+    """:class:`pynix._impl.copy.StoreEnds` on nanopynix's stores, for ``--namespaced``."""
+
+    source: Any
+    destination: Any
+
+    async def present(self, paths: list[str]) -> list[str]:
+        return sorted([path for path in paths if await self.destination.is_valid_path(path)])
+
+    async def copy(self, paths: list[str]) -> None:
+        await self.source.copy_closure(paths, self.destination, check_sigs=False)
+
+
+async def _copy_outputs_on_nanopynix(nix: Any, store: Any, outputs: dict[str, str], uri: str) -> dict[str, Any]:
+    """:func:`_copy_outputs` on nanopynix's stores."""
+    requested = sorted(set(outputs.values()))
+    closure = sorted({str(member) for path in requested for member in await store.compute_fs_closure(path)})
     async with nix.store(uri) as destination:
-        present, arrived = await copy_verified(store, requested, closure, destination, uri, check_sigs=False)
+        present, arrived = await copy_verified(_NanopynixEnds(store, destination), requested, closure, uri)
     return {"to": uri, "copied": arrived, "alreadyPresent": present}
 
 
@@ -353,7 +376,7 @@ async def _build_target(
 
 async def _build_on_huggorm(
     command: Build, target: EvaluationTarget, settings: PynixNixSettings
-) -> tuple[dict[str, str], int]:
+) -> tuple[dict[str, str], int, dict[str, Any] | None]:
     monitor = MonitorState(started=time.monotonic(), print_build_logs=command.print_build_logs) if command.nom else None
     async with huggorm_build_session(
         command.store,
@@ -364,21 +387,18 @@ async def _build_on_huggorm(
         monitor=monitor,
     ) as (session, build_store, eval_store, state):
         logger.info("pynix build evaluating target")
-        built = await _build_target(
+        outputs, updates = await _build_target(
             target,
             BuildSession(session, build_store, eval_store, state),
             update_fod=command.update_fod,
             dry_run=command.dry_run,
             monitor=monitor,
         )
-    logger.info("pynix build finished")
-    return built
-
-
-def _on_nanopynix(command: Build, *, namespaced: bool) -> bool:
-    """Whether this build still runs on nanopynix: issue #1051 has not moved
-    ``--namespaced`` and ``--copy`` to huggorm yet."""
-    return namespaced or command.copy is not None
+        logger.info("pynix build finished")
+        copied = None
+        if command.copy is not None and outputs:
+            copied = await _copy_outputs(session, build_store, outputs, command.copy)
+    return outputs, updates, copied
 
 
 async def _build_target_on_nanopynix(  # noqa: PLR0913 -- tracked complexity/arg-count debt, see TODO.md
@@ -538,13 +558,13 @@ async def run_build(command: Build) -> None:
     # Outside the session, so the error passes through its log forwarding:
     # --nom counts it in the last frame, and the message prints after that.
     try:
-        if _on_nanopynix(command, namespaced=namespaced):
+        # A namespaced build still runs on nanopynix: issue #1051.
+        if namespaced:
             outputs, updates, copied = await _build_in_session(
                 command, target, namespaced=namespaced, settings=settings
             )
         else:
-            outputs, updates = await _build_on_huggorm(command, target, settings)
-            copied = None
+            outputs, updates, copied = await _build_on_huggorm(command, target, settings)
     except BuildTargetError as exc:
         report_and_exit(exc)
 
@@ -606,7 +626,7 @@ async def _build_in_session(
                 if promote:
                     await _promote_to_host_store(nix, store, outputs)
                 if command.copy is not None and outputs:
-                    copied = await _copy_outputs(nix, store, outputs, command.copy)
+                    copied = await _copy_outputs_on_nanopynix(nix, store, outputs, command.copy)
         else:
             async with (
                 nix.store(command.eval_store) as eval_store,
@@ -628,7 +648,7 @@ async def _build_in_session(
                 if promote:
                     await _promote_to_host_store(nix, build_store, outputs)
                 if command.copy is not None and outputs:
-                    copied = await _copy_outputs(nix, build_store, outputs, command.copy)
+                    copied = await _copy_outputs_on_nanopynix(nix, build_store, outputs, command.copy)
     return outputs, updates, copied
 
 

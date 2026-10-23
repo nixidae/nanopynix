@@ -15,9 +15,9 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from huggorm.errors import NixError
 
 from nanopynix import stores
-from nanopynix.exceptions import NixError
 from nanopynix_testing.nix_environment import force_rmtree, with_nixpkgs
 from nanopynix_testing.nix_markers import LINUX_CHROOT_BUILD
 from pynix import parse
