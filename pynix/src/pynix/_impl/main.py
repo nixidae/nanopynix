@@ -29,6 +29,7 @@ from __future__ import annotations
 from collections.abc import Callable, Coroutine
 
 import anyio
+import huggorm.errors
 import rich.traceback
 from rich.text import Text
 
@@ -84,4 +85,9 @@ def run(body: Callable[[], Coroutine[object, object, None]]) -> None:
         # output, and `error_exit` holds the measurement of what an escape
         # sequence does to the highlighter of rich.
         error_console.print(Text.from_ansi(exc.msg))
+        raise SystemExit(1) from exc
+    except huggorm.errors.NixError as exc:
+        # The same failure from a command on huggorm: `colored` is the line
+        # Nix prints, escape sequences and all.
+        error_console.print(Text.from_ansi(exc.colored))
         raise SystemExit(1) from exc
