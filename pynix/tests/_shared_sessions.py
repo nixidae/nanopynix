@@ -259,7 +259,7 @@ class SharedSessions:
             yield session, store, state
 
     @contextlib.asynccontextmanager
-    async def huggorm_build_session(
+    async def huggorm_build_session(  # noqa: PLR0913 -- mirrors pynix._util.huggorm_build_session
         self,
         store_uri: str,
         *,
