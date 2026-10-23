@@ -7,30 +7,30 @@ on every start, and none of these imports is needed to list an option.
 
 from __future__ import annotations
 
-# pyright: reportUnknownMemberType=false
-# nanopynix / nanopynix_proto are C++ nanobind extensions without type stubs.
 import contextlib
 import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import huggorm
 import structlog
+from huggorm.attrpath import flake_outputs, select_attr
 from rich.console import Console
 from rich.tree import Tree
 
-import nanopynix
 from nanopynix._typechecking import BEARTYPING
-from pynix._util import eval_session, print_json
+from pynix._util import huggorm_build_session, huggorm_eval_session, print_json
 from pynix.flake import Info, Lock, Metadata, Show, Update
-from pynix.target import flake_outputs, select_attr
 
 if TYPE_CHECKING or BEARTYPING:
-    from nanopynix import AsyncValue
+    from huggorm import AsyncEvalState, AsyncValue
 logger = structlog.get_logger("pynix.flake")
 console = Console()
 _MAX_TREE_NODES = 200
 _MAX_TREE_DEPTH = 6
 _MAX_LIST_PREVIEW_ITEMS = 10
+#: The label of a value whose evaluation fails.
+_UNSPECIFIED = "unspecified"
 
 
 @dataclass
@@ -38,10 +38,19 @@ class _TreeBudget:
     remaining: int = _MAX_TREE_NODES
 
 
-async def _build_tree(  # noqa: C901 -- tracked complexity/arg-count debt, see TODO.md
+async def _kind(state: AsyncEvalState, value: AsyncValue) -> str | None:
+    """What *value* is once forced, or ``None`` when forcing it fails."""
+    try:
+        await state.force(value)
+        return await value.type_name()
+    except Exception:
+        return None
+
+
+async def _build_tree(
     tree: Tree,
+    state: AsyncEvalState,
     value: AsyncValue,
-    nix_type_enum: type[nanopynix.NixType],
     *,
     depth: int = 0,
     budget: _TreeBudget,
@@ -49,72 +58,44 @@ async def _build_tree(  # noqa: C901 -- tracked complexity/arg-count debt, see T
     if depth > _MAX_TREE_DEPTH:
         tree.add("[dim]<...>[/dim]")
         return
-    try:
-        nix_type = await value.get_type()
-    except Exception:
+    kind = await _kind(state, value)
+    if kind is None:
         tree.add("[dim]<unresolved>[/dim]")
         return
-    if nix_type == nix_type_enum.ATTRS:
+    children: list[tuple[str, AsyncValue]] = []
+    length = 0
+    if kind == "attrs":
         names: list[str] = []
         with contextlib.suppress(Exception):
-            names = await value.attr_names()
+            names = await value.names()
         if "type" in names and "drvPath" in names:
             tree.add("[dim]<derivation>[/dim]")
             return
-        for name in names:
-            if budget.remaining == 0:
-                tree.add("[dim]<...>[/dim]")
-                break
-            budget.remaining -= 1
-            child = value.attr(name)
-            child_type = nix_type_enum.UNSPECIFIED
-            with contextlib.suppress(Exception):
-                child_type = await child.get_type()
-            label = _format_attr(name, child_type, nix_type_enum)
-            branch = tree.add(label)
-            await _build_tree(branch, child, nix_type_enum, depth=depth + 1, budget=budget)
-    elif nix_type == nix_type_enum.LIST:
-        length = 0
+        children = [(name, await value.get(name)) for name in names]
+    elif kind == "list":
         with contextlib.suppress(Exception):
-            length = await value.list_length()
-        for i in range(min(length, _MAX_LIST_PREVIEW_ITEMS)):
-            if budget.remaining == 0:
-                tree.add("[dim]<...>[/dim]")
-                break
-            budget.remaining -= 1
-            child = value.list_get(i)
-            child_type = nix_type_enum.UNSPECIFIED
-            with contextlib.suppress(Exception):
-                child_type = await child.get_type()
-            label = _format_attr(f"[{i}]", child_type, nix_type_enum)
-            branch = tree.add(label)
-            await _build_tree(branch, child, nix_type_enum, depth=depth + 1, budget=budget)
-        if length > _MAX_LIST_PREVIEW_ITEMS:
-            tree.add(f"[dim]... {length - _MAX_LIST_PREVIEW_ITEMS} more items[/dim]")
-    elif nix_type in (nix_type_enum.THUNK, nix_type_enum.UNSPECIFIED):
-        tree.add(f"[dim]{nix_type.name.lower()}[/dim]")
+            length = await value.length()
+        children = [(f"[{i}]", await value.at(i)) for i in range(min(length, _MAX_LIST_PREVIEW_ITEMS))]
+    elif kind == "thunk":
+        tree.add(f"[dim]{kind}[/dim]")
+        return
+    for name, child in children:
+        if budget.remaining == 0:
+            tree.add("[dim]<...>[/dim]")
+            break
+        budget.remaining -= 1
+        branch = tree.add(_format_attr(name, await _kind(state, child) or _UNSPECIFIED))
+        await _build_tree(branch, state, child, depth=depth + 1, budget=budget)
+    if length > _MAX_LIST_PREVIEW_ITEMS:
+        tree.add(f"[dim]... {length - _MAX_LIST_PREVIEW_ITEMS} more items[/dim]")
 
 
-def _format_attr(name: str, nix_type: nanopynix.NixType, nix_type_enum: type[nanopynix.NixType]) -> str:  # noqa: PLR0911 -- tracked complexity/arg-count debt, see TODO.md
-    if nix_type == nix_type_enum.ATTRS:
+def _format_attr(name: str, kind: str) -> str:
+    if kind in ("attrs", "list"):
         return f"[cyan]{name}[/cyan]"
-    if nix_type == nix_type_enum.LIST:
-        return f"[cyan]{name}[/cyan]"
-    if nix_type == nix_type_enum.FUNCTION:
+    if kind == "function":
         return f"[yellow]{name}[/yellow]: [dim]<function>[/dim]"
-    if nix_type == nix_type_enum.STRING:
-        return f"[green]{name}[/green]: [dim]<string>[/dim]"
-    if nix_type == nix_type_enum.INT:
-        return f"[green]{name}[/green]: [dim]<int>[/dim]"
-    if nix_type == nix_type_enum.FLOAT:
-        return f"[green]{name}[/green]: [dim]<float>[/dim]"
-    if nix_type == nix_type_enum.BOOL:
-        return f"[green]{name}[/green]: [dim]<bool>[/dim]"
-    if nix_type == nix_type_enum.NULL:
-        return f"[green]{name}[/green]: [dim]<null>[/dim]"
-    if nix_type == nix_type_enum.PATH:
-        return f"[green]{name}[/green]: [dim]<path>[/dim]"
-    return f"[green]{name}[/green]: [dim]<{nix_type.name.lower()}>[/dim]"
+    return f"[green]{name}[/green]: [dim]<{kind}>[/dim]"
 
 
 async def _print_flake_metadata(flake_ref: str, *, store_uri: str) -> None:
@@ -125,12 +106,12 @@ async def _print_flake_metadata(flake_ref: str, *, store_uri: str) -> None:
     graph is a graph, and a flat map of the top level could never carry a
     transitive node or a ``follows`` edge.
     """
-    async with eval_session(store_uri) as (_nix, _store, session):
-        locked = await session.lock_flake(flake_ref, write_lock_file=False)
+    async with huggorm_eval_session(store_uri) as (_session, _store, state):
+        locked = await state.lock_flake(huggorm.parse_flake_ref(flake_ref), write_lock_file=False)
         try:
-            print_json(json.loads(await locked.metadata_json()))
+            print_json(json.loads(await state.flake_metadata_json(locked)))
         finally:
-            await locked.release()
+            await locked.aclose()
 
 
 async def run_show(command: Show) -> None:
@@ -138,19 +119,23 @@ async def run_show(command: Show) -> None:
     base_ref, _, flake_attr = command.flake_ref.partition("#")
     flake_attr = flake_attr or None
 
-    async with eval_session(command.store) as (_nix, _store, session):
-        outputs = await flake_outputs(await session.eval_flake(base_ref))
+    async with huggorm_eval_session(command.store) as (_session, _store, state):
+        locked = await state.lock_flake(huggorm.parse_flake_ref(base_ref), write_lock_file=False)
+        try:
+            outputs = await flake_outputs(state, await state.call_flake(locked))
+        finally:
+            await locked.aclose()
         # `select_attr`, and no candidate search. `nix flake show` starts
         # at the root of the outputs on purpose: it shows what the flake
         # provides, so a prefix that hid the other outputs would defeat
         # the command.
         if flake_attr:
-            outputs = await select_attr(outputs, flake_attr)
+            outputs = await select_attr(state, outputs, flake_attr)
         if command.attrpath:
-            outputs = await select_attr(outputs, command.attrpath)
+            outputs = await select_attr(state, outputs, command.attrpath)
 
         tree = Tree(f"[bold]{command.flake_ref}[/bold]")
-        await _build_tree(tree, outputs, nanopynix.NixType, budget=_TreeBudget())
+        await _build_tree(tree, state, outputs, budget=_TreeBudget())
         console.print(tree)
 
 
@@ -174,10 +159,14 @@ async def _lock(flake_ref: str, *, store_uri: str, update_inputs: bool | list[st
     ``tarball-ttl`` is 0, as both commands of Nix set it: a cached tarball
     of a moving reference would otherwise lock the old revision again.
     """
-    async with eval_session(store_uri) as (_nix, _store, session):
-        await session.configure(fetch_settings=nanopynix.NixFetchSettings(tarball_ttl=0))
-        locked = await session.lock_flake(flake_ref, update_inputs=update_inputs, write_lock_file=True)
-        await locked.release()
+    async with huggorm_build_session(store_uri, settings={"tarball-ttl": "0"}) as (_session, _store, _eval, state):
+        locked = await state.lock_flake(
+            huggorm.parse_flake_ref(flake_ref),
+            recreate=update_inputs is True,
+            update=update_inputs if isinstance(update_inputs, list) else None,
+            write_lock_file=True,
+        )
+        await locked.aclose()
 
 
 async def run_lock(command: Lock) -> None:
