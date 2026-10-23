@@ -16,7 +16,7 @@ from typing import Literal
 
 import pytest
 
-from libpynix import MISSING, Command, Spec, build_parser, command_name, dispatch, group, opt, pos
+from libpynix import MISSING, Command, Spec, build_parser, command_name, dispatch, group, opt, parse_args, pos
 from libpynix.command import _LazySubParsersAction
 
 
@@ -387,3 +387,52 @@ def test_subparsers_instantiate_lazily() -> None:
     subparser = lazy_map["sub-leaf"]
     assert isinstance(subparser, argparse.ArgumentParser)
     assert lazy_map.get_raw("sub-leaf") is subparser
+
+
+class Shell(Command):
+    """A command with a remainder option, as `nix shell` has."""
+
+    packages: list[str] = pos(help="Packages.")
+    command: list[str] = opt(short="c", remainder=True, help="The command, and every argument after it.")
+
+
+class Wrapper(Command):
+    """A group, so the remainder sits in a subparser."""
+
+    subcommands = (Shell,)
+
+
+def parse_rest(*arguments: str) -> Command:
+    parser = build_parser(Wrapper)
+    return dispatch(parser, parse_args(parser, arguments))
+
+
+def test_a_remainder_option_takes_every_argument_after_it() -> None:
+    shell = parse_rest("shell", "a", "b", "--command", "jq", "--version", "-c", "x")
+    assert shell.packages == ["a", "b"]  # type: ignore[attr-defined] -- see above
+    assert shell.command == ["jq", "--version", "-c", "x"]  # type: ignore[attr-defined] -- see above
+
+
+def test_a_double_dash_inside_the_remainder_reaches_it() -> None:
+    """argparse alone stops an option's REMAINDER at `--` and fails on the rest."""
+    shell = parse_rest("shell", "a", "-c", "git", "log", "--", "--", "f")
+    assert shell.command == ["git", "log", "--", "--", "f"]  # type: ignore[attr-defined] -- see above
+
+
+def test_an_absent_remainder_is_an_empty_list() -> None:
+    assert parse_rest("shell", "a").command == []  # type: ignore[attr-defined] -- see above
+
+
+def test_an_unknown_option_before_the_remainder_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        parse_rest("shell", "--typo", "a", "--command", "x", "--", "y")
+    assert "unrecognized arguments: --typo" in capsys.readouterr().err
+
+
+def test_leftovers_without_a_remainder_are_refused(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        parse(Leaf, "--nope")
+    parser = build_parser(Leaf)
+    with pytest.raises(SystemExit):
+        parse_args(parser, ["--nope"])
+    assert "unrecognized arguments: --nope" in capsys.readouterr().err

@@ -6,7 +6,7 @@ from __future__ import annotations
 # is already loaded by the interpreter, so this costs nothing.
 from collections.abc import Sequence
 
-from libpynix import Command, build_parser, complete, dispatch, group
+from libpynix import Command, build_parser, complete, dispatch, group, parse_args
 from pynix import _impl
 from pynix.build import Build
 from pynix.config import Config
@@ -68,7 +68,7 @@ def parse(argv: Sequence[str]) -> Command:
     the test sees.
     """
     parser = build_parser(Pynix)
-    return dispatch(parser, parser.parse_args(list(argv)))
+    return dispatch(parser, parse_args(parser, list(argv)))
 
 
 def main() -> None:
@@ -78,7 +78,7 @@ def main() -> None:
     # measurement.
     parser = build_parser(Pynix)
     complete(parser)
-    command = dispatch(parser, parser.parse_args())
+    command = dispatch(parser, parse_args(parser))
     _impl.main.prepare()
     _impl.main.run(command.run)
 

@@ -76,6 +76,7 @@ from libpynix.command import (
     group as group,
     opt as opt,
     option_flags as option_flags,
+    parse_args as parse_args,
     pos as pos,
 )
 from libpynix.nix_options import (

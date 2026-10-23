@@ -89,6 +89,10 @@ class Spec:
     #: What answers a Tab after this option. `None` leaves it to the shell,
     #: which offers file names.
     complete: Completer | None = None
+    #: True for an option that takes every argument after it, as
+    #: `nix shell --command CMD ARGS...` does. Options only, on a `list[str]`
+    #: field. `parse_args` is what makes a `--` after the flag reach it.
+    remainder: bool = False
 
 
 #: The default of a positional that the caller must give. Not `None`, which is
@@ -106,6 +110,7 @@ def opt(  # noqa: PLR0913 -- one keyword for each thing a declaration can say; c
     configured: bool = False,
     required: bool = False,
     complete: Completer | None = None,
+    remainder: bool = False,
 ) -> Any:
     """Declare an option.
 
@@ -115,6 +120,9 @@ def opt(  # noqa: PLR0913 -- one keyword for each thing a declaration can say; c
     through a base class of its own between :class:`Command` and its commands:
     :func:`pynix._settings.option` passes the mark, and
     :class:`pynix._settings.ConfiguredCommand` reads it.
+
+    *remainder* makes the option take every argument after it; see
+    :attr:`Spec.remainder`.
     """
     if required and configured:
         raise ValueError("an option cannot be both required and configured; see Spec.required")
@@ -126,6 +134,7 @@ def opt(  # noqa: PLR0913 -- one keyword for each thing a declaration can say; c
         configured=configured,
         required=required,
         complete=complete,
+        remainder=remainder,
     )
 
 
@@ -311,6 +320,45 @@ def option_flags(field: str, spec: Spec) -> list[str]:
     return flags
 
 
+#: Where `_Remainder` records which field took the rest of the line. The
+#: underscore keeps it out of what `dispatch` hands the command.
+_REMAINDER_FIELD = "_remainder_field"
+
+
+class _Remainder(argparse.Action):
+    """Store the arguments after the flag, and record which field holds them."""
+
+    @override
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: str | Sequence[Any] | None,
+        option_string: str | None = None,
+    ) -> None:
+        setattr(namespace, self.dest, list(values or []))
+        setattr(namespace, _REMAINDER_FIELD, self.dest)
+
+
+def parse_args(parser: argparse.ArgumentParser, argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """`parser.parse_args(argv)`, and a `--` after a remainder option reaches it.
+
+    argparse stops an option's `REMAINDER` at `--`, by design, and calls the
+    rest unrecognized. So `--command git log -- file` would fail. The rest is
+    still in order in what `parse_known_args` leaves over, `--` included, so
+    it goes back on the end of the field. The leftovers must start with that
+    `--`: anything else is an unknown argument from before the remainder, and
+    fails as `parse_args` fails.
+    """
+    namespace, extras = parser.parse_known_args(argv)
+    if extras:
+        field = getattr(namespace, _REMAINDER_FIELD, None)
+        if field is None or extras[0] != "--":
+            parser.error(gettext.gettext("unrecognized arguments: %s") % " ".join(extras))
+        getattr(namespace, field).extend(extras)
+    return namespace
+
+
 def _positional_kwargs(spec: Spec, *, repeated: bool) -> dict[str, Any]:
     """What argparse needs to know about a positional, beyond its type."""
     if repeated:
@@ -332,7 +380,9 @@ def _option_kwargs(field: str, spec: Spec, inner: Any, *, repeated: bool) -> dic
     # otherwise reads it off the first long flag, and `_flags` drops a trailing
     # underscore from that flag. See `_flags`.
     kwargs: dict[str, Any] = {"default": argparse.SUPPRESS, "dest": field}
-    if spec.negatable:
+    if spec.remainder:
+        kwargs |= {"action": _Remainder, "nargs": argparse.REMAINDER}
+    elif spec.negatable:
         kwargs["action"] = argparse.BooleanOptionalAction
     elif inner is bool:
         kwargs["action"] = "store_true"
