@@ -30,7 +30,7 @@ joins the fragment and the option -- so the completion of each has to be the
 same set. That is why `complete_file` below completes the part after a ``#``
 itself rather than leaving it to the shell.
 
-**The walk is in `nanopynix_helpers.attr_completion`, and this module is the
+**The walk is in `huggorm.attrcompletion`, and this module is the
 program around it.** That library holds the two rules Nix applies -- one for
 ``--file`` and one for the fragment of a flake -- because they need an
 evaluator and nothing else, and a second Nix CLI that wants them already
@@ -62,10 +62,10 @@ from nanopynix._typechecking import BEARTYPING
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 
-    from nanopynix_helpers import AttrPathSearch
+    from huggorm import AsyncEvalState, AsyncSession, AsyncStore
+    from huggorm.attrpath import AttrPathSearch
 
     from libpynix.command import Completer
-    from nanopynix import AsyncEvalSession
 
 #: Which attribute-path search a command applies to the fragment of ``--flake``.
 #:
@@ -175,41 +175,68 @@ BUDGET_VARIABLE = "PYNIX_COMPLETION_BUDGET"
 #: because stderr during a completion lands in the command line.
 DEBUG_VARIABLE = "PYNIX_COMPLETION_DEBUG"
 
+#: `nix::lvlError`, the quietest level Nix has.
+_NIX_LVL_ERROR = 0
 
-@contextlib.asynccontextmanager
-async def _completion_session() -> AsyncGenerator[AsyncEvalSession]:
-    """An evaluator for one completion, in this process.
 
-    **`inproc` and not `rpc`, and that is the whole latency of the feature.**
-    Every command of `pynix` opens `pynix._util.eval_session`, which builds a
-    `nanopynix.rpc.Session` and so starts a worker process. The child imports
-    the stack and loads libnixexpr and libnixstore, and a gRPC handshake
-    follows. Issue #226 measured what that costs a completion: 0.834 s of a
-    1.536 s answer, against 0.007 s for the same three objects here.
+@contextlib.contextmanager
+def _impatient_nix() -> Generator[None]:
+    """Give Nix the timeouts of :func:`_completion_settings` and no voice, and give both back afterwards.
 
-    **The store is not what costs it, and the measurement says so.** Whichever
-    store a process opens first pays about one second, and `auto`, `daemon`
-    and `dummy://` each pay it. So `DEFAULT_STORE` stays: a completion answers
-    what the command would answer, and a narrower store would not be faster.
+    **Errors only, because no one forwards the logs.** A message that no
+    subscriber takes goes to fd 2, which is the command line during a
+    completion. Measured: a file in a dirty git tree printed "Git tree ... is
+    dirty" there at the default level.
 
-    **A completion is the one caller that needs no worker.** The engines are
-    the same API, and a separate process exists for a separate Nix
-    configuration or an overlay namespace. A Tab evaluates one file, reads the
-    names of one attribute set, and the process then exits.
+    The settings and the level are global to the process, and `pynix/tests/`
+    completes in-process, so the restore keeps them from reaching every later
+    test.
     """
     # Imported here for the reason `_names` gives.
-    from nanopynix import inproc  # noqa: PLC0415 -- see `_names`
-    from pynix._impl.settings import DEFAULT_STORE  # noqa: PLC0415 -- see `_names`
+    import huggorm  # noqa: PLC0415 -- see `_names`
 
-    # `verbosity="error"` so the evaluator says nothing while a person is
-    # holding a key down, and no log forwarding: `_guarded` sends both streams
-    # to a buffer that nothing reads.
-    async with (
-        inproc.Session(verbosity="error", settings=_completion_settings()) as nix,
-        nix.store(DEFAULT_STORE) as store,
-        nix.eval(store) as session,
-    ):
-        yield session
+    wanted = _completion_settings()
+    previous = {name: huggorm.get_setting(name) for name in wanted}
+    previous_verbosity = huggorm.default_verbosity()
+    for name, value in wanted.items():
+        huggorm.set_setting(name, value)
+    huggorm.set_default_verbosity(_NIX_LVL_ERROR)
+    try:
+        yield
+    finally:
+        huggorm.set_default_verbosity(previous_verbosity)
+        for name, value in previous.items():
+            if value is not None:
+                huggorm.set_setting(name, value)
+
+
+@contextlib.asynccontextmanager
+async def _completion_store() -> AsyncGenerator[tuple[AsyncSession, AsyncStore]]:
+    """A store for one completion, in this process, with no log forwarding.
+
+    `_guarded` sends both output streams to a buffer that nothing reads.
+    Issue #226 measured why a completion opens nothing out of process: a
+    worker process cost 0.834 s of a 1.536 s answer, against 0.007 s here.
+    Whichever store a process opens first pays about one second, so
+    `DEFAULT_STORE` stays: a completion answers what the command would answer.
+    """
+    # Imported here for the reason `_names` gives.
+    import huggorm  # noqa: PLC0415 -- see `_names`
+
+    from pynix._impl.settings import DEFAULT_STORE  # noqa: PLC0415 -- see `_names`
+    from pynix._util import init_nix  # noqa: PLC0415 -- see `_names`
+
+    init_nix()
+    with _impatient_nix():
+        async with huggorm.AsyncSession(DEFAULT_STORE) as session:
+            yield session, session.store()
+
+
+@contextlib.asynccontextmanager
+async def _completion_state() -> AsyncGenerator[AsyncEvalState]:
+    """An evaluator for one completion, on :func:`_completion_store`."""
+    async with _completion_store() as (session, store):
+        yield session.eval(store)
 
 
 async def _names(source: str, attr_prefix: str) -> list[str]:
@@ -219,14 +246,15 @@ async def _names(source: str, attr_prefix: str) -> list[str]:
     # pulls structlog and the exception tree of nanopynix. A parser that only
     # lists an option must not pay that, and a completion is the one caller
     # that needs it.
-    from nanopynix_helpers import complete_file_attr_path  # noqa: PLC0415 -- see above
+    from huggorm.attrcompletion import complete_file_attr_path  # noqa: PLC0415 -- see above
 
-    from pynix.target import EvaluationTarget, base_attr_search, evaluate_target  # noqa: PLC0415 -- see above
+    from pynix._evaluate import base_attr_search, evaluate_target  # noqa: PLC0415 -- see above
+    from pynix.target import EvaluationTarget  # noqa: PLC0415 -- see above
 
     target = EvaluationTarget(file=source, attr=None, flake=None)
-    async with _completion_session() as session:
-        root = await evaluate_target(target, session, auto_call_file=True, attr_search=base_attr_search())
-        return await complete_file_attr_path(root, attr_prefix)
+    async with _completion_state() as state:
+        root = await evaluate_target(target, state, auto_call_file=True, attr_search=base_attr_search())
+        return await complete_file_attr_path(state, root, attr_prefix)
 
 
 @contextlib.contextmanager
@@ -361,16 +389,16 @@ def complete_file(*, prefix: str, **_: Any) -> Sequence[str]:
 
 
 def _flake_search(name: FlakeSearch) -> AttrPathSearch:
-    """The :class:`~nanopynix_helpers.AttrPathSearch` that *name* stands for.
+    """The :class:`~huggorm.attrpath.AttrPathSearch` that *name* stands for.
 
     ``"exact"`` is the empty search, which reads the fragment as one path and
     applies no prefix. ``pynix search`` passes no search to
     :func:`~pynix.target.evaluate_target`, and that is what no search means.
     """
     # Imported here for the reason `_names` gives.
-    from nanopynix_helpers import AttrPathSearch  # noqa: PLC0415 -- see `_names`
+    from huggorm.attrpath import AttrPathSearch  # noqa: PLC0415 -- see `_names`
 
-    from pynix.target import (  # noqa: PLC0415 -- see `_names`
+    from pynix._evaluate import (  # noqa: PLC0415 -- see `_names`
         app_attr_search,
         base_attr_search,
         dev_shell_attr_search,
@@ -391,10 +419,12 @@ def _flake_search(name: FlakeSearch) -> AttrPathSearch:
 async def _flake_names(reference: str, fragment: str, name: FlakeSearch) -> list[str]:
     """The fragments of the flake *reference* that *fragment* could mean."""
     # Imported here for the reason `_names` gives.
-    from nanopynix_helpers import complete_flake_fragment, flake_outputs  # noqa: PLC0415 -- see `_names`
+    import huggorm  # noqa: PLC0415 -- see `_names`
+    from huggorm.attrcompletion import complete_flake_fragment  # noqa: PLC0415 -- see `_names`
+    from huggorm.attrpath import flake_outputs  # noqa: PLC0415 -- see `_names`
 
     search = _flake_search(name)
-    async with _completion_session() as session:
+    async with _completion_state() as state:
         # **A completion never writes a lock file, and `nix` does.** Measured:
         # a flake with one unlocked input and no `flake.lock`, completed with
         # `NIX_GET_COMPLETIONS=2 nix build <flake>#top`, came back with its
@@ -406,8 +436,12 @@ async def _flake_names(reference: str, fragment: str, name: FlakeSearch) -> list
         # A Tab is not a command, and a keypress that changes the tree of the
         # caller is a surprise that no candidate is worth. This is a place
         # where `nix` is wrong and this program does not conform. Issue #231.
-        locked = await session.lock_flake(reference, write_lock_file=False)
-        return await complete_flake_fragment(await flake_outputs(await locked.eval()), search, fragment)
+        locked = await state.lock_flake(huggorm.parse_flake_ref(reference), write_lock_file=False)
+        try:
+            outputs = await flake_outputs(state, await state.call_flake(locked))
+        finally:
+            await locked.aclose()
+        return await complete_flake_fragment(state, outputs, search, fragment)
 
 
 def _paths(prefix: str, *, only_dirs: bool = False) -> list[str]:
@@ -508,29 +542,24 @@ async def _registry_references(prefix: str) -> list[str]:
     0.002 s, against 0.002 s for the failure that precedes it.
 
     **`nix` returns at once when the flakes feature is off, and this does
-    not.** nanopynix turns that feature on for every session it builds, so
-    the gate could never fire here.
+    not.** This module reads the registry whatever the feature says.
     """
     # Imported here for the reason `_names` gives.
-    from nanopynix import inproc  # noqa: PLC0415 -- see `_names`
-    from pynix._impl.settings import DEFAULT_STORE  # noqa: PLC0415 -- see `_names`
+    from huggorm import aio  # noqa: PLC0415 -- see `_names`
 
-    async with (
-        inproc.Session(verbosity="error", settings=_completion_settings()) as nix,
-        nix.store(DEFAULT_STORE) as store,
-    ):
+    async with _completion_store() as (_session, store):
         try:
-            entries = await store.registry_entries()
+            entries = await aio.registry_entries(store)
         except Exception:
             # Broad, because Nix reports every layer's failure the same way and
             # the second call is harmless whatever the first one hit: a store
             # that cannot answer at all fails again, and `_guarded` turns that
             # into the same empty list.
-            entries = await store.registry_entries(fetch_settings={_NO_GLOBAL_REGISTRY: ""})
+            entries = await aio.registry_entries(store, {_NO_GLOBAL_REGISTRY: ""})
 
     candidates: list[str] = []
     for entry in entries:
-        source = entry.from_
+        source = entry.source()
         if not prefix.startswith(_FLAKE_SCHEME) and source.startswith(_FLAKE_SCHEME):
             without_scheme = source[len(_FLAKE_SCHEME) :]
             if without_scheme.startswith(prefix):

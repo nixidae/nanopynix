@@ -57,14 +57,17 @@ _LAYERS_SCRIPT = """
 import json
 
 import anyio
+import huggorm
+from huggorm import aio
 
-from nanopynix import inproc
+from pynix._util import init_nix
 
 
 async def main() -> None:
-    async with inproc.Session(verbosity="error") as nix, nix.store("dummy://") as store:
-        entries = await store.registry_entries(fetch_settings={"flake-registry": ""})
-    print(json.dumps([[e.type, e.from_] for e in entries]))
+    init_nix()
+    async with huggorm.AsyncSession("dummy://") as session:
+        entries = await aio.registry_entries(session.store(), {"flake-registry": ""})
+    print(json.dumps([[str(e.layer()), e.source()] for e in entries]))
 
 
 anyio.run(main)

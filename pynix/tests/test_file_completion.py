@@ -67,3 +67,17 @@ def test_a_tilde_reaches_the_evaluator_expanded(tmp_path: Path, monkeypatch: pyt
     offered = set(complete_file(prefix="~/attrs.nix#al"))
 
     assert offered == {"~/attrs.nix#alpha"}
+
+
+@pytest.mark.forked
+def test_a_warning_of_the_evaluator_stays_off_the_command_line(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """No one forwards the logs of a completion, and what Nix writes to fd 2 lands in the command line."""
+    target = tmp_path / "warns.nix"
+    target.write_text('builtins.warn "pynix-completion-warning" { alpha = 1; }\n', encoding="utf-8")
+
+    offered = set(complete_file(prefix=f"{target}#al"))
+
+    assert offered == {f"{target}#alpha"}
+    assert "pynix-completion-warning" not in capfd.readouterr().err
