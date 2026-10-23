@@ -24,7 +24,23 @@ let
 
   isDerivation = x: isAttrs x && (x.type or null) == "derivation";
 
+  # `deepSeq`, because `tryEval` forces only the outer value: a throw inside a
+  # list of licenses would escape it and stop `toJSON` instead. Only for the
+  # values the JSON holds: `meta` itself can hold derivations, and a deep
+  # force of those overflows the stack.
   guard =
+    default: f:
+    let
+      result = tryEval (
+        let
+          v = f null;
+        in
+        builtins.deepSeq v v
+      );
+    in
+    if result.success then result.value else default;
+
+  shallow =
     default: f:
     let
       result = tryEval (f null);
@@ -35,7 +51,7 @@ let
 
   depsOfValue =
     v:
-    guard [ ] (
+    shallow [ ] (
       _:
       if isDerivation v then
         outputsOf v
@@ -86,8 +102,8 @@ let
   meta =
     d:
     let
-      m = guard { } (_: if isAttrs (d.meta or null) then d.meta else { });
-      identifiers = guard { } (_: if isAttrs (m.identifiers or null) then m.identifiers else { });
+      m = shallow { } (_: if isAttrs (d.meta or null) then d.meta else { });
+      identifiers = shallow { } (_: if isAttrs (m.identifiers or null) then m.identifiers else { });
     in
     {
       license = licenses m;
@@ -96,7 +112,7 @@ let
         let
           h = m.homepage or null;
         in
-        if isList h then stringOrNull (builtins.head h) else stringOrNull h
+        if isList h then (if h == [ ] then null else stringOrNull (builtins.head h)) else stringOrNull h
       );
       description = guard null (_: stringOrNull (m.description or null));
       cpe = guard null (_: stringOrNull (identifiers.cpe or null));

@@ -51,6 +51,7 @@ ROOT_SUBCOMMANDS = frozenset(
         "registry",
         "repl",
         "run",
+        "sbom",
         "search",
         "store",
         "why-depends",

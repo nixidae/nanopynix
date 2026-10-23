@@ -48,9 +48,10 @@ if TYPE_CHECKING:
         ("/nix/store/bqwmxjkrkmn1kqivq4pr053j68biq4k4-mailcap-extra-2.1.54", "mailcap-extra", "2.1.54"),
         ("/nix/store/lcxn67gbjdcr6bjf1rcs03ywa7gcslr2-system-units", "system-units", None),
         ("/nix/store/13cll4sxzxxi2lxbpsg5nvfjyv7qsznr-groupdel.pam", "groupdel.pam", None),
+        ("/nix/store/h4wfwic161kxrr74jlzla5lsm28hgary-glibc-2.44-25", "glibc", "2.44-25"),
     ],
 )
-def test_a_bare_store_path_names_itself_as_bombon_does(path: str, name: str, version: str | None) -> None:
+def test_a_bare_store_path_names_itself_as_nix_does(path: str, name: str, version: str | None) -> None:
     record = from_store_path(path)
     assert (record.name, record.version) == (name, version)
 
@@ -104,6 +105,16 @@ def test_a_path_with_no_version_is_not_a_component() -> None:
     listed = inventory(_records(), _APP, {_APP: (unversioned,), unversioned: ()}, buildtime=False)
     assert [record.path for record in listed.components] == [_APP]
     assert listed.dependencies[_APP] == frozenset()
+
+
+def test_an_edge_to_a_merged_output_goes_to_the_output_that_stays() -> None:
+    lib_bin = "/nix/store/ffffffffffffffffffffffffffffffff-lib-2.0-bin"
+    records = _records() | _walk(
+        {"path": lib_bin, "pname": "lib", "version": "2.0", "outputName": "bin"},
+    )
+    listed = inventory(records, _APP, {_APP: (lib_bin,), _LIB: (), lib_bin: ()}, buildtime=False)
+    assert [record.path for record in listed.components if record.name == "lib"] == [_LIB]
+    assert listed.dependencies[_APP] == frozenset({_LIB})
 
 
 def test_every_dependency_names_an_object_of_the_document() -> None:
@@ -172,18 +183,22 @@ rec {
     meta.license = [ lib.licenses.mit lib.licenses.asl20 ];
     meta.homepage = "https://example.org/lib";
   } "mkdir $out $man";
-  broken = (derivation {
-    name = "pynix-sbom-broken-4.0";
-    pname = "pynix-sbom-broken";
-    version = "4.0";
+  raw = pname: version: meta: (derivation {
+    name = "${pname}-${version}";
+    inherit pname version;
     system = builtins.currentSystem;
     builder = runtimeShell;
     args = [ "-c" "echo > $out" ];
-  }) // { meta = throw "this meta throws"; };
+  }) // { inherit meta; };
+  broken = raw "pynix-sbom-broken" "4.0" (throw "this meta throws");
+  deep = raw "pynix-sbom-deep" "5.0" {
+    license = [ lib.licenses.mit (throw "this license throws") ];
+    homepage = [ ];
+  };
   app = runCommand "pynix-sbom-app-1.0" {
     pname = "pynix-sbom-app";
     version = "1.0";
-    nativeBuildInputs = [ cc broken ];
+    nativeBuildInputs = [ cc broken deep ];
     buildInputs = [ libfoo ];
     meta.license = lib.licenses.gpl3Plus;
     meta.description = "The target";
@@ -260,8 +275,9 @@ def test_cyclonedx_buildtime_adds_build_inputs_and_survives_a_throwing_meta(
     assert result.returncode == 0, result.stderr
     assert JsonStrictValidator(SchemaVersion.V1_7).validate_str(result.stdout) is None
     components = _components(json.loads(result.stdout))
-    assert {"pynix-sbom-lib", "pynix-sbom-cc", "pynix-sbom-broken"} <= set(components)
+    assert {"pynix-sbom-lib", "pynix-sbom-cc", "pynix-sbom-broken", "pynix-sbom-deep"} <= set(components)
     assert "licenses" not in components["pynix-sbom-broken"]
+    assert "licenses" not in components["pynix-sbom-deep"]
     assert all(not str(c["bom-ref"]).endswith("-man") for c in components.values())
 
 

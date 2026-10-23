@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import uuid
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
@@ -18,6 +19,9 @@ from urllib.parse import quote
 
 #: Outputs that hold documentation. bombon leaves them out of every SBOM.
 _DOC_OUTPUTS = frozenset({"doc", "man"})
+
+#: ``DrvName`` ends the name at the first dash that a non-letter follows.
+_VERSION_DASH = re.compile(r"-(?![A-Za-z])")
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,14 +149,12 @@ def parse_walk(text: str) -> dict[str, Record]:
 def from_store_path(path: str) -> Record:
     """A record from the name of a store path alone, for a path the walk did not reach.
 
-    bombon's ``Derivation::from_store_path``: the last dash-separated part is
-    the version when it starts with a digit.
+    Nix's ``DrvName``: the name ends at the first dash that a non-letter
+    follows, and the rest is the version.
     """
-    base = PurePosixPath(path).name
-    parts = base.split("-")[1:]
-    if len(parts) > 1 and parts[-1][:1].isdigit():
-        return Record(path=path, name="-".join(parts[:-1]), version=parts[-1])
-    return Record(path=path, name="-".join(parts))
+    _, _, rest = PurePosixPath(path).name.partition("-")
+    parts = _VERSION_DASH.split(rest, maxsplit=1)
+    return Record(path=path, name=parts[0], version=parts[1] if len(parts) == 2 else None)  # noqa: PLR2004 -- a name and a version
 
 
 def _listed(record: Record) -> bool:
@@ -169,34 +171,40 @@ def inventory(
     """Join the walk and the runtime closure into what an SBOM lists.
 
     *runtime* maps each path of the runtime closure to its references. With
-    *buildtime*, the build closure joins it, with its build edges, once for
-    each package name.
-    """
-    chosen = [records.get(path) or from_store_path(path) for path in sorted(runtime)]
-    if buildtime:
-        names = {(record.name, record.version) for record in chosen}
-        for path in sorted(records):
-            record = records[path]
-            if path not in runtime and (record.name, record.version) not in names:
-                names.add((record.name, record.version))
-                chosen.append(record)
-    by_purl: dict[str, Record] = {}
-    for record in filter(_listed, chosen):
-        by_purl.setdefault(record.purl, record)
-    components = tuple(by_purl.values())
-    target_record = records.get(target) or from_store_path(target)
+    *buildtime*, the build closure joins it, with its build edges.
 
-    present = {record.path for record in components} | {target}
-    edges: dict[str, set[str]] = {path: set() for path in present}
-    for path, references in runtime.items():
-        if path in present:
-            edges[path].update(ref for ref in references if ref in present and ref != path)
+    One package URL is one component, as in bombon, so two outputs of one
+    package (``glibc`` and ``glibc-bin``) are one component. An edge to the
+    output that is left out goes to the one that stays, so the graph keeps it.
+    """
+    target_record = records.get(target) or from_store_path(target)
+    candidates = [target_record, *(records.get(path) or from_store_path(path) for path in sorted(runtime))]
     if buildtime:
-        for record in components:
-            edges[record.path].update(ref for ref in record.build_references if ref in present and ref != record.path)
+        candidates.extend(records[path] for path in sorted(records) if path not in runtime)
+    # The `out` output names the package when it has one; then the path order.
+    candidates[1:] = sorted(candidates[1:], key=lambda record: (record.output_name not in (None, "out"), record.path))
+    kept: dict[str, Record] = {}
+    alias: dict[str, str] = {}
+    for record in candidates:
+        if record.path == target or _listed(record):
+            alias[record.path] = kept.setdefault(record.purl, record).path
+
+    edges: dict[str, set[str]] = {path: set() for path in set(alias.values())}
+
+    def link(source: str, references: tuple[str, ...]) -> None:
+        start = alias.get(source)
+        if start is None:
+            return
+        edges[start].update(end for ref in references if (end := alias.get(ref)) is not None and end != start)
+
+    for path, references in runtime.items():
+        link(path, references)
+    if buildtime:
+        for record in records.values():
+            link(record.path, record.build_references)
     return Inventory(
         target=target_record,
-        components=components,
+        components=tuple(kept.values()),
         dependencies={path: frozenset(refs) for path, refs in edges.items()},
     )
 
