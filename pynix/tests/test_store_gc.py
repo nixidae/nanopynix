@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import json
-from contextlib import asynccontextmanager
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator
     from pathlib import Path
 
     from nanopynix_testing.nix_environment import NixTestEnvironment
@@ -301,42 +298,41 @@ async def test_store_ls_lists_populated_store_path(populated_store: dict[str, st
     assert {"name": "bin", "type": "directory"} in data["entries"]
 
 
-async def test_store_cat_local_path_mapping_unit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-):
-    store_root = tmp_path / "store-root"
-    store_url = "test://store"
-    out_path = "/nix/store/00000000000000000000000000000000-pynix-store-cat-test"
-    output_file = store_root / out_path.removeprefix("/") / "share" / "message"
-    output_file.parent.mkdir(parents=True)
-    output_file.write_text("cat-output\n")
-    _install_fake_nanopynix(monkeypatch=monkeypatch, store_root=store_root)
+async def _add_tree(environment: NixTestEnvironment, tree: Path, capsys: pytest.CaptureFixture[str]) -> str:
+    await parse(["store", "add-path", str(tree), *environment.pynix_store_args()]).run()
+    return json.loads(capsys.readouterr().out)["path"]
 
-    cmd = parse(["store", "cat", f"{out_path}/share/message", "--store", store_url])
+
+async def test_store_cat_reads_through_a_relocated_store(
+    isolated_nix_environment: NixTestEnvironment, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    tree = tmp_path / "pynix-store-cat-test"
+    (tree / "share").mkdir(parents=True)
+    (tree / "share" / "message").write_text("cat-output\n")
+    out_path = await _add_tree(isolated_nix_environment, tree, capsys)
+
+    cmd = parse(["store", "cat", f"{out_path}/share/message", *isolated_nix_environment.pynix_store_args()])
     await cmd.run()
     captured = capsys.readouterr()
     assert captured.out == "cat-output\n"
 
 
-async def test_store_ls_local_path_mapping_unit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+async def test_store_ls_reads_through_a_relocated_store(
+    isolated_nix_environment: NixTestEnvironment, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
-    store_root = tmp_path / "store-root"
-    store_url = "test://store"
-    out_path = "/nix/store/00000000000000000000000000000000-pynix-store-ls-test"
-    store_path = store_root / out_path.removeprefix("/")
-    (store_path / "bin").mkdir(parents=True)
-    (store_path / "share").mkdir()
-    (store_path / "bin" / "tool").touch()
-    (store_path / "share" / "message").touch()
-    _install_fake_nanopynix(monkeypatch=monkeypatch, store_root=store_root)
+    tree = tmp_path / "pynix-store-ls-test"
+    (tree / "bin").mkdir(parents=True)
+    (tree / "share").mkdir()
+    (tree / "bin" / "tool").touch()
+    (tree / "share" / "message").touch()
+    out_path = await _add_tree(isolated_nix_environment, tree, capsys)
 
-    cmd = parse(["store", "ls", out_path, "--store", store_url])
+    cmd = parse(["store", "ls", out_path, *isolated_nix_environment.pynix_store_args()])
     await cmd.run()
     captured = capsys.readouterr()
     assert captured.out.splitlines() == ["bin", "share"]
 
-    cmd = parse(["store", "ls", out_path, "--json", "--store", store_url])
+    cmd = parse(["store", "ls", out_path, "--json", *isolated_nix_environment.pynix_store_args()])
     await cmd.run()
     captured = capsys.readouterr()
     data = json.loads(captured.out)
@@ -349,39 +345,34 @@ async def test_store_ls_local_path_mapping_unit(
 
 
 async def test_store_diff_closures_reports_added_removed_and_size_delta(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    isolated_nix_environment: NixTestEnvironment, capsys: pytest.CaptureFixture[str]
 ):
-    before_path = "/nix/store/00000000000000000000000000000000-before"
-    after_path = "/nix/store/11111111111111111111111111111111-after"
-    common_path = "/nix/store/22222222222222222222222222222222-common"
-    old_path = "/nix/store/33333333333333333333333333333333-old"
-    new_path = "/nix/store/44444444444444444444444444444444-new"
-    _install_fake_nanopynix(
-        monkeypatch=monkeypatch,
-        store_root=tmp_path / "store-root",
-        closures={
-            before_path: [common_path, old_path],
-            after_path: [common_path, new_path],
-        },
-        nar_sizes={
-            common_path: 10,
-            old_path: 4,
-            new_path: 7,
-        },
-    )
+    async with util_module.huggorm_store_session(isolated_nix_environment.store_uri) as (_session, store):
+        common = await store.add_to_store("common", b"common")
+        old = await store.add_to_store("old", b"old")
+        new = await store.add_to_store("new", b"new!")
+        before = await store.add_to_store("before", b"before", references=[common, old])
+        after = await store.add_to_store("after", b"after", references=[common, new])
+        sizes = {
+            await store.print_store_path(path): (await store.query_path_info(path)).nar_size()
+            for path in (common, old, new, before, after)
+        }
+        common_path, old_path, new_path, before_path, after_path = sizes
 
-    cmd = parse(["store", "diff-closures", before_path, after_path, "--store", "test://store"])
+    cmd = parse(["store", "diff-closures", before_path, after_path, *isolated_nix_environment.pynix_store_args()])
     await cmd.run()
     captured = capsys.readouterr()
     data = json.loads(captured.out)
+    before_size = sizes[common_path] + sizes[old_path] + sizes[before_path]
+    after_size = sizes[common_path] + sizes[new_path] + sizes[after_path]
     assert data == {
-        "added": [{"narSize": 7, "path": new_path}],
+        "added": [{"narSize": sizes[path], "path": path} for path in sorted([after_path, new_path])],
         "after": after_path,
-        "afterNarSize": 17,
+        "afterNarSize": after_size,
         "before": before_path,
-        "beforeNarSize": 14,
-        "narSizeDelta": 3,
-        "removed": [{"narSize": 4, "path": old_path}],
+        "beforeNarSize": before_size,
+        "narSizeDelta": after_size - before_size,
+        "removed": [{"narSize": sizes[path], "path": path} for path in sorted([before_path, old_path])],
     }
 
 
@@ -405,91 +396,3 @@ async def test_verify_empty_store(
     captured = capsys.readouterr()
     data = json.loads(captured.out)
     assert data == {"errors": False}
-
-
-def _install_fake_nanopynix(
-    *,
-    monkeypatch: pytest.MonkeyPatch,
-    store_root: Path,
-    closures: dict[str, list[str]] | None = None,
-    nar_sizes: dict[str, int] | None = None,
-) -> None:
-    monkeypatch.setattr(util_module, "forward_nix_logs", _noop_forward_nix_logs)
-    fake_factory = lambda: _FakeSession(  # noqa: E731 -- inline lambda for SimpleNamespace test double
-        store_root,
-        closures=closures or {},
-        nar_sizes=nar_sizes or {},
-    )
-    monkeypatch.setattr(
-        util_module,
-        "nanopynix",
-        SimpleNamespace(
-            inproc=SimpleNamespace(Session=fake_factory),
-            rpc=SimpleNamespace(Session=fake_factory),
-        ),
-    )
-
-
-@asynccontextmanager
-async def _noop_forward_nix_logs(
-    session: Any,  # noqa: ARG001 -- matches real forward_nix_logs signature
-    *,
-    verbosity: Any = None,  # noqa: ARG001 -- matches real forward_nix_logs signature
-    print_build_logs: bool = False,  # noqa: ARG001 -- matches real forward_nix_logs signature
-) -> AsyncGenerator[None]:
-    yield
-
-
-class _FakeSession:
-    def __init__(self, store_root: Path, *, closures: dict[str, list[str]], nar_sizes: dict[str, int]) -> None:
-        self._store_root = store_root
-        self._closures = closures
-        self._nar_sizes = nar_sizes
-
-    async def __aenter__(self) -> _FakeSession:
-        return self
-
-    async def __aexit__(self, *args: object) -> None:
-        return None
-
-    def store(self, store_uri: str) -> _FakeStore:
-        return _FakeStore(self._store_root, store_uri, closures=self._closures, nar_sizes=self._nar_sizes)
-
-    async def log_stream(self) -> AsyncIterator[None]:
-        if False:
-            yield None
-
-
-class _FakeStore:
-    def __init__(
-        self,
-        store_root: Path,
-        store_uri: str,
-        *,
-        closures: dict[str, list[str]],
-        nar_sizes: dict[str, int],
-    ) -> None:
-        self._store_root = store_root
-        self._store_uri = store_uri
-        self._closures = closures
-        self._nar_sizes = nar_sizes
-
-    async def __aenter__(self) -> _FakeStore:
-        return self
-
-    async def __aexit__(self, *args: object) -> None:
-        return None
-
-    async def store_dirs(self) -> SimpleNamespace:
-        return SimpleNamespace(store_dir="/nix/store", real_store_dir=str(self._store_root / "nix" / "store"))
-
-    async def query_path_info(self, path: str) -> SimpleNamespace:
-        if path in self._nar_sizes:
-            return SimpleNamespace(nar_size=self._nar_sizes[path])
-        physical_path = self._store_root / path.removeprefix("/")
-        if not physical_path.exists():
-            raise FileNotFoundError(path)
-        return SimpleNamespace(nar_size=physical_path.stat().st_size)
-
-    async def compute_fs_closure(self, path: str) -> list[str]:
-        return self._closures[path]
