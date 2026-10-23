@@ -43,7 +43,6 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import pathlib
-import re
 import sys
 from typing import TYPE_CHECKING
 
@@ -58,6 +57,7 @@ from typing import TYPE_CHECKING
 from argparse_manpage.manpage import Manpage
 
 from libpynix import build_parser
+from nanopynix import strip_ansi
 from pynix import Pynix
 
 if TYPE_CHECKING:
@@ -88,12 +88,6 @@ pynix repository
 """
 
 
-#: Every ANSI escape sequence: the ECMA-48 CSI shape plus terminated OSC, so a
-#: future theme change stays plain roff. See the module docstring for why the
-#: renderer strips them instead of switching the parser colors off.
-_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;:?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
-
-
 def _sanitize(text: str) -> str:
     """The page *text* as roff that renders without a warning.
 
@@ -104,7 +98,7 @@ def _sanitize(text: str) -> str:
     runs after `Manpage` has mixed requests and content, so it cannot tell
     one `.PP` from one `.profile`. It leaves `.` lines alone.
     """
-    plain = _ANSI_ESCAPE.sub("", text)
+    plain = strip_ansi(text)
     return "\n".join(f"\\&{line}" if line.startswith("'") else line for line in _unfilled_usage(plain.split("\n")))
 
 
