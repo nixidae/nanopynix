@@ -204,9 +204,8 @@ def test_the_budget_is_not_slack() -> None:
 #: each one was in this path until issue #123 measured it. The costs, on the
 #: release build:
 #:
-#: - ``pydantic_settings``, 123.6 ms. ``PynixNixSettings`` built a model of
-#:   about 200 fields in its class body, and ``pynix._impl.settings`` now
-#:   holds it.
+#: - ``pydantic_settings``, 123.6 ms. A settings model of about 200 fields
+#:   built itself in its class body. pynix now holds no such model.
 #: - ``prompt_toolkit``, 85 ms. The REPL, now in ``pynix._impl.repl``.
 #: - ``nanopynix_helpers.fod``, which imports ``tree_sitter_nix``, which
 #:   imports ``tree_sitter_config``, which imports ``email_validator`` for one

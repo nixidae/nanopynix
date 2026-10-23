@@ -13,13 +13,14 @@ by that.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
+import huggorm
 import pytest
 
 import nanopynix
-from nanopynix.settings import field_key
 from pynix import parse
 from pynix._impl.build import (
     _add_sandbox_paths,  # pyright: ignore[reportPrivateUsage] -- the merge under test is inside this function
@@ -27,11 +28,12 @@ from pynix._impl.build import (
 )
 from pynix._impl.settings import (
     DEFAULT_STORE,
+    DEFAULTS,
     ConfigFileError,
-    PynixDefaults,
-    PynixNixSettings,
+    SettingError,
     configured_fields,
-    nix_settings,
+    nix_settings as resolve_nix_settings,
+    pynix_defaults,
 )
 from pynix._util import nix_session
 from pynix.build import Build
@@ -51,6 +53,17 @@ def write_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str) -> 
 def no_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point at a file that does not exist, which is the ordinary case."""
     monkeypatch.setenv("PYNIX_CONFIG", str(tmp_path / "absent.toml"))
+
+
+KNOWN = frozenset(huggorm.list_settings())
+
+
+def nix_settings(**flags: str | None) -> dict[str, str]:
+    return resolve_nix_settings(KNOWN, **flags)
+
+
+def store() -> object:
+    return pynix_defaults()["store"]
 
 
 def build_command(*arguments: str) -> Build:
@@ -73,12 +86,11 @@ def test_the_built_in_default_applies_when_nothing_else_speaks(
 ) -> None:
     no_config(tmp_path, monkeypatch)
 
-    assert PynixDefaults().store == DEFAULT_STORE
+    assert store() == DEFAULT_STORE
     # `pynix` holds no Nix setting of its own. `nix build` holds none either,
-    # and a value here would be sent to the worker and would replace what the
-    # `nix.conf` of the host says -- which is issue #96.
-    assert nix_settings().substituters is None
-    assert nix_settings().trusted_public_keys is None
+    # and a value here would replace what the `nix.conf` of the host says --
+    # which is issue #96.
+    assert nix_settings() == {}
 
 
 def test_the_file_beats_the_built_in_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -89,11 +101,13 @@ def test_the_file_beats_the_built_in_default(tmp_path: Path, monkeypatch: pytest
         '\n[nix]\nsubstituters = ["https://file.example/"]\nmax-jobs = 8\n',
     )
 
-    assert PynixDefaults().store == "daemon"
-    assert PynixDefaults().verbosity == "notice"
-    assert PynixDefaults().print_build_logs is True
-    assert nix_settings().substituters == ["https://file.example/"]
-    assert nix_settings().max_jobs == 8
+    assert pynix_defaults() == {
+        "store": "daemon",
+        "eval_store": None,
+        "verbosity": "notice",
+        "print_build_logs": True,
+    }
+    assert nix_settings() == {"substituters": "https://file.example/", "max-jobs": "8"}
 
 
 def test_the_environment_beats_the_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -105,8 +119,8 @@ def test_the_environment_beats_the_file(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setenv("PYNIX_STORE", "local")
     monkeypatch.setenv("PYNIX_NIX_SUBSTITUTERS", "https://env.example/")
 
-    assert PynixDefaults().store == "local"
-    assert nix_settings().substituters == ["https://env.example/"]
+    assert store() == "local"
+    assert nix_settings() == {"substituters": "https://env.example/"}
 
 
 def test_the_flag_beats_the_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -117,7 +131,8 @@ def test_the_flag_beats_the_environment(tmp_path: Path, monkeypatch: pytest.Monk
     command = build_command("--store", "daemon")
 
     assert command.store == "daemon"
-    assert nix_settings(substituters="https://flag.example/").substituters == ["https://flag.example/"]
+    monkeypatch.setenv("PYNIX_NIX_SUBSTITUTERS", "https://env.example/")
+    assert nix_settings(substituters="https://flag.example/") == {"substituters": "https://flag.example/"}
 
 
 # ── the file reaches the parser, and not only the model ──────────────
@@ -221,13 +236,13 @@ def test_every_configured_option_holds_a_value_after_the_command_is_built(
 
     command = build_command()
 
-    # Compared against the models, and not against ``None``: ``--eval-store``
+    # Compared against the defaults, and not against ``None``: ``--eval-store``
     # and ``--verbosity`` resolve to ``None`` on purpose, so "is not None" would
     # be false for two options that are perfectly resolved.
-    for model, fields in configured_fields(Build).items():
-        resolved = model()
-        for field in fields:
-            assert getattr(command, field) == getattr(resolved, field), field
+    fields = configured_fields(Build)
+    assert fields
+    for field in fields:
+        assert getattr(command, field) == DEFAULTS[field], field
 
 
 def test_explicit_holds_the_flags_and_nothing_else(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -239,19 +254,19 @@ def test_explicit_holds_the_flags_and_nothing_else(tmp_path: Path, monkeypatch: 
     assert build_command("--store", "daemon").explicit_options == frozenset({"store"})
 
 
-def test_the_two_models_that_share_a_name_do_not_fight_over_it(
+def test_the_nix_setting_called_store_does_not_resolve_the_option(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``store`` is a field of both models, and they mean different things.
-
-    ``PynixDefaults.store`` is the store a command opens, and
-    ``PynixNixSettings`` inherits Nix's global of the same name, which holds a
-    store URL and defaults to ``None``. The second must not resolve the option.
+    """``--store`` is the store a command opens, and Nix has a global of the
+    same name, which holds a store directory. ``PYNIX_NIX_STORE`` names the
+    second, and must not move the first.
     """
     no_config(tmp_path, monkeypatch)
+    monkeypatch.setenv("PYNIX_NIX_STORE", "/elsewhere")
 
     assert build_command().store == DEFAULT_STORE  # type: ignore[attr-defined] -- see above
+    assert nix_settings() == {"store": "/elsewhere"}
 
 
 # ── the regression that this work exists to fix ──────────────────────
@@ -275,67 +290,45 @@ def test_pynix_build_honours_the_substituters_of_the_environment(
         trusted_public_keys=command.trusted_public_keys,  # type: ignore[attr-defined] -- see above
     )
 
-    assert settings.substituters == ["https://env.example/"]
-
-
-def test_the_nix_settings_keep_their_environment_prefix() -> None:
-    """``PynixNixSettings`` inherits two settings models, and pydantic merges
-    ``model_config`` over the bases. Without the restatement the mixin reset
-    ``env_prefix`` to "", so every ``PYNIX_NIX_*`` variable stopped being read
-    and the environment lost to the file with no message.
-    """
-    assert PynixNixSettings.model_config.get("env_prefix") == "PYNIX_NIX_"
-    assert PynixDefaults.model_config.get("env_prefix") == "PYNIX_"
+    assert settings == {"substituters": "https://env.example/"}
 
 
 @pytest.mark.parametrize(
     ("variable", "expected"),
-    [("PYNIX_NIX_CORES", 9), ("cores", None)],
+    [("PYNIX_NIX_CORES", {"cores": "9"}), ("cores", {})],
 )
 def test_only_the_prefixed_spelling_reaches_a_nix_setting(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     variable: str,
-    expected: int | None,
+    expected: dict[str, str],
 ) -> None:
-    """``PYNIX_NIX_`` is the documented prefix, and the only one that works.
-
-    Every field carries its ``nix.conf`` key as an alias, and
-    pydantic-settings reads an alias as a second environment name with no
-    prefix in front of it. The unprefixed name also won, because
-    ``_extract_field_info`` builds the alias entry before the prefixed one.
-    """
+    """``PYNIX_NIX_`` is the documented prefix, and the only one that works."""
     no_config(tmp_path, monkeypatch)
     monkeypatch.setenv(variable, "9")
 
-    assert PynixNixSettings().cores == expected
+    assert nix_settings() == expected
 
 
 def test_a_common_word_in_the_environment_changes_no_setting(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Every single-word ``nix.conf`` key, set at once, and none is read.
+    """Every single-word Nix setting, set at once under its bare name, and none is read.
 
-    This list is what makes a new one-word setting safe: a field added to a
-    scope model joins it, and this test then covers that field too. ``stdenv``
-    exports ``system``, so the shell of Nix that runs this suite already sets
-    one of these names.
+    ``stdenv`` exports ``system``, so the shell of Nix that runs this suite
+    already sets one of these names.
     """
     no_config(tmp_path, monkeypatch)
-    single_word = sorted(
-        key for name, field in PynixNixSettings.model_fields.items() if "-" not in (key := field_key(name, field))
-    )
+    single_word = sorted(key for key in KNOWN if "-" not in key)
     for key in single_word:
         monkeypatch.setenv(key, "0")
 
-    named = PynixNixSettings().model_fields_set
-
-    assert single_word, "no single-word key found; the scan is broken, not the model"
-    assert named == set(), f"these settings were read from an unprefixed name: {sorted(named)}"
+    assert single_word, "no single-word key found; the scan is broken, not the resolution"
+    assert nix_settings() == {}
 
 
-def test_the_defaults_model_also_refuses_an_unprefixed_name(
+def test_the_defaults_also_refuse_an_unprefixed_name(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -343,31 +336,76 @@ def test_the_defaults_model_also_refuses_an_unprefixed_name(
     no_config(tmp_path, monkeypatch)
     monkeypatch.setenv("store", "/tmp/not-the-store")
 
-    assert PynixDefaults().store == DEFAULT_STORE
+    assert store() == DEFAULT_STORE
 
 
-def test_every_table_backed_model_still_reads_its_table(
+def test_both_tables_are_read(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The stricter environment source must not cost the configuration file.
-
-    ``PynixNixSettings`` inherits ``NixSettingsEnv`` first, and that base
-    states a source order of its own which names no file. Inheriting it
-    dropped the ``[nix]`` table, so this reads one key from each table rather
-    than trusting the method resolution order.
-
-    Two other tests here fail on the same cause, and both report a value that
-    is wrong rather than the reason it is wrong. This one names the reason.
-    """
     write_config(
         tmp_path,
         monkeypatch,
         '[defaults]\nstore = "daemon"\n\n[nix]\nmax-jobs = 8\n',
     )
 
-    assert PynixDefaults().store == "daemon"
-    assert PynixNixSettings().max_jobs == 8
+    assert store() == "daemon"
+    assert nix_settings() == {"max-jobs": "8"}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("1", True), ("true", True), ("Yes", True), ("on", True), ("0", False), ("false", False), ("off", False)],
+)
+def test_a_boolean_option_reads_the_spellings_of_the_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+    expected: bool,
+) -> None:
+    no_config(tmp_path, monkeypatch)
+    monkeypatch.setenv("PYNIX_PRINT_BUILD_LOGS", value)
+
+    assert pynix_defaults()["print_build_logs"] is expected
+
+
+def test_a_boolean_option_refuses_another_word(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    no_config(tmp_path, monkeypatch)
+    monkeypatch.setenv("PYNIX_PRINT_BUILD_LOGS", "maybe")
+
+    with pytest.raises(SettingError, match="PYNIX_PRINT_BUILD_LOGS"):
+        pynix_defaults()
+
+
+def test_a_string_option_refuses_another_kind_in_the_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    write_config(tmp_path, monkeypatch, "[defaults]\nstore = 8\n")
+
+    with pytest.raises(SettingError, match="store"):
+        pynix_defaults()
+
+
+@pytest.mark.parametrize(
+    ("layer", "source"),
+    [("file", "[nix]"), ("environment", "PYNIX_NIX_MAX_JOBZ"), ("flag", "--max-jobz")],
+)
+def test_an_unknown_nix_setting_is_refused_and_names_its_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    layer: str,
+    source: str,
+) -> None:
+    """A typo that pynix passes on is a setting a user believes is applied."""
+    no_config(tmp_path, monkeypatch)
+    flags: dict[str, str | None] = {}
+    if layer == "file":
+        write_config(tmp_path, monkeypatch, "[nix]\nmax-jobz = 8\n")
+    elif layer == "environment":
+        monkeypatch.setenv("PYNIX_NIX_MAX_JOBZ", "8")
+    else:
+        flags["max_jobz"] = "8"
+
+    with pytest.raises(SettingError, match=rf"max-jobz \({re.escape(source)}"):
+        nix_settings(**flags)
 
 
 # ── what the file may say, and what it may not ───────────────────────
@@ -376,43 +414,50 @@ def test_every_table_backed_model_still_reads_its_table(
 def test_a_missing_configuration_file_is_not_an_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     no_config(tmp_path, monkeypatch)
 
-    assert PynixDefaults().store == DEFAULT_STORE
+    assert store() == DEFAULT_STORE
 
 
 def test_a_file_with_neither_table_is_not_an_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     write_config(tmp_path, monkeypatch, '[something-else]\nkey = "value"\n')
 
-    assert PynixDefaults().store == DEFAULT_STORE
+    assert store() == DEFAULT_STORE
 
 
 def test_a_file_that_does_not_parse_names_itself(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = write_config(tmp_path, monkeypatch, "[defaults\nstore =\n")
 
     with pytest.raises(ConfigFileError, match=str(path)):
-        PynixDefaults()
+        pynix_defaults()
 
 
 def test_a_table_that_is_not_a_table_names_itself(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     write_config(tmp_path, monkeypatch, 'defaults = "daemon"\n')
 
     with pytest.raises(ConfigFileError, match=r"\[defaults\]"):
-        PynixDefaults()
+        pynix_defaults()
 
 
 def test_an_unknown_key_is_reported_and_not_ignored(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """``extra="forbid"``. A typo that the file ignores is a setting a user
-    believes is applied."""
+    """A typo that the file ignores is a setting a user believes is applied."""
     write_config(tmp_path, monkeypatch, '[defaults]\nstor = "daemon"\n')
 
-    with pytest.raises(ValueError, match="stor"):
-        PynixDefaults()
+    with pytest.raises(SettingError, match="stor"):
+        pynix_defaults()
 
 
 def test_the_file_takes_the_nix_conf_spelling_of_a_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A TOML array is the natural spelling here, and the other one still works."""
     write_config(tmp_path, monkeypatch, '[nix]\nsubstituters = "https://a.example/ https://b.example/"\n')
 
-    assert nix_settings().substituters == ["https://a.example/", "https://b.example/"]
+    assert nix_settings() == {"substituters": "https://a.example/ https://b.example/"}
+
+
+def test_a_toml_array_becomes_the_nix_conf_spelling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    write_config(
+        tmp_path, monkeypatch, '[nix]\nsubstituters = ["https://a.example/", "https://b.example/"]\nsandbox = false\n'
+    )
+
+    assert nix_settings() == {"substituters": "https://a.example/ https://b.example/", "sandbox": "false"}
 
 
 # ── nix_session engine selection ─────────────────────────────────────

@@ -7,11 +7,10 @@ Four layers, and the first one that names a value wins:
 3. ``$XDG_CONFIG_HOME/pynix/config.toml``
 4. the built-in default
 
-**pydantic-settings decides all four, and the parser decides none of them.**
-argparse says which options the caller actually named; those go into the model
-as keyword arguments, which is the init source, and the environment and the
-file are the sources below it. One ordering, in one library, stated once in
-:meth:`_TableBackedSettings.settings_customise_sources`.
+**``pynix._impl.settings`` decides all four, and the parser decides none of
+them.** argparse says which options the caller actually named; those win, and
+the environment and the file are the layers below them. The order is stated
+once, in :func:`pynix._impl.settings.pynix_defaults`.
 
 An option the caller did not name is simply **absent**, because every option is
 declared with ``argparse.SUPPRESS``. That is how "absent" is told apart from
@@ -30,8 +29,8 @@ commands, and ``[nix]`` holds the Nix settings::
     substituters = ["https://cache.nixos.org/", "https://mine.example/"]
     max-jobs = 8
 
-``[nix]`` reaches the same model as ``PYNIX_NIX_*``, so a list takes the
-``nix.conf`` spelling as well as a TOML array.
+A ``[nix]`` setting takes the ``nix.conf`` spelling as well as a TOML array,
+as ``PYNIX_NIX_*`` does.
 
 **The blocking file read is deliberate.** The read happens in
 :meth:`ConfiguredCommand.__init__`, which ``main()`` calls when it builds the
@@ -90,19 +89,17 @@ class ConfiguredCommand(PynixCommand):
     ``self.store`` always holds a value and no command has to ask where it came
     from.
 
-    **The whole precedence lives in pydantic-settings.** What the caller typed
-    goes in as keyword arguments, which is the init source; the environment and
-    the file are the sources below it. The parser's only job is to say which
-    options the caller named, and ``argparse.SUPPRESS`` is how it says so: an
-    option nobody named is not in *values* at all.
+    **The whole precedence lives in** :func:`pynix._impl.settings.pynix_defaults`.
+    What the caller typed wins; the environment and the file are the layers
+    below it. The parser's only job is to say which options the caller named,
+    and ``argparse.SUPPRESS`` is how it says so: an option nobody named is not
+    in *values* at all.
     """
 
     def __init__(self, **values: Any) -> None:
         super().__init__(**values)
         owned = _impl.settings.configured_fields(type(self))
-        named: dict[str, Any] = {
-            field: values[field] for fields in owned.values() for field in fields if field in values
-        }
+        named: dict[str, Any] = {field: values[field] for field in owned if field in values}
         #: The options the caller named on the command line. Neither an
         #: environment variable nor the configuration file puts a name in here,
         #: which is what makes this the right question for
@@ -115,10 +112,9 @@ class ConfiguredCommand(PynixCommand):
         #: Declared here, and not in the class body: an annotated name in the
         #: body is a command-line option, and `frozenset[str]` is not one.
         self.explicit_options: frozenset[str] = frozenset(named)
-        for model, fields in owned.items():
-            resolved = model(**{field: named[field] for field in fields if field in named})
-            for field in fields:
-                setattr(self, field, getattr(resolved, field))
+        resolved = _impl.settings.pynix_defaults(**named)
+        for field in owned:
+            setattr(self, field, resolved[field])
 
 
 # `--file`, `--flake` and `--attr` are not here. They mean the same thing in

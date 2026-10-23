@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 import anyio.to_thread
+import huggorm
 import structlog
 from anyio import Path as AnyioPath
 from huggorm.errors import NixError
@@ -64,7 +65,6 @@ if TYPE_CHECKING or BEARTYPING:
     # The protocol, and not one engine's class, for the reason
     # `nanopynix_helpers.build` gives. Issue #232.
     from nanopynix.protocols import AsyncValue as ValueProxy
-    from pynix._impl.settings import PynixNixSettings
 from pynix.target import (
     EvaluationTarget,
     EvaluationTargetError,
@@ -359,13 +359,13 @@ async def _build_target(
 
 
 async def _build_on_huggorm(
-    command: Build, target: EvaluationTarget, settings: PynixNixSettings
+    command: Build, target: EvaluationTarget, settings: dict[str, str]
 ) -> tuple[dict[str, str], int, dict[str, Any] | None]:
     monitor = MonitorState(started=time.monotonic(), print_build_logs=command.print_build_logs) if command.nom else None
     async with huggorm_build_session(
         command.store,
         eval_store_uri=command.eval_store,
-        settings=settings.to_worker_settings(explicit_only=True),
+        settings=settings,
         verbosity=command.verbosity,
         print_build_logs=command.print_build_logs,
         monitor=monitor,
@@ -534,10 +534,14 @@ async def run_build(command: Build) -> None:
 
     namespaced = _resolve_namespaced(command)
 
-    settings = _impl.settings.nix_settings(
-        substituters=command.substituters,
-        trusted_public_keys=command.trusted_public_keys,
-    )
+    try:
+        settings = _impl.settings.nix_settings(
+            huggorm.list_settings(),
+            substituters=command.substituters,
+            trusted_public_keys=command.trusted_public_keys,
+        )
+    except _impl.settings.SettingError as exc:
+        error_exit(str(exc))
 
     # Outside the session, so the error passes through its log forwarding:
     # --nom counts it in the last frame, and the message prints after that.
@@ -563,7 +567,7 @@ async def _build_in_session(
     target: EvaluationTarget,
     *,
     namespaced: bool,
-    settings: PynixNixSettings,
+    settings: dict[str, str],
 ) -> tuple[dict[str, str], int, dict[str, Any] | None]:
     copied: dict[str, Any] | None = None
     async with AsyncExitStack() as stack:
@@ -580,7 +584,7 @@ async def _build_in_session(
             session_kwargs["monitor"] = monitor
         nix = await stack.enter_async_context(
             nix_session(
-                settings=settings,
+                settings=nanopynix.NixSettings.model_validate(settings),
                 verbosity=command.verbosity,
                 print_build_logs=command.print_build_logs,
                 **session_kwargs,

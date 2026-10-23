@@ -40,7 +40,7 @@ from libpynix import (  # noqa: E402 -- see above; the name of a command on the 
     option_flags,
 )
 from pynix import Pynix  # noqa: E402 -- sys.path must be extended before pynix is importable
-from pynix._impl.settings import PynixDefaults  # noqa: E402 -- see above
+from pynix._impl.settings import DEFAULTS  # noqa: E402 -- see above
 
 
 def _render_type(tp: Any) -> str:
@@ -79,16 +79,12 @@ def _render_default_suffix(name: str, spec: Any, annotation: Any) -> str:
         if typing.get_origin(annotation) is list:
             return " (default: `[]`)"
         return " *(required)*"
-    if spec.configured:
-        # A configuration-backed option, whose value comes from the environment
-        # or the configuration file when the caller names no flag. The reference
-        # is checked in and gated, so it states the built-in default, which is
-        # what a reader with no configuration gets. Reading the model rather
-        # than a built command is what keeps this file the same on every
-        # machine.
-        default = PynixDefaults.model_fields[name].get_default(call_default_factory=False)
-    else:
-        default = None if spec.default is MISSING else spec.default
+    # A configuration-backed option takes its value from the environment or the
+    # configuration file when the caller names no flag. The reference is
+    # checked in and gated, so it states the built-in default, which is what a
+    # reader with no configuration gets. Reading `DEFAULTS` rather than a built
+    # command is what keeps this file the same on every machine.
+    default = DEFAULTS[name] if spec.configured else None if spec.default is MISSING else spec.default
     rendered = "None" if default is None else repr(default)
     return f" (default: `{rendered}`)"
 

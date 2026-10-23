@@ -7,12 +7,6 @@ Four layers, and the first one that names a value wins:
 3. ``$XDG_CONFIG_HOME/pynix/config.toml``
 4. the built-in default
 
-**pydantic-settings decides all four, and the parser decides none of them.** argparse
-parses the command line and says which options the caller actually named;
-those go into the model as keyword arguments, which is the init source, and
-the environment and the file are the sources below it. One ordering, in one
-library, stated once in :meth:`_TableBackedSettings.settings_customise_sources`.
-
 An option the caller did not name is absent from the namespace until
 :class:`~pynix._settings.ConfiguredCommand` resolves it, which is how "absent"
 is told apart from "explicitly false".
@@ -29,24 +23,14 @@ commands, and ``[nix]`` holds the Nix settings::
     substituters = ["https://cache.nixos.org/", "https://mine.example/"]
     max-jobs = 8
 
-``[nix]`` reaches the same model as ``PYNIX_NIX_*``, so a list takes the
-``nix.conf`` spelling as well as a TOML array.
+A Nix setting stays in the ``nix.conf`` spelling: a string, with a list
+joined by spaces. Nix parses it, so pynix keeps no model of the settings, and
+only checks that each name is one Nix knows.
 
 **The blocking file read is deliberate.** The read happens in
 :meth:`~pynix._settings.ConfiguredCommand.__init__`, which ``Pynix.parse()``
 calls, and ``main()`` calls ``parse()`` before it starts any event loop. There
 is no loop to block, and ``anyio.Path`` would have nowhere to run.
-
-**Why this is under ``pynix._impl`` and not beside the command base.**
-:class:`PynixNixSettings` inherits the whole Nix settings model, so the class
-statement below imports ``pydantic_settings`` and builds a model of about 200
-fields. Building the parser loads every subcommand module on every start,
-``pynix --help`` and each keypress of a shell completion included, and none of
-those resolves a setting. Issue #123 measured ``pynix._settings`` at 334.3 ms,
-of which ``pydantic_settings`` alone was 123.6 ms.
-
-``ConfiguredCommand`` reaches these names when it builds a command, which is
-after the parser decided that a command runs. ``pynix._impl`` says how.
 """
 
 from __future__ import annotations
@@ -54,23 +38,20 @@ from __future__ import annotations
 import os
 import tomllib
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, cast, override
+from typing import TYPE_CHECKING, Any, Final, cast
 
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
-
-from nanopynix import NixSettingsEnv, PrefixedEnvSettingsSource
 from nanopynix._typechecking import BEARTYPING
 
 if TYPE_CHECKING or BEARTYPING:
-    from pydantic.fields import FieldInfo
+    from collections.abc import Collection
 
     from libpynix import Command
 
 
-#: What every ``--store`` used to default to, once per module.
+#: What every ``--store`` defaults to.
 DEFAULT_STORE = "auto"
 
-#: The table of the configuration file that each settings model reads.
+#: The table of the configuration file that each layer reads.
 DEFAULTS_TABLE = "defaults"
 
 NIX_TABLE = "nix"
@@ -78,6 +59,27 @@ NIX_TABLE = "nix"
 #: Names another configuration file, for a test and for a user who keeps more
 #: than one profile.
 CONFIG_PATH_VARIABLE = "PYNIX_CONFIG"
+
+#: The prefix of a ``[defaults]`` option in the environment.
+DEFAULTS_PREFIX: Final = "PYNIX_"
+
+#: The prefix of a Nix setting in the environment.
+NIX_PREFIX: Final = "PYNIX_NIX_"
+
+#: The ``pynix`` options that repeat across the commands, and the built-in
+#: default of each. These are not Nix settings: ``--store`` names which store
+#: a command opens, and Nix has a global of the same name that says something
+#: else.
+DEFAULTS: Final[dict[str, str | bool | None]] = {
+    "store": DEFAULT_STORE,
+    "eval_store": None,
+    "verbosity": None,
+    "print_build_logs": False,
+}
+
+# The spellings of true and false that the environment takes.
+_TRUE = frozenset({"1", "true", "yes", "on"})
+_FALSE = frozenset({"0", "false", "no", "off"})
 
 
 def config_path() -> Path:
@@ -91,6 +93,10 @@ def config_path() -> Path:
 
 class ConfigFileError(Exception):
     """The configuration file exists and cannot be read."""
+
+
+class SettingError(ValueError):
+    """A layer names an option or a Nix setting that does not exist, or a value of the wrong kind."""
 
 
 def _read_table(table: str) -> dict[str, Any]:
@@ -121,188 +127,96 @@ def _read_table(table: str) -> dict[str, Any]:
     return cast("dict[str, Any]", section)
 
 
-class _ConfigFileSource(PydanticBaseSettingsSource):
-    """A settings source over one table of the configuration file.
+def _option(name: str, value: object, where: str) -> str | bool | None:
+    """*value* as the kind of the option *name*, or a `SettingError` that names *where*."""
+    if isinstance(DEFAULTS[name], bool):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.lower() in _TRUE | _FALSE:
+            return value.lower() in _TRUE
+        raise SettingError(f"{where} must be true or false, not {value!r}")
+    if not isinstance(value, str):
+        raise SettingError(f"{where} must be a string, not {value!r}")
+    return value
 
-    ``TomlConfigSettingsSource`` reads a whole document into one model, and
-    this file holds two models in two tables. This reads the table it is told
-    to, and leaves the key spelling to the model: every field carries a dashed
-    alias, and ``populate_by_name`` accepts the Python name beside it.
+
+def pynix_defaults(**named: Any) -> dict[str, str | bool | None]:
+    """Every option in :data:`DEFAULTS`, resolved: *named*, then the environment, then the file."""
+    table = _read_table(DEFAULTS_TABLE)
+    unknown = sorted(set(table) - {name.replace("_", "-") for name in DEFAULTS})
+    if unknown:
+        raise SettingError(f"[{DEFAULTS_TABLE}] in {config_path()} names no pynix option: {', '.join(unknown)}")
+    resolved: dict[str, str | bool | None] = {}
+    for name, default in DEFAULTS.items():
+        variable = f"{DEFAULTS_PREFIX}{name.upper()}"
+        key = name.replace("_", "-")
+        if name in named:
+            resolved[name] = named[name]
+        elif variable in os.environ:
+            resolved[name] = _option(name, os.environ[variable], variable)
+        elif key in table:
+            resolved[name] = _option(name, table[key], f"{key} in [{DEFAULTS_TABLE}]")
+        else:
+            resolved[name] = default
+    return resolved
+
+
+def _nix_conf_value(value: object, where: str) -> str:
+    """A TOML value in the spelling ``nix.conf`` gives it."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str | int | float):
+        return str(value)
+    if isinstance(value, list) and all(isinstance(item, str | int | float) for item in cast("list[object]", value)):
+        return " ".join(str(item) for item in cast("list[object]", value))
+    raise SettingError(f"{where} must be a string, a number, a boolean or a list of strings, not {value!r}")
+
+
+def nix_settings(known: Collection[str], **flags: str | None) -> dict[str, str]:
+    """The Nix settings that a command names, in ``nix.conf`` spelling.
+
+    A flag wins, then ``PYNIX_NIX_<SETTING>``, then ``[nix]``. A ``None`` flag
+    is one the caller did not give. A setting that no layer names is absent,
+    so what ``nix.conf`` says stands, as it does for ``nix build``.
+
+    *known* is every setting name Nix has, ``huggorm.list_settings()``. A name
+    outside it raises, because a typo that pynix passes on is a setting that a
+    user believes is applied.
     """
-
-    def __init__(self, settings_cls: type[BaseSettings], table: str) -> None:
-        super().__init__(settings_cls)
-        self._table = table
-
-    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
-        raise NotImplementedError(f"{type(self).__name__} reads the whole table, not one field")
-
-    def __call__(self) -> dict[str, Any]:
-        return _read_table(self._table)
-
-
-class _TableBackedSettings(BaseSettings):
-    """A settings model whose lowest layer is one table of the configuration file.
-
-    Both models below state the precedence by inheriting this, rather than each
-    repeating the source order. The order is the whole contract of this module,
-    so it exists once.
-    """
-
-    #: Which table of the configuration file this model reads.
-    config_table: ClassVar[str]
-
-    @classmethod
-    @override
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        """What a caller passed, then the environment, then the file.
-
-        The built-in default of each field is last without being listed:
-        pydantic uses it when no source names the field.
-
-        ``PrefixedEnvSettingsSource`` replaces the environment source that
-        pydantic-settings builds. Every model here gives its fields a dashed
-        alias, and pydantic-settings reads an alias as a second, unprefixed
-        environment name. ``store`` is the one that matters most in this
-        model: it is a common word, and it names which store a command opens.
-        The class of nanopynix carries the measurement.
-        """
-        return (
-            init_settings,
-            PrefixedEnvSettingsSource(settings_cls),
-            _ConfigFileSource(settings_cls, cls.config_table),
-        )
+    settings: dict[str, str] = {}
+    sources: dict[str, str] = {}
+    for key, value in _read_table(NIX_TABLE).items():
+        settings[key] = _nix_conf_value(value, f"{key} in [{NIX_TABLE}]")
+        sources[key] = f"[{NIX_TABLE}] in {config_path()}"
+    for variable, value in os.environ.items():
+        if variable.startswith(NIX_PREFIX):
+            key = variable.removeprefix(NIX_PREFIX).lower().replace("_", "-")
+            settings[key] = value
+            sources[key] = variable
+    for name, value in flags.items():
+        if value is not None:
+            key = name.replace("_", "-")
+            settings[key] = value
+            sources[key] = f"--{key}"
+    unknown = sorted(f"{key} ({sources[key]})" for key in settings if key not in known)
+    if unknown:
+        raise SettingError(f"no such Nix setting: {', '.join(unknown)}")
+    return settings
 
 
-class PynixDefaults(_TableBackedSettings):
-    """The ``pynix`` options that repeat across the commands.
+def configured_fields(command: type[Command]) -> list[str]:
+    """The options of *command* that :func:`~pynix._settings.option` declared.
 
-    These are not Nix settings. ``--store`` names which store a command opens,
-    and Nix has a global of the same name that says something else, so this
-    stays a separate model rather than another field of :class:`NixSettingsEnv`.
-    """
-
-    model_config = SettingsConfigDict(
-        env_prefix="PYNIX_",
-        alias_generator=lambda name: name.replace("_", "-"),
-        populate_by_name=True,
-        extra="forbid",
-    )
-    config_table: ClassVar[str] = DEFAULTS_TABLE
-
-    store: str = DEFAULT_STORE
-    eval_store: str | None = None
-    verbosity: str | None = None
-    print_build_logs: bool = False
-
-
-class PynixNixSettings(NixSettingsEnv, _TableBackedSettings):
-    """The Nix settings of a ``pynix`` command, from ``[nix]`` and ``PYNIX_NIX_*``.
-
-    **This class states its own source order, although both of its bases state
-    one.** ``NixSettingsEnv`` comes first in the method resolution order, and
-    its order names no configuration file, so inheriting it dropped the
-    ``[nix]`` table. Three tests catch that, and
-    ``test_every_table_backed_model_still_reads_its_table`` is the one that
-    names the reason rather than a symptom.
-
-    It adds no field, and it holds no default. ``pynix`` used to give
-    ``substituters`` and ``trusted-public-keys`` a default of its own, and a
-    session sends every setting that is not ``None``, so a host that named a
-    private cache in ``nix.conf`` lost that cache to ``pynix build`` with no
-    message. A session now sends only what a caller named, so a default here
-    could never take effect again -- and a default that cannot take effect is a
-    false statement about the program.
-
-    ``nix build`` carries no such default either. What ``nix.conf`` says stands,
-    and this model speaks only when the file, the environment, or a flag names a
-    setting.
-    """
-
-    # Taken from the parent, and derived rather than written out again.
-    # pydantic merges `model_config` over the bases in declaration order, so
-    # `_TableBackedSettings` -- which carries only the `BaseSettings` defaults
-    # -- resets whatever the parent set. Measured without this line:
-    # `env_prefix` became "", so no `PYNIX_NIX_*` variable was read at all and
-    # the environment lost to the configuration file with no message.
-    model_config = SettingsConfigDict(**NixSettingsEnv.model_config)
-    config_table: ClassVar[str] = NIX_TABLE
-
-    @classmethod
-    @override
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        """The order of ``_TableBackedSettings``, and not the one of ``NixSettingsEnv``.
-
-        ``super(NixSettingsEnv, cls)`` starts the search after the base that
-        wins by default, so it reaches ``_TableBackedSettings`` with ``cls``
-        still bound to this class. ``cls.config_table`` is what needs that
-        binding: the base itself declares the name and holds no value for it.
-        """
-        return super(NixSettingsEnv, cls).settings_customise_sources(
-            settings_cls,
-            init_settings,
-            env_settings,
-            dotenv_settings,
-            file_secret_settings,
-        )
-
-
-#: The models an option resolves through, in priority order. The first model
-#: that declares a name owns it, and that matters for exactly one name:
-#: ``store``. :class:`PynixDefaults` means the store a command opens, and
-#: :class:`PynixNixSettings` inherits Nix's unrelated global of the same name.
-#: A command's ``--store`` is always the first. Without first-wins ownership the
-#: second model would resolve ``self.store`` a second time, to ``None``.
-_MODELS: tuple[type[BaseSettings], ...] = (PynixDefaults, PynixNixSettings)
-
-
-def nix_settings(**overrides: Any) -> PynixNixSettings:
-    """The resolved ``[nix]``, with the options a command was given on top.
-
-    A ``None`` override is dropped rather than applied, so an option the caller
-    left alone keeps whatever the environment or the file said. This is the
-    whole of the ordering: what reaches ``overrides`` is what a flag named.
-
-    A Nix setting that takes a list stays a plain flag of one string, and does
-    not go through :func:`option`. The flag spells such a setting the way
-    ``nix.conf`` does, in one space-separated string, and the model splits it.
-    Going through :func:`option` would make the resolved list reach the
-    attribute, where the command declares a string.
-    """
-    named = {key: value for key, value in overrides.items() if value is not None}
-    return PynixNixSettings(**named)
-
-
-def configured_fields(command: type[Command]) -> dict[type[BaseSettings], list[str]]:
-    """The options of *command* that :func:`option` declared, grouped by owner.
-
-    The declaration is the whole test: an option that :func:`pynix._settings.option`
-    declared carries ``configured``, and every other option is an ordinary flag
-    with an ordinary default. Reading the declaration keeps a name that a model
+    The declaration is the whole test: an option that ``option`` declared
+    carries ``configured``, and every other option is an ordinary flag with an
+    ordinary default. Reading the declaration keeps a name that a Nix setting
     happens to share, such as ``substituters``, out of this.
     """
-    owned: dict[type[BaseSettings], list[str]] = {}
+    fields: list[str] = []
     for field, spec in command.specs.items():
         if not spec.configured:
             continue
-        for model in _MODELS:
-            if field in model.model_fields:
-                owned.setdefault(model, []).append(field)
-                break
-        else:
-            raise TypeError(f"{command.__name__}.{field} uses option(), and no settings model declares it")
-    return owned
+        if field not in DEFAULTS:
+            raise TypeError(f"{command.__name__}.{field} uses option(), and DEFAULTS does not name it")
+        fields.append(field)
+    return fields

@@ -31,11 +31,10 @@ class Build(ConfiguredCommand):
 
     eval_store: str | None = eval_store_option()
 
-    # None, not a literal list: an absent flag leaves the value to `[nix]`, to
-    # `PYNIX_NIX_*`, and then to the built-in defaults, in that order. These
-    # used to be parser defaults passed straight into the settings model as
-    # keyword arguments, and pydantic-settings ranks the init source above the
-    # environment -- so `PYNIX_NIX_SUBSTITUTERS` never once took effect.
+    # None, not a literal list: an absent flag leaves the value to
+    # `PYNIX_NIX_*`, then to `[nix]`, then to `nix.conf`. A parser default
+    # would rank above the environment, and `PYNIX_NIX_SUBSTITUTERS` would
+    # never take effect.
     substituters: str | None = opt(None, help="Space-separated substituter URLs.")
 
     trusted_public_keys: str | None = opt(None, help="Space-separated substituter public keys.")
