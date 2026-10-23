@@ -306,7 +306,9 @@ async def test_repl_load_command_uses_repl_load_file(monkeypatch: Any) -> None:
     assert output == [_HELP, "Added 1 variables: answer"]
 
 
-async def test_repl_loads_file_target_into_initial_scope(monkeypatch: Any) -> None:
+async def test_repl_loads_file_target_into_initial_scope(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "default.nix").write_text("{ answer = 42; }\n")
+    monkeypatch.chdir(tmp_path)
     output: list[str] = []
     monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
     repl = _Repl()
