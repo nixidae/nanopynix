@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Final, Protocol
+from typing import Any, Final, Protocol, runtime_checkable
 
 from rich.text import Text
 
@@ -50,6 +50,7 @@ _HASH_PREFIX = re.compile(r"^[0-9a-z]{32}-")
 _LOG_LINE_RESULTS: Final = frozenset({ResultType.BUILD_LOG_LINE, ResultType.POST_BUILD_LOG_LINE})
 
 
+@runtime_checkable
 class MonitorEvent(Protocol):
     """One log event, in the shape of ``internal-json``: ``args`` holds the
     fields of a ``start``, a ``stop`` or a ``result`` in Nix's order."""
