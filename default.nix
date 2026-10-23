@@ -244,9 +244,14 @@ let
             # no second hand-written dependency list to fall out of date.
             # `huggorm` is the library over the bindings, for a consumer
             # that moves off nanopynix one module at a time.
+            # `huggorm-generated` carries the bindings' stubs, for a type
+            # gate's venv, and `argparse-manpage` renders an application's
+            # manual pages (nix/mk-app.nix).
             nixpkgsRoots = [
               final.huggorm-bindings
               final.huggorm
+              final.huggorm-generated
+              python.pkgs.argparse-manpage
             ]
             ++ ps.nixpkgsRootsFor {
               inherit python;
@@ -263,6 +268,8 @@ let
               exclude = [
                 "huggorm-bindings"
                 "huggorm"
+                "huggorm-generated"
+                "argparse-manpage"
               ];
             };
             overlay = lib.composeExtensions final.pyPackages.built overlay;
@@ -365,7 +372,6 @@ let
         # `packages` filter drops it, which is what we want.
         checks = final.callPackage ./nix/checks.nix {
           inherit completionSpike;
-          inherit (final) huggorm-generated huggorm-bindings;
         };
 
         # What the suite needs on PATH, shared by the packaged runner and

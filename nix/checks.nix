@@ -38,10 +38,6 @@
   nix,
   man,
   completionSpike,
-  # Carries `huggorm_bindings-stubs`, which the type gate reads.
-  huggorm-generated,
-  # The runtime package those stubs fall back to.
-  huggorm-bindings,
 }:
 let
   # Only the trees the gates read. An allowlist, and not the shared denylist
@@ -133,6 +129,10 @@ let
     # `pygls`, `lsprotocol`, `jsonschema` and `pytest-lsp`.
     pynix-lsp = [ "test" ];
     pytest-agent = [ ];
+    # `huggorm_bindings-stubs`, the engine's PEP 561 stubs. They are
+    # `partial`, so pyright reads `huggorm_bindings` beside them for what no
+    # stub describes, such as the words of `words.py`.
+    huggorm-generated = [ ];
     # The `test` extra, because pyright reads grpclib-transports' own tests
     # and benchmarks and they import `greeter`, `asyncssh` and `rich`.
     grpclib-transports = [ "test" ];
@@ -241,21 +241,10 @@ in
   # command covers the same files as treefmt's python formatter, and no more.
   format = mkCheck "format" [ ruff ] "ruff format --no-cache --check .";
 
-  # The engine's PEP 561 stubs come from `huggorm-generated`, which the env
-  # does not install, and pyright reads `PYTHONPATH` through the
-  # interpreter's `sys.path`.
-  #
-  # The runtime package goes on the path as well. The stubs are `partial`:
-  # a vocabulary such as `RegistryType` is plain Python in `words.py`, which
-  # no stub describes, and without it every word a stub names is Unknown.
-  types =
-    let
-      sitePackages = drv: "${drv}/${drv.pythonModule.sitePackages}";
-    in
-    mkCheck "types" [
-      pyright
-      pythonEnv
-    ] "PYTHONPATH=${sitePackages huggorm-generated}:${sitePackages huggorm-bindings} pyright --pythonpath ${pythonEnv}/bin/python";
+  types = mkCheck "types" [
+    pyright
+    pythonEnv
+  ] "pyright --pythonpath ${pythonEnv}/bin/python";
 
   # `scripts/` was covered by nothing. `writeShellApplication` runs shellcheck
   # over the script it builds, which covers the test runner of

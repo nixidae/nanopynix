@@ -33,9 +33,9 @@ and plain pages in a shell. `_sanitize` strips every escape sequence, and
 guards the text shape that wrapping produces out of a quoted word: a line
 that starts with an apostrophe.
 
-**``argparse-manpage`` rides on ``PYTHONPATH`` and stays out of the venv.**
-It is a build-time input only. The closure of the application does not grow,
-and ``libpynix`` keeps its one dependency.
+**``argparse-manpage`` is in a build-time venv only** (``manVenv`` in
+``nix/mk-app.nix``). The closure of the application does not grow, and
+``libpynix`` keeps its one dependency.
 """
 
 from __future__ import annotations
@@ -47,9 +47,9 @@ import sys
 from typing import TYPE_CHECKING
 
 # pyright: reportMissingImports=false
-# argparse-manpage is a build-time input on PYTHONPATH, set by nix/mk-app.nix.
-# It is in no venv, so neither pyright's pythonEnv nor the dev shell resolves
-# it. The build fails loudly without it, which is the check that matters.
+# argparse-manpage is only in the build-time venv of nix/mk-app.nix, so
+# neither pyright's pythonEnv nor the dev shell resolves it. The build fails
+# loudly without it, which is the check that matters.
 # pyright: reportUnknownVariableType=false
 # argparse-manpage ships no type information, so the `Manpage` import binding
 # is unknown. Scoped to this file, which is build glue and imports nothing

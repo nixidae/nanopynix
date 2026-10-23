@@ -19,7 +19,6 @@
   makeWrapper,
   cacert,
   pyprojectUtil,
-  python3Packages,
 }:
 
 {
@@ -58,6 +57,10 @@
 
 let
   venv = pythonSet.mkVirtualEnv "${name}-env" { ${name} = [ ]; };
+  manVenv = pythonSet.mkVirtualEnv "${name}-manpage-env" {
+    ${name} = [ ];
+    argparse-manpage = [ ];
+  };
 
   app = pyprojectUtil.mkApplication { inherit venv package; };
 
@@ -84,12 +87,9 @@ let
 
   # **Rendered by argparse-manpage, from the parser of the program.** A manual
   # page reads the command tree, so unlike the completion scripts above this
-  # imports the program out of the venv -- the same interpreter the
-  # application itself runs under. `argparse-manpage` is not in the venv; it
-  # rides on `PYTHONPATH`, so the closure of the application does not grow.
-  # `python3Packages.python` is the interpreter that package was built
-  # against. Its `sitePackages` matches the venv interpreter only while both
-  # track the same `pkgs.python3`; a skew fails loudly at the import below.
+  # imports the program. `manVenv` is the application's venv plus
+  # `argparse-manpage`, from the same set, so the closure of the application
+  # does not grow.
   # The snippet passes quoted, not through `escapeShellArg`.
   # `escapeShellArg` rebuilds the string with `match`, and the rebuilt
   # string no longer references the file. The file then never becomes
@@ -102,7 +102,7 @@ let
         ];
       }
       ''
-        PYTHONPATH=${python3Packages.argparse-manpage}/${python3Packages.python.sitePackages} ${venv}/bin/python ${./render-manpages.py} "$PWD/rendered"${
+        ${manVenv}/bin/python ${./render-manpages.py} "$PWD/rendered"${
           lib.optionalString (manExamples != null) " '${manExamples}'"
         }
         count=$(ls rendered/*.1 | wc -l)
