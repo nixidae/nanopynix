@@ -328,6 +328,30 @@ Examples:
 | `--bin` | `str or None` | Run this program from the directory of the resolved program, instead of the resolved program. A name that is not there fails with the names that are. (default: `None`) |
 | `args` | `list[str]` | Arguments for the program, after --. (default: `[]`) |
 
+### `pynix sbom`
+
+Build a package, and print a Software Bill of Materials for it
+
+The SBOM lists the runtime closure of the default outputs, with the
+license, source, hashes and patches of each package. --buildtime adds
+the build closure. The JSON goes to stdout.
+
+Examples:
+  pynix sbom --flake nixpkgs#hello
+  pynix sbom --file '<nixpkgs>' --attr hello
+  pynix sbom --flake .#default --buildtime
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
+| `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
+| `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
+| `--store` | `str` | Store URI to build with. (default: `'auto'`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
+| `--print-build-logs` | `bool` | Print build log lines to stderr. (default: `False`) |
+| `--format` | `Literal[cyclonedx]` | CycloneDX 1.7 JSON. (default: `'cyclonedx'`) |
+| `--buildtime` | `bool` | Also list the build closure: compilers, build tools and sources. (default: `False`) |
+
 ### `pynix search`
 
 Search the NixOS options and the packages of one target.

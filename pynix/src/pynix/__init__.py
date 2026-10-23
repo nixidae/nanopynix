@@ -21,6 +21,7 @@ from pynix.path_info import PathInfo
 from pynix.registry import Registry
 from pynix.repl import Repl
 from pynix.run import Run
+from pynix.sbom import Sbom
 from pynix.search import Search
 from pynix.store import Store
 from pynix.why_depends import WhyDepends
@@ -55,6 +56,7 @@ Pynix = group(
         Registry,
         Repl,
         Run,
+        Sbom,
         Search,
         Store,
         WhyDepends,

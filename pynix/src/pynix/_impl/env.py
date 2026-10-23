@@ -78,7 +78,7 @@ async def _optional(value: AsyncValue, name: str) -> object:
     return await value.attr(name).to_python() if await value.has_attr(name) else None
 
 
-async def _output_paths(value: AsyncValue) -> list[str]:
+async def output_paths(value: AsyncValue) -> list[str]:
     """Build the default outputs of the derivation *value*, and return their paths."""
     if await _optional(value, "type") != "derivation":
         raise EvaluationTargetError("value is not a derivation")
@@ -112,7 +112,7 @@ async def prepare_shell(command: Shell) -> ShellEnvironment:
             roots: list[str] = []
             for target in _targets(command):
                 value = await evaluate_target(target, session, auto_call_file=True, attr_search=base_attr_search())
-                roots.extend(sorted(await _output_paths(value), key=_store_path_order))
+                roots.extend(sorted(await output_paths(value), key=_store_path_order))
             to_disk = await physical_path_mapper(store)
 
             async def read_propagated(path: str) -> list[str]:
