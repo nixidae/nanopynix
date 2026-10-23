@@ -581,8 +581,8 @@ Add a file or directory to a Nix store
 | --- | --- | --- |
 | `path` | `str` | Filesystem path to add. *(required)* |
 | `--name` | `str or None` | Override the store path name component. (default: `None`) |
-| `--mode` | `str` | Content-addressing method: nar, flat, or git. (default: `'nar'`) |
-| `--hash-algo` | `str` | Hash algorithm to use. (default: `'sha256'`) |
+| `--mode` | `Literal[nar, flat, git]` | Content-addressing method. (default: `'nar'`) |
+| `--hash-algo` | `Literal[md5, sha1, sha256, sha512, blake3]` | Hash algorithm to use. (default: `'sha256'`) |
 | `--dry-run` | `bool` | Compute the store path without adding the content. (default: `False`) |
 | `--store` | `str` | Store URI to use. (default: `'auto'`) |
 
@@ -594,7 +594,7 @@ Add a single file to a Nix store
 | --- | --- | --- |
 | `path` | `str` | Filesystem path to add. *(required)* |
 | `--name` | `str or None` | Override the store path name component. (default: `None`) |
-| `--hash-algo` | `str` | Hash algorithm to use. (default: `'sha256'`) |
+| `--hash-algo` | `Literal[md5, sha1, sha256, sha512, blake3]` | Hash algorithm to use. (default: `'sha256'`) |
 | `--dry-run` | `bool` | Compute the store path without adding the content. (default: `False`) |
 | `--store` | `str` | Store URI to use. (default: `'auto'`) |
 
@@ -606,7 +606,7 @@ Add a path to a Nix store using NAR ingestion
 | --- | --- | --- |
 | `path` | `str` | Filesystem path to add. *(required)* |
 | `--name` | `str or None` | Override the store path name component. (default: `None`) |
-| `--hash-algo` | `str` | Hash algorithm to use. (default: `'sha256'`) |
+| `--hash-algo` | `Literal[md5, sha1, sha256, sha512, blake3]` | Hash algorithm to use. (default: `'sha256'`) |
 | `--dry-run` | `bool` | Compute the store path without adding the content. (default: `False`) |
 | `--store` | `str` | Store URI to use. (default: `'auto'`) |
 

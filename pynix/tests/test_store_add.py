@@ -3,14 +3,13 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+import pytest
 from nanopynix_proto.nix.store import AddToStoreRequest, ComputeStorePathRequest
 
 from pynix import parse
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
     from nanopynix_testing.nix_environment import NixTestEnvironment
 
@@ -95,3 +94,12 @@ async def test_pynix_store_add_dry_run_does_not_import(
 
     assert data["path"].startswith("/nix/store/")
     assert not shared_nix_environment.physical_path(data["path"]).exists()
+
+
+@pytest.mark.parametrize("flag", ["--mode", "--hash-algo"])
+def test_pynix_store_add_refuses_an_unknown_word(flag: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        parse(["store", "add", "message.txt", flag, "bogus"])
+
+    assert exc_info.value.code == 2
+    assert "invalid choice: 'bogus'" in capsys.readouterr().err

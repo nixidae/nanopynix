@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import override
+from typing import Literal, override
 
 from libpynix import opt, pos
 from pynix import _impl
@@ -276,9 +276,9 @@ class Add(ConfiguredCommand):
 
     name: str | None = opt(None, short="n", help="Override the store path name component.")
 
-    mode: str = opt("nar", help="Content-addressing method: nar, flat, or git.")
+    mode: Literal["nar", "flat", "git"] = opt("nar", help="Content-addressing method.")
 
-    hash_algo: str = opt("sha256", help="Hash algorithm to use.")
+    hash_algo: Literal["md5", "sha1", "sha256", "sha512", "blake3"] = opt("sha256", help="Hash algorithm to use.")
 
     dry_run: bool = opt(False, help="Compute the store path without adding the content.")
 
@@ -296,7 +296,7 @@ class AddFile(ConfiguredCommand):
 
     name: str | None = opt(None, short="n", help="Override the store path name component.")
 
-    hash_algo: str = opt("sha256", help="Hash algorithm to use.")
+    hash_algo: Literal["md5", "sha1", "sha256", "sha512", "blake3"] = opt("sha256", help="Hash algorithm to use.")
 
     dry_run: bool = opt(False, help="Compute the store path without adding the content.")
 
@@ -314,7 +314,7 @@ class AddPath(ConfiguredCommand):
 
     name: str | None = opt(None, short="n", help="Override the store path name component.")
 
-    hash_algo: str = opt("sha256", help="Hash algorithm to use.")
+    hash_algo: Literal["md5", "sha1", "sha256", "sha512", "blake3"] = opt("sha256", help="Hash algorithm to use.")
 
     dry_run: bool = opt(False, help="Compute the store path without adding the content.")
 
