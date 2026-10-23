@@ -19,6 +19,7 @@ from pynix.log import Log
 from pynix.path_info import PathInfo
 from pynix.registry import Registry
 from pynix.repl import Repl
+from pynix.run import Run
 from pynix.search import Search
 from pynix.store import Store
 from pynix.why_depends import WhyDepends
@@ -51,6 +52,7 @@ Pynix = group(
         PrintDevEnv,
         Registry,
         Repl,
+        Run,
         Search,
         Store,
         WhyDepends,

@@ -242,7 +242,7 @@ async def _read_dev_env(
 
     # `get-env.sh` writes to whichever output it is given, so take the first
     # output that has anything in it. develop.cc:303 does the same.
-    to_disk = await _physical_path_mapper(build_store)
+    to_disk = await physical_path_mapper(build_store)
     for path in await eval_store.query_derivation_outputs(shell_drv):
         candidate = AnyioPath(to_disk(path))
         if await candidate.is_file() and (await candidate.stat()).st_size:
@@ -327,7 +327,7 @@ async def _nixpkgs_bash(
     if any(not result.success for result in results):
         return None
 
-    to_disk = await _physical_path_mapper(build_store)
+    to_disk = await physical_path_mapper(build_store)
     for output in await eval_store.query_derivation_outputs(drv_path):
         candidate = f"{output}/bin/bash"
         if await AnyioPath(to_disk(candidate)).is_file():
@@ -346,7 +346,7 @@ def _fallback_shell() -> InteractiveShell:
     return InteractiveShell(path=shutil.which("bash") or "bash", from_nixpkgs=False, exec_prefix=[])
 
 
-async def _physical_path_mapper(store: AsyncStore) -> Callable[[str], str]:
+async def physical_path_mapper(store: AsyncStore) -> Callable[[str], str]:
     """Return a function that maps a store path to where its bytes really are.
 
     A store opened with a root reports logical ``/nix/store/...`` paths while

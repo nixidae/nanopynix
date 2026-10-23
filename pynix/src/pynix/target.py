@@ -301,12 +301,7 @@ def repl_attr_search() -> AttrPathSearch:
 
 
 def app_attr_search() -> AttrPathSearch:
-    """The pair of `nix run` and `nix bundle`, from `src/nix/run.cc`.
-
-    No command uses this yet. It is here because `run` is issue #84, and the
-    table belongs in one place rather than beside the command that arrives
-    last.
-    """
+    """The pair of `nix run` and `nix bundle`, from `src/nix/run.cc`."""
     system = _eval_system()
     base = base_attr_search()
     return AttrPathSearch(
@@ -415,7 +410,27 @@ async def evaluate_target_locked[ValueT: AsyncValue](
     ``InstallableAttrPath`` for a ``--file`` target, and that class applies no
     prefix: `parseInstallables` hands it the raw path.
     """
+    value, locked, _path = await evaluate_target_selected(
+        target, session, auto_call_file=auto_call_file, attr_search=attr_search
+    )
+    return value, locked
+
+
+async def evaluate_target_selected[ValueT: AsyncValue](
+    target: EvaluationTarget,
+    session: AsyncEvalSession[ValueT],
+    *,
+    auto_call_file: bool = False,
+    attr_search: AttrPathSearch | None = None,
+) -> tuple[ValueT, AsyncLockedFlake | None, str]:
+    """:func:`evaluate_target_locked`, and also the attribute path it selected.
+
+    The path is the candidate of *attr_search* that resolved, with ``--attr``
+    after it. ``pynix run`` needs it: ``InstallableValue::toApp`` expects an
+    app under ``apps`` and a derivation anywhere else.
+    """
     target.validate(required=True)
+    selected = ""
     locked: AsyncLockedFlake | None = None
     if target.file is not None:
         reference = await resolve_file_reference(target.file)
@@ -432,6 +447,7 @@ async def evaluate_target_locked[ValueT: AsyncValue](
             value = await value.auto_call()
         if reference.fragment:
             value = await select_attr(value, reference.fragment)
+            selected = reference.fragment
     else:
         if target.flake is None:
             raise EvaluationTargetError("either --file or --flake is required")
@@ -444,13 +460,15 @@ async def evaluate_target_locked[ValueT: AsyncValue](
         # #228 measured what skipping it accepted.
         value = cast("ValueT", await flake_outputs(await locked.eval()))
         if attr_search is not None:
-            value, _found = await select_flake_attr(value, attr_search, flake_attr or None, flake_ref=ref)
+            value, selected = await select_flake_attr(value, attr_search, flake_attr or None, flake_ref=ref)
         elif flake_attr:
             value = await select_attr(value, flake_attr)
+            selected = flake_attr
 
     if target.attr:
         value = await select_attr(value, target.attr)
-    return value, locked
+        selected = f"{selected}.{target.attr}" if selected else target.attr
+    return value, locked, selected
 
 
 #: What the module system stamps on the result of `nixosSystem` and of

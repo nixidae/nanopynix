@@ -73,7 +73,7 @@ if TYPE_CHECKING or BEARTYPING:
 #: and importing it costs 101 ms that a command which only lists an option must
 #: not pay. So a command module names the one it wants and
 #: :func:`_flake_search` resolves the name inside the completion.
-type FlakeSearch = Literal["base", "dev-shell", "repl", "exact"]
+type FlakeSearch = Literal["base", "dev-shell", "repl", "app", "exact"]
 
 #: The scheme that an indirect flake reference carries, and that a caller omits.
 _FLAKE_SCHEME = "flake:"
@@ -370,7 +370,12 @@ def _flake_search(name: FlakeSearch) -> AttrPathSearch:
     # Imported here for the reason `_names` gives.
     from nanopynix_helpers import AttrPathSearch  # noqa: PLC0415 -- see `_names`
 
-    from pynix.target import base_attr_search, dev_shell_attr_search, repl_attr_search  # noqa: PLC0415 -- see `_names`
+    from pynix.target import (  # noqa: PLC0415 -- see `_names`
+        app_attr_search,
+        base_attr_search,
+        dev_shell_attr_search,
+        repl_attr_search,
+    )
 
     if name == "base":
         return base_attr_search()
@@ -378,6 +383,8 @@ def _flake_search(name: FlakeSearch) -> AttrPathSearch:
         return dev_shell_attr_search()
     if name == "repl":
         return repl_attr_search()
+    if name == "app":
+        return app_attr_search()
     return AttrPathSearch()
 
 
