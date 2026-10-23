@@ -29,7 +29,7 @@ if TYPE_CHECKING or BEARTYPING:
 
     from huggorm import AsyncStore
 
-    from nanopynix.models import JsonValue
+    from pynix._evaluate import JsonValue
     from pynix._impl._sbom_model import Inventory
     from pynix.sbom import Sbom
 

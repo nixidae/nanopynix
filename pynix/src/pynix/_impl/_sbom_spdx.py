@@ -13,7 +13,7 @@ from nanopynix._typechecking import BEARTYPING
 from pynix._impl._sbom_model import sri_digest
 
 if TYPE_CHECKING or BEARTYPING:
-    from nanopynix.models import JsonValue
+    from pynix._evaluate import JsonValue
     from pynix._impl._sbom_model import Inventory, Record
 
 SPEC_VERSION = "SPDX-2.3"

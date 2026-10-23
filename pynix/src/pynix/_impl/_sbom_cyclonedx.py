@@ -15,7 +15,7 @@ from pynix._impl._sbom_model import sri_digest
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import Mapping
 
-    from nanopynix.models import JsonValue
+    from pynix._evaluate import JsonValue
     from pynix._impl._sbom_model import Inventory, License, Record
 
 SPEC_VERSION = "1.7"
