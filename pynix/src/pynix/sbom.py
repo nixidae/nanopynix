@@ -19,7 +19,7 @@ class Sbom(ConfiguredCommand):
 
     Examples:
       pynix sbom --flake nixpkgs#hello
-      pynix sbom --file '<nixpkgs>' --attr hello
+      pynix sbom --file '<nixpkgs>' --attr hello --format spdx
       pynix sbom --flake .#default --buildtime"""
 
     file: str | None = file_option()
@@ -34,7 +34,10 @@ class Sbom(ConfiguredCommand):
 
     print_build_logs: bool = print_build_logs_option()
 
-    format: Literal["cyclonedx"] = opt("cyclonedx", help="CycloneDX 1.7 JSON.")
+    format: Literal["cyclonedx", "spdx"] = opt(
+        "cyclonedx",
+        help="CycloneDX 1.7 JSON, or SPDX 2.3 JSON. SPDX takes its creation time from SOURCE_DATE_EPOCH when it is set.",
+    )
 
     buildtime: bool = opt(False, help="Also list the build closure: compilers, build tools and sources.")
 

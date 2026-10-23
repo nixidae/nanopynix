@@ -8,13 +8,15 @@ after the build.
 from __future__ import annotations
 
 import importlib.metadata
+import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from anyio import Path as AnyioPath
 
 from nanopynix._typechecking import BEARTYPING
-from pynix._impl import _sbom_cyclonedx
+from pynix._impl import _sbom_cyclonedx, _sbom_spdx
 from pynix._impl._sbom_model import inventory, parse_walk, serial_uuid
 from pynix._impl.develop import physical_path_mapper
 from pynix._impl.env import output_paths
@@ -22,7 +24,7 @@ from pynix._util import eval_session, print_json, report_and_exit
 from pynix.target import EvaluationTarget, EvaluationTargetError, base_attr_search, evaluate_target
 
 if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Mapping
 
     from nanopynix.models import JsonValue
     from nanopynix.protocols import AsyncStore
@@ -76,15 +78,25 @@ async def build_inventory(command: Sbom) -> tuple[Inventory, dict[str, str]]:
         report_and_exit(exc)
 
 
+def created_at(environ: Mapping[str, str], now: datetime) -> str:
+    """The SPDX creation time: ``SOURCE_DATE_EPOCH`` when it is set, else *now*."""
+    epoch = environ.get("SOURCE_DATE_EPOCH")
+    moment = datetime.fromtimestamp(int(epoch), UTC) if epoch and epoch.isdigit() else now.astimezone(UTC)
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def render(command: Sbom, listed: Inventory, patches: dict[str, str]) -> dict[str, JsonValue]:
     """The document that *command* asks for."""
-    seed = f"{listed.target.path}:{command.format}:{command.buildtime}"
-    return _sbom_cyclonedx.document(
-        listed,
-        serial_number=serial_uuid(seed).urn,
-        tool_version=importlib.metadata.version("pynix"),
-        patches=patches,
-    )
+    unique = serial_uuid(f"{listed.target.path}:{command.format}:{command.buildtime}").urn
+    tool_version = importlib.metadata.version("pynix")
+    if command.format == "spdx":
+        return _sbom_spdx.document(
+            listed,
+            namespace=unique,
+            created=created_at(os.environ, datetime.now(UTC)),
+            tool_version=tool_version,
+        )
+    return _sbom_cyclonedx.document(listed, serial_number=unique, tool_version=tool_version, patches=patches)
 
 
 async def run_sbom(command: Sbom) -> None:

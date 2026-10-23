@@ -11,15 +11,29 @@ import json
 import os
 import subprocess
 import sys
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
 from cyclonedx.schema import SchemaVersion
 from cyclonedx.validation.json import JsonStrictValidator
+from spdx_tools.spdx.parser.json.json_parser import parse_from_file
+from spdx_tools.spdx.validation.document_validator import validate_full_spdx_document
 
 from nanopynix_testing.nix_environment import with_nixpkgs
 from pynix._impl._sbom_cyclonedx import document
-from pynix._impl._sbom_model import Record, from_store_path, inventory, parse_walk, serial_uuid, sri_digest
+from pynix._impl._sbom_model import (
+    License,
+    Record,
+    Source,
+    from_store_path,
+    inventory,
+    parse_walk,
+    serial_uuid,
+    sri_digest,
+)
+from pynix._impl._sbom_spdx import package, spdx_id
+from pynix._impl.sbom import created_at
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -102,6 +116,39 @@ def test_every_dependency_names_an_object_of_the_document() -> None:
     for dependency in dependencies:
         assert dependency["ref"] in refs
         assert set(dependency["dependsOn"]) <= refs  # pyright: ignore[reportArgumentType] -- a list of strings
+
+
+def test_an_spdx_id_keeps_only_the_allowed_characters() -> None:
+    record = Record(path="/nix/store/aaaa-gtk+3_x-1.0", name="gtk+3")
+    assert spdx_id(record) == "SPDXRef-aaaa-gtk-3-x-1.0"
+
+
+@pytest.mark.parametrize(
+    ("licenses", "declared"),
+    [
+        ((License(spdx_id="MIT", name="MIT License"),), "MIT"),
+        ((License(spdx_id="MIT", name=None), License(spdx_id="Apache-2.0", name=None)), "NOASSERTION"),
+        ((License(spdx_id=None, name="Unfree"),), "NOASSERTION"),
+        ((), "NOASSERTION"),
+    ],
+)
+def test_spdx_declares_one_license_and_no_list(licenses: tuple[License, ...], declared: str) -> None:
+    assert package(Record(path="/nix/store/aaaa-x-1", name="x", licenses=licenses))["licenseDeclared"] == declared
+
+
+def test_spdx_downloads_only_from_a_scheme_it_knows() -> None:
+    mirror = Source(urls=("mirror://gnu/hello.tar.gz", "https://ftp.gnu.org/hello.tar.gz"), hash=None)
+    assert package(Record(path="/nix/store/a-x", name="x", source=mirror))["downloadLocation"] == (
+        "https://ftp.gnu.org/hello.tar.gz"
+    )
+    only_mirror = Source(urls=("mirror://gnu/hello.tar.gz",), hash=None)
+    assert package(Record(path="/nix/store/a-x", name="x", source=only_mirror))["downloadLocation"] == "NOASSERTION"
+
+
+def test_the_creation_time_follows_source_date_epoch() -> None:
+    now = datetime(2026, 10, 23, 12, 0, 0, tzinfo=UTC)
+    assert created_at({"SOURCE_DATE_EPOCH": "0"}, now) == "1970-01-01T00:00:00Z"
+    assert created_at({}, now) == "2026-10-23T12:00:00Z"
 
 
 # --- end to end, in a subprocess --------------------------------------------
@@ -216,3 +263,22 @@ def test_cyclonedx_buildtime_adds_build_inputs_and_survives_a_throwing_meta(
     assert {"pynix-sbom-lib", "pynix-sbom-cc", "pynix-sbom-broken"} <= set(components)
     assert "licenses" not in components["pynix-sbom-broken"]
     assert all(not str(c["bom-ref"]).endswith("-man") for c in components.values())
+
+
+def test_spdx_is_valid_and_states_the_graph(
+    shared_nix_environment: NixTestEnvironment, packages: Path, tmp_path: Path
+) -> None:
+    result = _sbom(shared_nix_environment.store_uri, packages, "--format", "spdx", "--buildtime")
+    assert result.returncode == 0, result.stderr
+    written = tmp_path / "sbom.spdx.json"
+    written.write_text(result.stdout, encoding="utf-8")
+    assert validate_full_spdx_document(parse_from_file(str(written))) == []
+    spdx = json.loads(result.stdout)
+    ids = {p["name"]: p["SPDXID"] for p in spdx["packages"]}
+    lib = next(p for p in spdx["packages"] if p["name"] == "pynix-sbom-lib")
+    assert lib["downloadLocation"] == "https://example.org/lib-2.0.tar.gz"
+    assert lib["licenseDeclared"] == "NOASSERTION"
+    edges = {(r["spdxElementId"], r["relationshipType"], r["relatedSpdxElement"]) for r in spdx["relationships"]}
+    assert ("SPDXRef-DOCUMENT", "DESCRIBES", ids["pynix-sbom-app"]) in edges
+    assert (ids["pynix-sbom-app"], "DEPENDS_ON", ids["pynix-sbom-lib"]) in edges
+    assert (ids["pynix-sbom-app"], "DEPENDS_ON", ids["pynix-sbom-cc"]) in edges

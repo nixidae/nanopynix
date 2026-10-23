@@ -338,7 +338,7 @@ the build closure. The JSON goes to stdout.
 
 Examples:
   pynix sbom --flake nixpkgs#hello
-  pynix sbom --file '<nixpkgs>' --attr hello
+  pynix sbom --file '<nixpkgs>' --attr hello --format spdx
   pynix sbom --flake .#default --buildtime
 
 | Argument | Type | Help |
@@ -349,7 +349,7 @@ Examples:
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
 | `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--print-build-logs` | `bool` | Print build log lines to stderr. (default: `False`) |
-| `--format` | `Literal[cyclonedx]` | CycloneDX 1.7 JSON. (default: `'cyclonedx'`) |
+| `--format` | `Literal[cyclonedx, spdx]` | CycloneDX 1.7 JSON, or SPDX 2.3 JSON. SPDX takes its creation time from SOURCE_DATE_EPOCH when it is set. (default: `'cyclonedx'`) |
 | `--buildtime` | `bool` | Also list the build closure: compilers, build tools and sources. (default: `False`) |
 
 ### `pynix search`
