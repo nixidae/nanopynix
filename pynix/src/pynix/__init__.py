@@ -13,6 +13,7 @@ from pynix.config import Config
 from pynix.copy import Copy
 from pynix.derivation import Derivation
 from pynix.develop import Develop, PrintDevEnv
+from pynix.env import Env
 from pynix.eval import Eval
 from pynix.flake import Flake
 from pynix.log import Log
@@ -46,6 +47,7 @@ Pynix = group(
         Eval,
         Derivation,
         Develop,
+        Env,
         Flake,
         Log,
         PathInfo,
