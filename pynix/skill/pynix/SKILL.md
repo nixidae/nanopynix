@@ -31,6 +31,8 @@ Differences that bite:
 
 - No positional attribute: `pynix build --file . foo` is a usage error. Use
   `--attr foo` or `--file '.#foo'`.
+- One target per call: a second `--attr`, `--file` or `--flake` is a usage
+  error. `nix build --file . a b` is one `pynix build` for each attribute.
 - `--file` takes a path, `<name>` lookup path, URL or flake ref, each with an
   optional `#attr`. A bare word (`nixpkgs`) tries `NIX_PATH` first, then the
   registry; write local paths with `./`.
