@@ -157,10 +157,15 @@ async def test_a_closure_that_is_present_already_copies_nothing(
     ]
     await _copy(arguments, capsys)
 
-    second = await _copy(arguments, capsys)
+    await parse(["copy", *arguments]).run()
+    captured = capsys.readouterr()
+    second = json.loads(captured.out)
 
     assert second["copied"] == []
     assert second["alreadyPresent"] == sorted([built_closure["top"], built_closure["leaf"]])
+    # `nix copy` prints nothing when nothing is missing, and Nix logs
+    # `copying 0 paths` if the copy runs at all.
+    assert "copying" not in captured.err, captured.err
 
 
 @LINUX_CHROOT_BUILD

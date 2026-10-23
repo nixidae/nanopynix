@@ -149,7 +149,10 @@ async def copy_verified(
         closure=len(closure),
         missing=len(missing),
     )
-    await ends.copy(requested)
+    # Nix logs `copying 0 paths` for a copy with nothing to do; `nix copy`
+    # does not start one.
+    if missing:
+        await ends.copy(requested)
 
     # **And again afterwards, because a copy can end quietly.**
     # `Store::addMultipleToStore` (`src/libstore/store-api.cc`) catches
