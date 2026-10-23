@@ -39,11 +39,8 @@ from pynix.develop import Develop, PrintDevEnv
 from pynix.target import EvaluationTarget, EvaluationTargetError
 
 if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Callable
-
     from huggorm import AsyncEvalState, AsyncStore
 
-    from nanopynix.protocols import AsyncStore as NanopynixStore
 logger = structlog.get_logger("pynix.develop")
 #: What Nix puts in front of an error message of its own.
 _NIX_ERROR_PREFIX = "error: "
@@ -363,24 +360,6 @@ async def _nixpkgs_bash(
 def _fallback_shell() -> InteractiveShell:
     """The bash on PATH, which is what Nix falls back to at ``develop.cc:642``."""
     return InteractiveShell(path=shutil.which("bash") or "bash", from_nixpkgs=False, exec_prefix=[])
-
-
-async def physical_path_mapper(store: NanopynixStore) -> Callable[[str], str]:
-    """Return a function that maps a store path to where its bytes really are.
-
-    A store opened with a root reports logical ``/nix/store/...`` paths while
-    the bytes live under that root, so reading the reported path finds nothing.
-    :mod:`nanopynix.store_exec` gives the same reason at length, for the harder
-    case of *running* such a path; reading one needs only the two directories.
-
-    The identity function for an ordinary store, which is the common case.
-    """
-    dirs = await store.store_dirs()
-    store_dir = dirs.store_dir.rstrip("/")
-    real_store_dir = (dirs.real_store_dir or store_dir).rstrip("/")
-    if real_store_dir == store_dir:
-        return lambda path: path
-    return lambda path: real_store_dir + path[len(store_dir) :] if path.startswith(store_dir) else path
 
 
 async def run_print_dev_env(command: PrintDevEnv) -> None:
