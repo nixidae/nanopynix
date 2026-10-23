@@ -2,7 +2,7 @@
 
 ``pynix develop`` and ``pynix print-dev-env`` both end here. The store side --
 rewriting a derivation so that its builder dumps its own environment -- is
-:meth:`nanopynix.protocols.AsyncStore.write_dev_shell_derivation`. This module
+:func:`huggorm.devshell.awrite_dev_shell_derivation`. This module
 reads what that build wrote, and turns it back into bash.
 
 Nix does the same two jobs in ``src/nix/develop.cc``: ``BuildEnvironment`` at
@@ -17,18 +17,15 @@ library carries it.
 
 from __future__ import annotations
 
+import importlib.resources
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from nanopynix import get_env_sh_path
-
-#: The ``get-env.sh`` that ``huggorm-bindings`` ships -- Nix's own
-#: ``src/nix/get-env.sh``, carried there because Nix compiles it into the
-#: ``nix`` binary and no library carries it. See ``nanopynix.get_env`` for
-#: the provenance.
-GET_ENV_SH: Path = get_env_sh_path()
+#: The ``get-env.sh`` that ``huggorm-bindings`` ships, copied from the Nix
+#: source that the bindings link.
+GET_ENV_SH: Path = Path(str(importlib.resources.files("huggorm_bindings") / "get-env.sh"))
 
 #: Variables that the shell must keep from the caller rather than take from the
 #: build. ``develop.cc:315``, unchanged: `HOME` and `TERM` make a shell usable,
