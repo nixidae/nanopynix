@@ -21,7 +21,7 @@ from rich.tree import Tree
 import nanopynix
 from nanopynix._typechecking import BEARTYPING
 from pynix._util import eval_session, print_json
-from pynix.flake import Info, Metadata, Show
+from pynix.flake import Info, Lock, Metadata, Show, Update
 from pynix.target import flake_outputs, select_attr
 
 if TYPE_CHECKING or BEARTYPING:
@@ -162,3 +162,34 @@ async def run_metadata(command: Metadata) -> None:
 async def run_info(command: Info) -> None:
     """The body of :meth:`pynix.flake.Info.run`."""
     await _print_flake_metadata(command.flake_ref, store_uri=command.store)
+
+
+async def _lock(flake_ref: str, *, store_uri: str, update_inputs: bool | list[str]) -> None:
+    """Lock *flake_ref* and write its lock file, as ``nix flake lock`` does.
+
+    ``lockFlake`` itself writes the file, and it reports each added or moved
+    input as a warning, so nothing here renders a diff. An unchanged lock
+    file is not written, and Nix reports nothing about it.
+
+    ``tarball-ttl`` is 0, as both commands of Nix set it: a cached tarball
+    of a moving reference would otherwise lock the old revision again.
+    """
+    async with eval_session(store_uri) as (_nix, _store, session):
+        await session.configure(fetch_settings=nanopynix.NixFetchSettings(tarball_ttl=0))
+        locked = await session.lock_flake(flake_ref, update_inputs=update_inputs, write_lock_file=True)
+        await locked.release()
+
+
+async def run_lock(command: Lock) -> None:
+    """The body of :meth:`pynix.flake.Lock.run`."""
+    await _lock(command.flake_ref, store_uri=command.store, update_inputs=False)
+
+
+async def run_update(command: Update) -> None:
+    """The body of :meth:`pynix.flake.Update.run`.
+
+    ``nix flake update`` with no input recreates the lock file, and with
+    inputs it updates those alone (``CmdFlakeUpdate``). ``update_inputs``
+    carries the same two cases.
+    """
+    await _lock(command.flake, store_uri=command.store, update_inputs=command.inputs or True)

@@ -152,6 +152,40 @@ Alias for flake metadata
 | `flake_ref` | `str` | Flake reference (e.g. '.' or 'nixpkgs'). *(required)* |
 | `--store` | `str` | Store URI to evaluate with. (default: `'auto'`) |
 
+#### `pynix flake lock`
+
+Create the missing entries of a flake's lock file
+
+An entry that is in the lock file already stays as it is. Nix reports
+each entry that it adds on stderr.
+
+Examples:
+  pynix flake lock
+  pynix flake lock ./path/to/flake
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `flake_ref` | `str` | Flake reference (default: '.'). (default: `'.'`) |
+| `--store` | `str` | Store URI to fetch the inputs into. (default: `'auto'`) |
+
+#### `pynix flake update`
+
+Update the inputs of a flake's lock file to their newest revisions
+
+With no input named, this updates every input. Nix reports each input
+that moves on stderr, with the old and the new revision.
+
+Examples:
+  pynix flake update
+  pynix flake update nixpkgs
+  pynix flake update mid/leaf --flake ./path/to/flake
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `inputs` | `list[str]` | Inputs to update, such as 'nixpkgs' or 'a/b'. Omit to update every input. (default: `[]`) |
+| `--flake` | `str` | Flake reference whose lock file to update (default: '.'). (default: `'.'`) |
+| `--store` | `str` | Store URI to fetch the inputs into. (default: `'auto'`) |
+
 ### `pynix log`
 
 Show the build log for a store path
