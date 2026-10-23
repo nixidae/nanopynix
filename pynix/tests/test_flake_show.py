@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+import pytest
+
 from pynix import parse
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
     from nanopynix_testing.nix_environment import NixTestEnvironment
 
@@ -33,6 +33,24 @@ async def test_flake_show_with_hash_attrpath(
     captured = capsys.readouterr()
     assert "hello" in captured.out
     assert "greeting" not in captured.out
+
+
+@pytest.mark.parametrize("args", [["#nope"], ["", "--attrpath", "hello.nope"]], ids=["fragment", "attrpath"])
+async def test_flake_show_reports_a_missing_attribute_as_one_error(
+    shared_nix_environment: NixTestEnvironment,
+    capsys: pytest.CaptureFixture[str],
+    git_flake: Path,
+    args: list[str],
+) -> None:
+    fragment, *rest = args
+    cmd = parse(["flake", "show", f"{git_flake}{fragment}", *rest, *shared_nix_environment.pynix_store_args()])
+    with pytest.raises(SystemExit) as raised:
+        await cmd.run()
+    assert raised.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "attribute 'nope' not found" in captured.err
+    assert "Traceback" not in captured.err
 
 
 async def test_flake_show_with_a_separate_attrpath_flag_navigates_further(

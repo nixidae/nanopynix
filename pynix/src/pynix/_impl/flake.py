@@ -14,13 +14,14 @@ from typing import TYPE_CHECKING
 
 import huggorm
 import structlog
-from huggorm.attrpath import flake_outputs, select_attr
+from huggorm.attrpath import AttrPathError, flake_outputs, select_attr
 from rich.console import Console
 from rich.tree import Tree
 
 from nanopynix._typechecking import BEARTYPING
-from pynix._util import huggorm_build_session, huggorm_eval_session, print_json
+from pynix._util import huggorm_build_session, huggorm_eval_session, print_json, report_and_exit
 from pynix.flake import Info, Lock, Metadata, Show, Update
+from pynix.target import EvaluationTargetError
 
 if TYPE_CHECKING or BEARTYPING:
     from huggorm import AsyncEvalState, AsyncValue
@@ -129,10 +130,13 @@ async def run_show(command: Show) -> None:
         # at the root of the outputs on purpose: it shows what the flake
         # provides, so a prefix that hid the other outputs would defeat
         # the command.
-        if flake_attr:
-            outputs = await select_attr(state, outputs, flake_attr)
-        if command.attrpath:
-            outputs = await select_attr(state, outputs, command.attrpath)
+        try:
+            if flake_attr:
+                outputs = await select_attr(state, outputs, flake_attr)
+            if command.attrpath:
+                outputs = await select_attr(state, outputs, command.attrpath)
+        except AttrPathError as exc:
+            report_and_exit(EvaluationTargetError(str(exc)))
 
         tree = Tree(f"[bold]{command.flake_ref}[/bold]")
         await _build_tree(tree, state, outputs, budget=_TreeBudget())
