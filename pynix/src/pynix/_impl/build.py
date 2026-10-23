@@ -44,6 +44,7 @@ from pynix import _evaluate, _impl
 from pynix._build_monitor import BuildPlan, MonitorState
 from pynix._impl.copy import StoreEnds, closure_of, copy_verified
 from pynix._util import (
+    build_derivation,
     error_console,
     error_exit,
     huggorm_build_session,
@@ -284,23 +285,6 @@ async def _drv_path(build: BuildSession, root: AsyncValue) -> str:
     return await build.evaluation_store.print_store_path(await root.drv_path())
 
 
-async def _build_root(build: BuildSession, drv_path: str) -> dict[str, str]:
-    """Build every output of *drv_path*, and give the path of each one."""
-    derived = await build.build_store.parse_derived_path(f"{drv_path}^*")
-    eval_store = None if build.evaluation_store is build.build_store else build.evaluation_store
-    [result] = await build.build_store.build_paths_with_results([derived], eval_store=eval_store)
-    error = result.error()
-    if error is not None:
-        raise error
-    success = result.success()
-    if success is None:
-        raise RuntimeError("a build reported neither success nor failure")
-    return {
-        name: await build.build_store.print_store_path(realisation.out_path())
-        for name, realisation in success.built_outputs().items()
-    }
-
-
 def _messages(logs: CapturedLogs) -> list[str]:
     return [nanopynix.strip_ansi(record_message(record)) for record in logs.records if record.action() == "msg"]
 
@@ -349,7 +333,7 @@ async def _build_target(
                 drv_path = await _drv_path(build, root)
                 if monitor is not None:
                     monitor.plan = await _plan_or_none(build, drv_path)
-                return await _build_root(build, drv_path), updates
+                return await build_derivation(build.build_store, drv_path, eval_store=build.evaluation_store), updates
             except NixError as exc:
                 error = exc
         mismatch = extract_fod_hash_mismatch(str(error)) or extract_unique_fod_hash_mismatch(_messages(logs))

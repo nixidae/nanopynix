@@ -404,6 +404,28 @@ async def huggorm_build_session(  # noqa: PLR0913 -- keyword-only, one per sessi
             yield session, build_store, eval_store, state
 
 
+async def build_derivation(
+    build_store: huggorm.AsyncStore,
+    drv_path: str,
+    *,
+    eval_store: huggorm.AsyncStore | None = None,
+) -> dict[str, str]:
+    """Build every output of *drv_path*, and give the path of each one."""
+    derived = await build_store.parse_derived_path(f"{drv_path}^*")
+    other_eval_store = None if eval_store is build_store else eval_store
+    [result] = await build_store.build_paths_with_results([derived], eval_store=other_eval_store)
+    error = result.error()
+    if error is not None:
+        raise error
+    success = result.success()
+    if success is None:
+        raise RuntimeError("a build reported neither success nor failure")
+    return {
+        name: await build_store.print_store_path(realisation.out_path())
+        for name, realisation in success.built_outputs().items()
+    }
+
+
 @asynccontextmanager
 @no_runtime_type_check  # log_file is duck-typed against TextIO -- see configure_logging above.
 async def forward_state_logs(  # noqa: PLR0913 -- keyword-only, one per forwarding option, as forward_nix_logs
