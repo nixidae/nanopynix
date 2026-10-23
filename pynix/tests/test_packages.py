@@ -12,7 +12,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from huggorm.attrpath import select_attr
 
+import pynix._util as util_module
+from pynix._evaluate import evaluate_target
 from pynix._packages import (
     PackageRecord,
     cache_path,
@@ -22,8 +25,7 @@ from pynix._packages import (
     package_identity,
     save_cache,
 )
-from pynix._util import eval_session
-from pynix.target import EvaluationTarget, evaluate_target, select_attr
+from pynix.target import EvaluationTarget
 
 if TYPE_CHECKING:
     from nanopynix_testing.nix_environment import NixTestEnvironment
@@ -35,10 +37,10 @@ _PKGSET = Path(__file__).parent / "test_packages" / "pkgset.nix"
 async def packages(shared_nix_environment: NixTestEnvironment) -> list[PackageRecord]:
     """Every package of the fixture set, through the real walk."""
     target = EvaluationTarget(file=str(_PKGSET), attr=None, flake=None)
-    async with eval_session(shared_nix_environment.store_uri) as (_nix, _store, session):
-        root = await evaluate_target(target, session, auto_call_file=True)
-        lib_value = await select_attr(root, "lib")
-        return await fetch_package_list(session, root, lib_value)
+    async with util_module.huggorm_eval_session(shared_nix_environment.store_uri) as (_session, _store, state):
+        root = await evaluate_target(target, state, auto_call_file=True)
+        lib_value = await select_attr(state, root, "lib")
+        return await fetch_package_list(state, root, lib_value)
 
 
 def _by_attr(records: list[PackageRecord], attr: str) -> PackageRecord:
@@ -200,18 +202,18 @@ async def test_a_second_index_reads_the_cache(
     """
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     target = EvaluationTarget(file=str(_PKGSET), attr=None, flake=None)
-    async with eval_session(shared_nix_environment.store_uri) as (_nix, _store, session):
-        root = await evaluate_target(target, session, auto_call_file=True)
-        lib_value = await select_attr(root, "lib")
-        first = await indexed_packages(session, root, lib_value)
-        identity = await package_identity(session, root)
+    async with util_module.huggorm_eval_session(shared_nix_environment.store_uri) as (_session, _store, state):
+        root = await evaluate_target(target, state, auto_call_file=True)
+        lib_value = await select_attr(state, root, "lib")
+        first = await indexed_packages(state, root, lib_value)
+        identity = await package_identity(state, root)
         assert cache_path(identity).is_file()
 
         # Corrupting the walk would change a fresh result and not a cached one.
-        second = await indexed_packages(session, root, lib_value)
+        second = await indexed_packages(state, root, lib_value)
         assert second == first
 
-        refreshed = await indexed_packages(session, root, lib_value, refresh=True)
+        refreshed = await indexed_packages(state, root, lib_value, refresh=True)
         assert refreshed == first
 
 
@@ -238,10 +240,10 @@ async def test_two_package_sets_that_differ_only_in_config_get_different_keys(
     second therefore read the walk of the first, silently.
     """
     expression = _ONE_CONFIG_APART.format(fixture=_PKGSET)
-    async with eval_session(shared_nix_environment.store_uri) as (_nix, _store, session):
-        both = await session.string(expression)
-        free = await package_identity(session, await select_attr(both, "free"))
-        unfree = await package_identity(session, await select_attr(both, "unfree"))
+    async with util_module.huggorm_eval_session(shared_nix_environment.store_uri) as (_session, _store, state):
+        both = await state.eval_expr(expression)
+        free = await package_identity(state, await select_attr(state, both, "free"))
+        unfree = await package_identity(state, await select_attr(state, both, "unfree"))
 
     assert free != unfree, f"one config value apart, and the same key: {free}"
     # The source still names the file, so a reader can still see which nixpkgs
@@ -254,9 +256,9 @@ async def test_the_same_package_set_keeps_one_key(
 ) -> None:
     """The key has to be stable, or every search would walk again."""
     target = EvaluationTarget(file=str(_PKGSET), attr=None, flake=None)
-    async with eval_session(shared_nix_environment.store_uri) as (_nix, _store, session):
-        first = await package_identity(session, await evaluate_target(target, session, auto_call_file=True))
-        second = await package_identity(session, await evaluate_target(target, session, auto_call_file=True))
+    async with util_module.huggorm_eval_session(shared_nix_environment.store_uri) as (_session, _store, state):
+        first = await package_identity(state, await evaluate_target(target, state, auto_call_file=True))
+        second = await package_identity(state, await evaluate_target(target, state, auto_call_file=True))
 
     assert first == second
 
@@ -274,8 +276,8 @@ async def test_a_config_holding_a_function_still_answers(
     let base = import {_PKGSET} {{ }};
     in base // {{ config = {{ allowUnfreePredicate = _: true; }}; }}
     """
-    async with eval_session(shared_nix_environment.store_uri) as (_nix, _store, session):
-        value = await session.string(expression)
-        identity = await package_identity(session, value)
+    async with util_module.huggorm_eval_session(shared_nix_environment.store_uri) as (_session, _store, state):
+        value = await state.eval_expr(expression)
+        identity = await package_identity(state, value)
 
     assert identity

@@ -231,7 +231,22 @@ async def _evaluate_selected(
 
 
 async def _attr_json(value: AsyncValue, name: str) -> object:
-    return json.loads(await (await value.get(name)).to_json())
+    return await to_python(await value.get(name))
+
+
+type JsonValue = bool | int | float | str | list[JsonValue] | dict[str, JsonValue] | None
+
+
+async def to_python(value: AsyncValue) -> JsonValue:
+    """*value*, forced all the way down, as JSON data. A path stays a path."""
+    return json.loads(await value.to_json())
+
+
+async def call(function: AsyncValue, *arguments: AsyncValue) -> AsyncValue:
+    """*function* applied to each of *arguments* in turn, as Nix curries."""
+    for argument in arguments:
+        function = await function(argument)
+    return function
 
 
 async def optional_attr(state: AsyncEvalState, value: AsyncValue | None, name: str) -> object:

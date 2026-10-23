@@ -40,11 +40,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from nanopynix._typechecking import BEARTYPING
+from pynix._evaluate import call, to_python
 
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import Mapping, Sequence
 
-    from nanopynix import AsyncEvalSession, AsyncValue
+    from huggorm import AsyncEvalState, AsyncValue
 
 #: The walk, as one Nix function of `lib` and `pkgs`.
 #:
@@ -112,7 +113,7 @@ class PackageRecord:
 
 
 async def fetch_package_list(
-    session: AsyncEvalSession, pkgs_value: AsyncValue, lib_value: AsyncValue
+    state: AsyncEvalState, pkgs_value: AsyncValue, lib_value: AsyncValue
 ) -> list[PackageRecord]:
     """Extract every top-level package of *pkgs_value*.
 
@@ -122,9 +123,8 @@ async def fetch_package_list(
     The walk runs inside the evaluator and returns one list, so this costs two
     round trips whatever the size of nixpkgs.
     """
-    collector = await session.string(_COLLECT_PACKAGE_METADATA)
-    package_list = await collector.call(lib_value, pkgs_value)
-    raw = await package_list.to_python()
+    collector = await state.eval_expr(_COLLECT_PACKAGE_METADATA)
+    raw = await to_python(await call(collector, lib_value, pkgs_value))
     if not isinstance(raw, list):
         raise TypeError(f"package metadata walk must return a list, got {type(raw).__name__}")
     records: list[PackageRecord] = []
@@ -289,7 +289,7 @@ pkgs:
 _DIGEST_LENGTH = 16
 
 
-async def package_identity(session: AsyncEvalSession, pkgs_value: AsyncValue) -> str:
+async def package_identity(state: AsyncEvalState, pkgs_value: AsyncValue) -> str:
     """What names the walk of *pkgs_value*: its source, and what shapes it.
 
     `pkgs.path` is what nixpkgs calls its own source, and a store path is the
@@ -302,15 +302,16 @@ async def package_identity(session: AsyncEvalSession, pkgs_value: AsyncValue) ->
     be `pkgs.config`. Measured on real nixpkgs, 27 918 attributes: the facts
     cost 0.043 s against a walk of 15 s.
     """
-    path = str(await pkgs_value.attr("path").to_python())
-    collector = await session.string(_IDENTITY_FACTS)
-    facts = str(await (await collector.call(pkgs_value)).to_python())
+    await state.force(pkgs_value)
+    path = str(await to_python(await pkgs_value.get("path")))
+    collector = await state.eval_expr(_IDENTITY_FACTS)
+    facts = str(await to_python(await call(collector, pkgs_value)))
     digest = hashlib.sha256(facts.encode()).hexdigest()[:_DIGEST_LENGTH]
     return f"{Path(path).name}-{digest}"
 
 
 async def indexed_packages(
-    session: AsyncEvalSession,
+    state: AsyncEvalState,
     pkgs_value: AsyncValue,
     lib_value: AsyncValue,
     *,
@@ -321,12 +322,12 @@ async def indexed_packages(
     Measured on nixpkgs unstable: the walk costs 15 s and 2.08 GB, and reading
     the cache costs 0.1 s. Pass *refresh* to walk again and overwrite.
     """
-    identity = await package_identity(session, pkgs_value)
+    identity = await package_identity(state, pkgs_value)
     path = cache_path(identity)
     if not refresh:
         cached = load_cache(path)
         if cached is not None:
             return cached
-    records = await fetch_package_list(session, pkgs_value, lib_value)
+    records = await fetch_package_list(state, pkgs_value, lib_value)
     save_cache(path, identity, records)
     return records

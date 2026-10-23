@@ -21,6 +21,8 @@ import anyio
 import anyio.lowlevel
 import pytest
 
+import pynix._util as util_module
+from pynix._evaluate import evaluate_target
 from pynix._option_values import (
     LIMIT,
     EvaluatorUnavailableError,
@@ -34,8 +36,7 @@ from pynix._option_values import (
 )
 from pynix._options import fetch_option_values, fetch_value_renderer
 from pynix._search_target import resolve
-from pynix._util import eval_session
-from pynix.target import EvaluationTarget, evaluate_target
+from pynix.target import EvaluationTarget
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
@@ -60,21 +61,22 @@ async def tree(shared_nix_environment: NixTestEnvironment) -> AsyncIterator[Tree
     rather than in the one test that asks for one. It forces no value of the
     configuration either: `config` is selected and not read.
     """
-    async with eval_session(shared_nix_environment.store_uri) as (_nix, _store, session):
+    async with util_module.huggorm_eval_session(shared_nix_environment.store_uri) as (_session, _store, state):
         target = EvaluationTarget(file=str(_MODULE), attr=None, flake=None)
-        value = await evaluate_target(target, session, auto_call_file=True)
-        where = await resolve(value)
+        value = await evaluate_target(target, state, auto_call_file=True)
+        where = await resolve(state, value)
         if where.options is None or where.lib is None:
             raise AssertionError("the fixture holds both an options tree and a lib")
         yield Trees(
-            values=await fetch_option_values(session, where.options.value, where.lib.value),
+            state=state,
+            values=await fetch_option_values(state, where.options.value, where.lib.value),
             config=None if where.config is None else where.config.value,
-            render=await fetch_value_renderer(session, where.lib.value),
+            render=await fetch_value_renderer(state, where.lib.value),
         )
 
 
 async def test_a_plain_default_and_example_both_evaluate(tree: Trees) -> None:
-    found = await rendered(tree.values, f"{_OPTION}.port")
+    found = await rendered(tree.state, tree.values, f"{_OPTION}.port")
     assert found.default is not None
     assert found.default.error == ""
     assert found.default.text == "8080"
@@ -84,14 +86,14 @@ async def test_a_plain_default_and_example_both_evaluate(tree: Trees) -> None:
 
 async def test_an_option_without_a_default_draws_none(tree: Trees) -> None:
     """`None` is not the same answer as an empty string, and the pane obeys it."""
-    found = await rendered(tree.values, f"{_OPTION}.withoutDefault")
+    found = await rendered(tree.state, tree.values, f"{_OPTION}.withoutDefault")
     assert found.default is None
     assert found.example is None
 
 
 async def test_a_thrown_default_reports_the_message(tree: Trees) -> None:
     """`throw` is the failure `builtins.tryEval` does catch."""
-    found = await rendered(tree.values, f"{_OPTION}.thrownDefault")
+    found = await rendered(tree.state, tree.values, f"{_OPTION}.thrownDefault")
     assert found.default is not None
     assert "this default is not available here" in found.default.error
     assert found.default.text == ""
@@ -104,7 +106,7 @@ async def test_a_missing_attribute_default_reports_the_message(tree: Trees) -> N
     shape, and its docstring says so. Across the binding boundary it is an
     ordinary exception, which is the whole reason this module exists.
     """
-    found = await rendered(tree.values, f"{_OPTION}.brokenDefault")
+    found = await rendered(tree.state, tree.values, f"{_OPTION}.brokenDefault")
     assert found.default is not None
     assert "doesNotExist" in found.default.error
 
@@ -115,7 +117,7 @@ async def test_a_described_default_answers_from_its_text(tree: Trees) -> None:
     The fixture makes that observable: the default under the text is a
     `throw`, and this reads the text with no error.
     """
-    found = await rendered(tree.values, f"{_OPTION}.describedDefault")
+    found = await rendered(tree.state, tree.values, f"{_OPTION}.describedDefault")
     assert found.default is not None
     assert found.default.error == ""
     assert found.default.text == '"the name of the host"'
@@ -127,9 +129,9 @@ async def test_one_bad_default_costs_no_other_option(tree: Trees) -> None:
     This is the property the bulk walk cannot have: one Nix list forced in one
     JSON pass makes one bad default the failure of every option.
     """
-    broken = await rendered(tree.values, f"{_OPTION}.brokenDefault")
-    thrown = await rendered(tree.values, f"{_OPTION}.thrownDefault")
-    good = await rendered(tree.values, f"{_OPTION}.port")
+    broken = await rendered(tree.state, tree.values, f"{_OPTION}.brokenDefault")
+    thrown = await rendered(tree.state, tree.values, f"{_OPTION}.thrownDefault")
+    good = await rendered(tree.state, tree.values, f"{_OPTION}.port")
     assert broken.default is not None
     assert broken.default.error != ""
     assert thrown.default is not None
@@ -140,7 +142,7 @@ async def test_one_bad_default_costs_no_other_option(tree: Trees) -> None:
 
 async def test_a_sub_option_of_a_submodule_answers(tree: Trees) -> None:
     """The keys are what the metadata walk writes, placeholder and all."""
-    found = await rendered(tree.values, f"{_OPTION}.vhosts.<name>.port")
+    found = await rendered(tree.state, tree.values, f"{_OPTION}.vhosts.<name>.port")
     assert found.default is not None
     assert found.default.text == "80"
 
@@ -279,16 +281,17 @@ _CONFIGURED = Path(__file__).parent / "test_search" / "configured.nix"
 @pytest.fixture
 async def configured(shared_nix_environment: NixTestEnvironment) -> AsyncIterator[Trees]:
     """The fixture module system with values set, and nothing forced."""
-    async with eval_session(shared_nix_environment.store_uri) as (_nix, _store, session):
+    async with util_module.huggorm_eval_session(shared_nix_environment.store_uri) as (_session, _store, state):
         target = EvaluationTarget(file=str(_CONFIGURED), attr=None, flake=None)
-        value = await evaluate_target(target, session, auto_call_file=True)
-        where = await resolve(value)
+        value = await evaluate_target(target, state, auto_call_file=True)
+        where = await resolve(state, value)
         if where.options is None or where.lib is None or where.config is None:
             raise AssertionError("the fixture holds an options tree, a lib and a config")
         yield Trees(
-            values=await fetch_option_values(session, where.options.value, where.lib.value),
+            state=state,
+            values=await fetch_option_values(state, where.options.value, where.lib.value),
             config=where.config.value,
-            render=await fetch_value_renderer(session, where.lib.value),
+            render=await fetch_value_renderer(state, where.lib.value),
         )
 
 
@@ -323,7 +326,7 @@ async def test_a_target_with_no_config_reads_no_value(tree: Trees) -> None:
     The pane then draws the declaration alone, which is the truth about that
     target rather than a failure of it.
     """
-    without = Trees(values=tree.values, config=None, render=tree.render)
+    without = Trees(state=tree.state, values=tree.values, config=None, render=tree.render)
     assert await at_path(without, ("services", "example-daemon", "port")) is None
 
 

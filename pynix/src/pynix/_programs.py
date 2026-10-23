@@ -31,11 +31,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nanopynix._typechecking import BEARTYPING
+from pynix._evaluate import to_python
 
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import Iterable, Mapping
 
-    from nanopynix import AsyncEvalSession
+    from huggorm import AsyncEvalState
 
 #: Where Hydra publishes the channel artifacts.
 CHANNEL_URL = "https://channels.nixos.org"
@@ -143,7 +144,7 @@ class ProgramIndex:
         return sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
 
 
-async def fetch_program_index(session: AsyncEvalSession, system: str, channel: str = "nixos-unstable") -> ProgramIndex:
+async def fetch_program_index(state: AsyncEvalState, system: str, channel: str = "nixos-unstable") -> ProgramIndex:
     """Fetch the channel expressions, and point at the `programs.sqlite` in them.
 
     The fetch runs through the evaluator, so it uses the store and the cache
@@ -151,8 +152,7 @@ async def fetch_program_index(session: AsyncEvalSession, system: str, channel: s
     nothing.
     """
     expression = _FETCH_NIXEXPRS.format(url=CHANNEL_URL, channel=channel)
-    fetched = await session.string(expression)
-    root = await fetched.to_python()
+    root = await to_python(await state.eval_expr(expression))
     if not isinstance(root, str):
         raise TypeError(f"fetchTarball must give a path, got {type(root).__name__}")
     source = Path(root)
@@ -188,7 +188,7 @@ def index_at(source: Path, system: str) -> ProgramIndex | None:
 
 
 async def program_index_for(
-    session: AsyncEvalSession,
+    state: AsyncEvalState,
     pkgs_path: Path,
     system: str,
     channel: str = "nixos-unstable",
@@ -204,7 +204,7 @@ async def program_index_for(
     local = index_at(pkgs_path, system)
     if local is not None:
         return local
-    return await fetch_program_index(session, system, channel)
+    return await fetch_program_index(state, system, channel)
 
 
 def _read(path: Path) -> str:

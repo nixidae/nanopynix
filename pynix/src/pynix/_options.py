@@ -63,11 +63,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from nanopynix._typechecking import BEARTYPING
+from pynix._evaluate import call, to_python
 
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import Mapping
 
-    from nanopynix import AsyncEvalSession, AsyncValue
+    from huggorm import AsyncEvalState, AsyncValue
 
 #: How deep the walk follows a sub-option, before it stops.
 #:
@@ -180,14 +181,13 @@ lib: value:
 """
 
 
-async def fetch_value_renderer(session: AsyncEvalSession, lib_value: AsyncValue) -> AsyncValue:
+async def fetch_value_renderer(state: AsyncEvalState, lib_value: AsyncValue) -> AsyncValue:
     """A function of one value, giving the rendered text of it.
 
     The caller selects the value it wants by walking attributes, and applies
     this to what it reaches. Nothing is forced until then.
     """
-    renderer = await session.string(_RENDER_ONE_VALUE)
-    return await renderer.call(lib_value)
+    return await call(await state.eval_expr(_RENDER_ONE_VALUE), lib_value)
 
 
 @dataclass(frozen=True)
@@ -202,7 +202,7 @@ class OptionRecord:
 
 
 async def fetch_option_doc_list(
-    session: AsyncEvalSession,
+    state: AsyncEvalState,
     options_value: AsyncValue,
     lib_value: AsyncValue,
 ) -> list[OptionRecord]:
@@ -214,9 +214,8 @@ async def fetch_option_doc_list(
     came from, though the walk is generic enough that any reasonably current
     ``lib`` works).
     """
-    collector = await session.string(_COLLECT_OPTION_METADATA)
-    doc_list_value = await collector.call(lib_value, options_value)
-    raw = await doc_list_value.to_python()
+    collector = await state.eval_expr(_COLLECT_OPTION_METADATA)
+    raw = await to_python(await call(collector, lib_value, options_value))
     if not isinstance(raw, list):
         raise TypeError(f"option metadata walk must return a list, got {type(raw).__name__}")
     records: list[OptionRecord] = []
@@ -247,7 +246,7 @@ def _parse_record(entry: Mapping[str, object]) -> OptionRecord:
 
 
 async def fetch_option_values(
-    session: AsyncEvalSession,
+    state: AsyncEvalState,
     options_value: AsyncValue,
     lib_value: AsyncValue,
 ) -> AsyncValue:
@@ -258,5 +257,4 @@ async def fetch_option_values(
     name. Nothing under a key is forced here. ``pynix._option_values`` forces
     one at a time, and catches what one bad default raises.
     """
-    collector = await session.string(_COLLECT_OPTION_VALUES)
-    return await collector.call(lib_value, options_value)
+    return await call(await state.eval_expr(_COLLECT_OPTION_VALUES), lib_value, options_value)

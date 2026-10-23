@@ -34,16 +34,17 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 import anyio
+from huggorm.errors import NixError
 
 from nanopynix._typechecking import BEARTYPING
-from nanopynix.exceptions import NixError
+from pynix._evaluate import call, to_python
 from pynix._option_paths import join_path
 
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import Callable, Sequence
     from contextlib import AbstractAsyncContextManager
 
-    from nanopynix import AsyncValue
+    from huggorm import AsyncEvalState, AsyncValue
 
 
 class EvaluatorUnavailableError(RuntimeError):
@@ -116,11 +117,9 @@ def _reason(exc: BaseException) -> str:
     not available here`. The first line therefore says nothing at all, and
     the pane has one line to spend.
 
-    A `NixError` also prints as `[ThrownError] ...` and carries the colour
-    that Nix wrote. `msg_without_ansi` is the message alone.
+    The text of a `NixError` is the report without colour.
     """
-    text = exc.msg_without_ansi if isinstance(exc, NixError) else str(exc)
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    lines = [line.strip() for line in str(exc).splitlines() if line.strip()]
     if not lines:
         return exc.__class__.__name__
     for line in reversed(lines):
@@ -130,14 +129,17 @@ def _reason(exc: BaseException) -> str:
     return lines[-1]
 
 
-async def _field(entry: AsyncValue, which: str) -> Value | None:
+async def _field(state: AsyncEvalState, tree: AsyncValue, name: str, which: str) -> Value | None:
     """Force one field of one option, and say what it came to.
 
     Each field is forced on its own, so a default that throws leaves a good
     example readable.
     """
     try:
-        raw = await entry.attr(which).to_python()
+        await state.force(tree)
+        entry = await tree.get(name)
+        await state.force(entry)
+        raw = await to_python(await entry.get(which))
     except NixError as exc:
         return Value(error=_reason(exc))
     if raw is None:
@@ -147,15 +149,17 @@ async def _field(entry: AsyncValue, which: str) -> Value | None:
     return Value(text=_short(str(raw.get("text", ""))), markdown=raw.get("type") == LITERAL_MD)
 
 
-async def rendered(tree: AsyncValue, name: str) -> Rendered:
+async def rendered(state: AsyncEvalState, tree: AsyncValue, name: str) -> Rendered:
     """Force the ``default`` and the ``example`` of the option *name*.
 
     *tree* is what :func:`pynix._options.fetch_option_values` returned. Each
     field is forced on its own, so a default that throws still leaves a good
     example readable.
     """
-    entry = tree.attr(name)
-    return Rendered(default=await _field(entry, "default"), example=await _field(entry, "example"))
+    return Rendered(
+        default=await _field(state, tree, name, "default"),
+        example=await _field(state, tree, name, "example"),
+    )
 
 
 @dataclass(frozen=True)
@@ -166,6 +170,9 @@ class Trees:
     evaluation is the ~5 s a reader pays once. Splitting them would open a
     second session for the second field.
     """
+
+    #: The evaluator that the three values below belong to.
+    state: AsyncEvalState
 
     #: The lazy attrset of ``default`` and ``example``, keyed by option name.
     values: AsyncValue
@@ -196,13 +203,15 @@ async def at_path(trees: Trees, segments: Sequence[str]) -> Value | None:
     render = trees.render
     if config is None or render is None or not segments:
         return None
+    state = trees.state
     current = config
     try:
         for segment in segments:
-            if not await current.has_attr(segment):
+            await state.force(current)
+            if not await current.has(segment):
                 return None
-            current = current.attr(segment)
-        raw = await (await render.call(current)).to_python()
+            current = await current.get(segment)
+        raw = await to_python(await call(render, current))
     except NixError as exc:
         return Value(error=_reason(exc))
     if not isinstance(raw, dict):
@@ -333,7 +342,7 @@ class OptionValues:
         if trees is None:
             failed = Value(error=self._broken)
             return Rendered(default=failed, example=failed)
-        return await rendered(trees.values, name)
+        return await rendered(trees.state, trees.values, name)
 
     async def _resolve_value(self, stack: AsyncExitStack, segments: Sequence[str]) -> Value | None:
         """Read the configuration at one concrete path."""

@@ -1204,7 +1204,7 @@ async def test_a_present_index_opens_no_evaluator(
         del args, kwargs
         raise AssertionError("a path that is there must not open an evaluator")
 
-    monkeypatch.setattr(search_module, "eval_session", _no_session)
+    monkeypatch.setattr(search_module, "huggorm_eval_session", _no_session)
 
     result = await search_module._ensure_binaries_index(_search_command(), tmp_path / "cache.json", _TARGET, cached)
 
@@ -1218,7 +1218,7 @@ async def test_no_index_opens_no_evaluator(tmp_path: Path, monkeypatch: pytest.M
         del args, kwargs
         raise AssertionError("nothing to fetch")
 
-    monkeypatch.setattr(search_module, "eval_session", _no_session)
+    monkeypatch.setattr(search_module, "huggorm_eval_session", _no_session)
 
     result = await search_module._ensure_binaries_index(
         _search_command(), tmp_path / "cache.json", _TARGET, search_module.Cached()
@@ -1239,7 +1239,7 @@ async def test_a_failed_refetch_leaves_the_search_running(
         del args, kwargs
         raise OSError("no network")
 
-    monkeypatch.setattr(search_module, "eval_session", _fails)
+    monkeypatch.setattr(search_module, "huggorm_eval_session", _fails)
 
     result = await search_module._ensure_binaries_index(_search_command(), tmp_path / "cache.json", _TARGET, cached)
 

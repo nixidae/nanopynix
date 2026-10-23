@@ -42,12 +42,13 @@ from typing import TYPE_CHECKING, Any, cast
 
 import anyio
 import structlog
+from huggorm.errors import NixError
 from rich.console import Console
 
 from libpynix import human_at_terminal
 from nanopynix._typechecking import BEARTYPING
-from nanopynix.exceptions import NixError
 from pynix import _impl
+from pynix._evaluate import evaluate_target
 from pynix._impl._quiet import quiet_terminal
 from pynix._option_search import rank as rank_options
 from pynix._option_values import EvaluatorUnavailableError, OptionValues, Trees
@@ -62,18 +63,17 @@ from pynix._packages import (
 from pynix._programs import ProgramIndex, program_index_for
 from pynix._search_merge import OPTION, PACKAGE, kind, make_merged_ranker, name as hit_name
 from pynix._search_target import LIB_CHAIN, OPTIONS_CHAIN, PKGS_CHAIN, Resolved, SearchTarget, resolve
-from pynix._util import error_console, error_exit, eval_session, print_json, report_and_exit
+from pynix._util import error_console, error_exit, huggorm_eval_session, print_json, report_and_exit
 from pynix.search import Search
 from pynix.target import (
     EvaluationTarget,
     EvaluationTargetError,
-    evaluate_target,
 )
 
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import AsyncGenerator
 
-    from nanopynix import AsyncEvalSession
+    from huggorm import AsyncEvalState
 
 logger = structlog.get_logger("pynix.search")
 console = Console()
@@ -338,13 +338,13 @@ async def _ensure_binaries_index(
         "so the channel it came from is being fetched again.",
     )
     try:
-        async with eval_session(command.store) as (_nix, store, session):
-            index = await program_index_for(session, Path(cached.pkgs_path or ""), _system(command), command.channel)
+        async with huggorm_eval_session(command.store) as (_session, store, state):
+            index = await program_index_for(state, Path(cached.pkgs_path or ""), _system(command), command.channel)
             # The read happens after this block, so the root has to outlive
             # the session. `add_temp_root` lasts as long as the process holds
             # the store, which is the whole command.
             with contextlib.suppress(NixError):
-                await store.add_temp_root(str(index.path))
+                await store.add_temp_root(await store.parse_store_path(str(index.path)))
             cached.programs_db = str(index.path)
             cached.origin = index.origin
     except (OSError, NixError) as exc:
@@ -418,13 +418,13 @@ def _values(command: Search, target: EvaluationTarget, found: Found) -> OptionVa
 
     @asynccontextmanager
     async def open_trees() -> AsyncGenerator[Trees]:
-        async with eval_session(command.store) as (_nix, _store, session):
-            yield await _option_trees(command, target, session)
+        async with huggorm_eval_session(command.store) as (_session, _store, state):
+            yield await _option_trees(command, target, state)
 
     return OptionValues(open_trees)
 
 
-async def _option_trees(command: Search, target: EvaluationTarget, session: AsyncEvalSession) -> Trees:
+async def _option_trees(command: Search, target: EvaluationTarget, state: AsyncEvalState) -> Trees:
     """Evaluate *target* again, and return what the pane reads from it.
 
     **One evaluation gives all three.** The lazy attrset of `default` and
@@ -439,8 +439,9 @@ async def _option_trees(command: Search, target: EvaluationTarget, session: Asyn
     went wrong instead, in the one option the reader selected.
     """
     try:
-        value = await evaluate_target(target, session, auto_call_file=True)
+        value = await evaluate_target(target, state, auto_call_file=True)
         where = await resolve(
+            state,
             value,
             options_attr=command.options_attr,
             pkgs_attr=command.pkgs_attr,
@@ -454,9 +455,10 @@ async def _option_trees(command: Search, target: EvaluationTarget, session: Asyn
     # attrset is one. The pane then draws the declaration alone, and says
     # nothing about a value, which is the truth about that target.
     return Trees(
-        values=await fetch_option_values(session, where.options.value, where.lib.value),
+        state=state,
+        values=await fetch_option_values(state, where.options.value, where.lib.value),
         config=None if where.config is None else where.config.value,
-        render=await fetch_value_renderer(session, where.lib.value),
+        render=await fetch_value_renderer(state, where.lib.value),
     )
 
 
@@ -486,10 +488,11 @@ async def _build_index(command: Search, target: EvaluationTarget, ask: Wanted, c
         system=_system(command),
         paths=dict(cached.paths),
     )
-    async with eval_session(command.store) as (_nix, _store, session):
+    async with huggorm_eval_session(command.store) as (_session, _store, state):
         try:
-            value = await evaluate_target(target, session, auto_call_file=True)
+            value = await evaluate_target(target, state, auto_call_file=True)
             where = await resolve(
+                state,
                 value,
                 options_attr=command.options_attr,
                 pkgs_attr=command.pkgs_attr,
@@ -498,9 +501,9 @@ async def _build_index(command: Search, target: EvaluationTarget, ask: Wanted, c
         except EvaluationTargetError as exc:
             report_and_exit(exc)
         if ask.options and built.options is None and _has(where.options, where.lib, ask, _OPTIONS_TREE):
-            await _index_options(session, target, where, built)
+            await _index_options(state, target, where, built)
         if ask.packages and built.pkgs_path is None and _has(where.pkgs, where.lib, ask, _PACKAGE_SET):
-            await _index_packages(session, command, where, built)
+            await _index_packages(state, command, where, built)
     if built.options is None and built.pkgs_path is None:
         error_exit(
             f"{_target_description(target)} holds neither an options tree nor a package set. "
@@ -534,7 +537,7 @@ def _has(half: Resolved | None, lib: Resolved | None, ask: Wanted, what: str) ->
 
 
 async def _index_options(
-    session: AsyncEvalSession,
+    state: AsyncEvalState,
     target: EvaluationTarget,
     where: SearchTarget,
     built: Cached,
@@ -542,7 +545,7 @@ async def _index_options(
     """Walk the options tree, and record which paths answered."""
     options = _named(where.options)
     lib = _named(where.lib)
-    built.options = await fetch_option_doc_list(session, options.value, lib.value)
+    built.options = await fetch_option_doc_list(state, options.value, lib.value)
     built.paths["options"] = options.path
     built.paths["lib"] = lib.path
     error_console.print(
@@ -551,7 +554,7 @@ async def _index_options(
 
 
 async def _index_packages(
-    session: AsyncEvalSession,
+    state: AsyncEvalState,
     command: Search,
     where: SearchTarget,
     built: Cached,
@@ -559,8 +562,8 @@ async def _index_packages(
     """Walk the package set, find the binaries it installs, and record both."""
     pkgs = _named(where.pkgs)
     lib = _named(where.lib)
-    records = await indexed_packages(session, pkgs.value, lib.value)
-    built.pkgs_path = await package_identity(session, pkgs.value)
+    records = await indexed_packages(state, pkgs.value, lib.value)
+    built.pkgs_path = await package_identity(state, pkgs.value)
     built.paths["pkgs"] = pkgs.path
 
     # **The binaries are best effort, and the walk is not.** `programs.sqlite`
@@ -571,7 +574,7 @@ async def _index_packages(
     # module-system fixture died with "the channel expressions hold no
     # programs.sqlite" and lost the 24 571 packages it had just walked.
     try:
-        index = await program_index_for(session, Path(built.pkgs_path), built.system, command.channel)
+        index = await program_index_for(state, Path(built.pkgs_path), built.system, command.channel)
     except (OSError, NixError) as exc:
         built.programs_db = None
         built.origin = ""
