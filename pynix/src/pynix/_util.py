@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, TextIO, cast
 
 import anyio
+import huggorm
 import structlog
 from rich.console import Console
 from rich.live import Live
@@ -21,11 +22,13 @@ from rich.text import Text
 
 import nanopynix
 from nanopynix._typechecking import BEARTYPING, no_runtime_type_check
+from nanopynix.libstore import init_libexpr, load_config_once, load_plugins_once
 from pynix._build_monitor import MonitorState, render
 
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import AsyncGenerator, Sequence
 
+    from huggorm import AsyncEvalState, LogRecord
     from nanopynix_helpers import EvaluationTargetError
     from structlog.typing import EventDict, WrappedLogger
 
@@ -343,6 +346,85 @@ async def eval_session(
         nix.eval(store) as session,
     ):
         yield nix, store, session
+
+
+def init_nix(*, load_config: bool = True) -> None:
+    """Set up Nix for this process, as ``nanopynix.inproc.Session`` does.
+
+    nanopynix's once-guards and not huggorm's functions: a nanopynix session
+    in the same process would load ``nix.conf`` a second time, and that load
+    overwrites what a caller set after the first.
+    """
+    load_config_once(load_config)
+    load_plugins_once()
+    init_libexpr()
+
+
+@asynccontextmanager
+async def huggorm_eval_session(
+    store_uri: str,
+    *,
+    print_build_logs: bool = False,
+) -> AsyncGenerator[tuple[huggorm.AsyncSession, huggorm.AsyncStore, AsyncEvalState]]:
+    """Open a huggorm session, store and evaluator, forwarding logs for the duration of the block."""
+    init_nix()
+    async with huggorm.AsyncSession(store_uri) as session:
+        store = session.store()
+        state = session.eval(store)
+        async with forward_state_logs(session, state, print_build_logs=print_build_logs):
+            yield session, store, state
+
+
+@asynccontextmanager
+@no_runtime_type_check  # log_file is duck-typed against TextIO -- see configure_logging above.
+async def forward_state_logs(
+    session: huggorm.AsyncSession,
+    state: AsyncEvalState,
+    *,
+    print_build_logs: bool = False,
+    log_file: TextIO | None = None,
+) -> AsyncGenerator[LogGate]:
+    """Print what *state* logs while the block runs, as Nix prints it.
+
+    The records of the state's own thread only. A fetch or a build that runs
+    on another Nix thread reaches huggorm's process stream, and nanopynix's
+    log pump holds that stream while a nanopynix session is open. Issue #1053.
+    """
+    gate = LogGate(DEFAULT_VERBOSITY)
+    old_config = structlog.get_config()
+    configure_logging(file=log_file, verbosity=gate.level)
+    # Bound once, as in `_forward_nix_logs`.
+    out = log_file if log_file is not None else sys.stderr
+    colour = _wants_colour(out)
+
+    def write(record: LogRecord) -> None:
+        line = _record_line(record, print_build_logs=print_build_logs, gate=gate)
+        if line is not None:
+            out.write(f"{line if colour else nanopynix.strip_ansi(line)}\n")
+
+    try:
+        async with session.forward(state, write, level=int(gate.level)):
+            yield gate
+    finally:
+        structlog.configure(**old_config)
+
+
+def _record_line(record: LogRecord, *, print_build_logs: bool, gate: LogGate) -> str | None:
+    """:func:`_nix_line` for a huggorm record."""
+    match record.action():
+        case "msg":
+            info = record.info()
+            return record.text() if info is None else info.msg()
+        case "start":
+            text = record.text()
+            if not text or record.level() > gate.level:
+                return None
+            return f"{text}..."
+        case "result" if print_build_logs and record.type() in {_RESULT_BUILD_LOG_LINE, _RESULT_POST_BUILD_LOG_LINE}:
+            texts = [field.text() for field in record.fields() if not field.is_int()]
+            return texts[-1] if texts else None
+        case _:
+            return None
 
 
 class _LogActivity:
