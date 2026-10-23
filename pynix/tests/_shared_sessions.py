@@ -44,7 +44,7 @@ import nanopynix
 import pynix._util as pynix_util
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Sequence
+    from collections.abc import AsyncGenerator, Mapping, Sequence
 
     import pytest
 
@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 #: shares them.
 FAITHFUL_SESSIONS_ENV_VAR = "NANOPYNIX_TEST_FAITHFUL_SESSIONS"
 
-_PATCHED_NAMES = ("nix_session", "store_session", "eval_session", "huggorm_eval_session")
+_PATCHED_NAMES = ("nix_session", "store_session", "eval_session", "huggorm_eval_session", "huggorm_build_session")
 
 
 class SharedSessions:
@@ -63,6 +63,8 @@ class SharedSessions:
 
     def __init__(self) -> None:
         self._stack = contextlib.AsyncExitStack()
+        # Apart from `_stack`: a huggorm command closes it, as `_close_nanopynix` says.
+        self._nanopynix_stack = contextlib.AsyncExitStack()
         # Commands are driven sequentially by the tests, but the LSP tests
         # overlap operations, so opening the shared objects has to be atomic.
         self._lock = anyio.Lock()
@@ -72,6 +74,7 @@ class SharedSessions:
         self._evaluators: dict[tuple[str, tuple[int, int] | None], Any] = {}
         self._huggorm: huggorm.AsyncSession | None = None
         self._huggorm_states: dict[tuple[str, tuple[int, int] | None], tuple[Any, Any]] = {}
+        self._huggorm_builds: dict[tuple[Any, Any], tuple[Any, Any, Any]] = {}
         self._originals = {name: getattr(pynix_util, name) for name in _PATCHED_NAMES}
 
     # ── shared object construction ─────────────────────────────────────
@@ -86,7 +89,7 @@ class SharedSessions:
             # developer machine are none of its business. This mattered less
             # while a session sent its own defaults over the file anyway; it
             # matters now that the file stands unless a caller speaks.
-            self._session = await self._stack.enter_async_context(nanopynix.inproc.Session(load_config=False))
+            self._session = await self._nanopynix_stack.enter_async_context(nanopynix.inproc.Session(load_config=False))
         return self._session
 
     async def _shared_store(self, store_uri: str) -> tuple[Any, Any]:
@@ -94,7 +97,7 @@ class SharedSessions:
         store = self._stores.get(key)
         session = await self._shared_session()
         if store is None:
-            store = await self._stack.enter_async_context(session.store(store_uri))
+            store = await self._nanopynix_stack.enter_async_context(session.store(store_uri))
             self._stores[key] = store
         return session, store
 
@@ -103,23 +106,56 @@ class SharedSessions:
         key = _store_key(store_uri)
         evaluator = self._evaluators.get(key)
         if evaluator is None:
-            evaluator = await self._stack.enter_async_context(session.eval(store))
+            evaluator = await self._nanopynix_stack.enter_async_context(session.eval(store))
             self._evaluators[key] = evaluator
         return session, store, evaluator
 
-    async def _shared_state(self, store_uri: str) -> tuple[huggorm.AsyncSession, Any, Any]:
+    async def _close_nanopynix(self) -> None:
+        """Close the shared nanopynix session, which the next nanopynix command opens again.
+
+        Its log pump subscribes to the process stream, and so does a huggorm
+        command. The second subscriber replaces the first, so with both open
+        the build log and a failed dependency's cause reach the wrong one.
+        """
+        await self._nanopynix_stack.aclose()
+        self._nanopynix_stack = contextlib.AsyncExitStack()
+        self._session = None
+        self._stores.clear()
+        self._evaluators.clear()
+
+    async def _shared_huggorm(self) -> huggorm.AsyncSession:
+        await self._close_nanopynix()
         if self._huggorm is None:
             # `load_config=False`, for the reason `_shared_session` gives.
             pynix_util.init_nix(load_config=False)
             self._huggorm = await self._stack.enter_async_context(huggorm.AsyncSession())
+        return self._huggorm
+
+    async def _shared_build(self, store_uri: str, eval_store_uri: str | None) -> tuple[Any, Any, Any, Any]:
+        session = await self._shared_huggorm()
+        key = (_store_key(store_uri), None if eval_store_uri is None else _store_key(eval_store_uri))
+        triple = self._huggorm_builds.get(key)
+        if triple is None:
+            build_store = session.store(store_uri)
+            if eval_store_uri is None:
+                triple = (build_store, build_store, session.eval(build_store))
+            else:
+                eval_store = session.store(eval_store_uri)
+                triple = (build_store, eval_store, session.eval(eval_store, None, build_store))
+            self._huggorm_builds[key] = triple
+        build_store, eval_store, state = triple
+        return session, build_store, eval_store, state
+
+    async def _shared_state(self, store_uri: str) -> tuple[huggorm.AsyncSession, Any, Any]:
+        session = await self._shared_huggorm()
         key = _store_key(store_uri)
         pair = self._huggorm_states.get(key)
         if pair is None:
-            store = self._huggorm.store(store_uri)
-            pair = (store, self._huggorm.eval(store))
+            store = session.store(store_uri)
+            pair = (store, session.eval(store))
             self._huggorm_states[key] = pair
         store, state = pair
-        return self._huggorm, store, state
+        return session, store, state
 
     # ── the patched helpers ────────────────────────────────────────────
 
@@ -219,10 +255,45 @@ class SharedSessions:
     ) -> AsyncGenerator[tuple[Any, Any, Any]]:
         async with self._lock:
             session, store, state = await self._shared_state(store_uri)
-        # No process stream: the shared nanopynix sessions of this suite hold
-        # it, and a second subscriber would replace theirs.
-        async with pynix_util.forward_state_logs(session, state, print_build_logs=print_build_logs, process_logs=False):
+        async with pynix_util.forward_state_logs(session, state, print_build_logs=print_build_logs):
             yield session, store, state
+
+    @contextlib.asynccontextmanager
+    async def huggorm_build_session(
+        self,
+        store_uri: str,
+        *,
+        eval_store_uri: str | None = None,
+        settings: Mapping[str, str] | None = None,
+        verbosity: nanopynix.LogLevelInput | None = None,
+        print_build_logs: bool = False,
+    ) -> AsyncGenerator[tuple[Any, Any, Any, Any]]:
+        if settings:
+            # A setting is a process global, and a shared evaluator was built
+            # before it. Put each one back, or every later test inherits it.
+            async with self._lock:
+                await self._close_nanopynix()
+            before = {name: huggorm.get_setting(name) for name in settings}
+            try:
+                async with self._originals["huggorm_build_session"](
+                    store_uri,
+                    eval_store_uri=eval_store_uri,
+                    settings=settings,
+                    verbosity=verbosity,
+                    print_build_logs=print_build_logs,
+                ) as quad:
+                    yield quad
+            finally:
+                for name, value in before.items():
+                    if value is not None:
+                        huggorm.set_setting(name, value)
+            return
+        async with self._lock:
+            session, build_store, eval_store, state = await self._shared_build(store_uri, eval_store_uri)
+        async with pynix_util.forward_state_logs(
+            session, state, verbosity=verbosity, print_build_logs=print_build_logs
+        ):
+            yield session, build_store, eval_store, state
 
     # ── installation ───────────────────────────────────────────────────
 
@@ -255,6 +326,7 @@ class SharedSessions:
             )
 
     async def aclose(self) -> None:
+        await self._nanopynix_stack.aclose()
         await self._stack.aclose()
 
 

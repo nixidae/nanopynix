@@ -14,6 +14,7 @@ import shutil
 import tempfile
 import time
 from contextlib import AsyncExitStack, asynccontextmanager
+from dataclasses import dataclass
 
 # A real import, not a TYPE_CHECKING one: `libpynix` resolves the annotations
 # of a command to build its parser, so `Path` has to exist as an object and not
@@ -25,18 +26,39 @@ import anyio
 import anyio.to_thread
 import structlog
 from anyio import Path as AnyioPath
+from huggorm.errors import NixError
+from huggorm.fod import (
+    FodSourceUpdateError,
+    derivation_name_from_path,
+    extract_fod_hash_mismatch,
+    extract_unique_fod_hash_mismatch,
+    find_fod_hash_literal,
+    mismatch_is_target_fod,
+    replace_fod_hash,
+)
 from nanopynix_helpers.build import FodBuildError, build_with_fod_update
 
 import nanopynix
 from nanopynix._typechecking import BEARTYPING
-from pynix import _impl
+from pynix import _evaluate, _impl
 from pynix._build_monitor import BuildPlan, MonitorState
 from pynix._impl.copy import closure_of, copy_verified
-from pynix._util import error_console, error_exit, nix_session, print_json, report_and_exit
+from pynix._util import (
+    error_console,
+    error_exit,
+    huggorm_build_session,
+    nix_session,
+    print_json,
+    record_message,
+    report_and_exit,
+)
 from pynix.build import Build
 
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import AsyncGenerator
+
+    from huggorm import AsyncEvalState, AsyncSession, AsyncStore, AsyncValue, CapturedLogs
+    from huggorm.fod import FodHashMismatch
 
     # The protocol, and not one engine's class, for the reason
     # `nanopynix_helpers.build` gives. Issue #232.
@@ -54,6 +76,9 @@ from pynix.target import (
 logger = structlog.get_logger("pynix.build")
 #: Explicitly the daemon, never "auto" -- see _promote_to_host_store.
 _HOST_STORE_URI = "daemon"
+_MAX_FOD_UPDATES = 10
+#: Nix logs the cause of a failed dependency, such as a hash mismatch, as an error.
+_CAUSE_LEVEL = int(nanopynix.LogLevel.WARN)
 
 
 @asynccontextmanager
@@ -143,7 +168,7 @@ async def _require_a_local_file(target: EvaluationTarget) -> None:
         error_exit("--update-fod requires --file to name a local file")
 
 
-async def _evaluate_build_target(target: EvaluationTarget, session: Any) -> ValueProxy:
+async def _evaluate_build_target_on_nanopynix(target: EvaluationTarget, session: Any) -> ValueProxy:
     try:
         root = await evaluate_target(target, session, auto_call_file=True, attr_search=base_attr_search())
     except EvaluationTargetError as exc:
@@ -163,7 +188,149 @@ class BuildTargetError(EvaluationTargetError):
     pass
 
 
-async def _build_target(  # noqa: PLR0913 -- tracked complexity/arg-count debt, see TODO.md
+@dataclass(frozen=True, slots=True)
+class BuildSession:
+    """A huggorm evaluator, and the two stores that a build reads and writes."""
+
+    session: AsyncSession
+    build_store: AsyncStore
+    evaluation_store: AsyncStore
+    state: AsyncEvalState
+
+
+async def _evaluate_build_target(target: EvaluationTarget, state: AsyncEvalState) -> AsyncValue:
+    try:
+        root = await _evaluate.evaluate_target(
+            target, state, auto_call_file=True, attr_search=_evaluate.base_attr_search()
+        )
+    except EvaluationTargetError as exc:
+        raise BuildTargetError(str(exc)) from exc
+    # Before the build, for the reason `_evaluate_build_target_on_nanopynix` gives.
+    kind = await _evaluate.configuration_kind(state, root)
+    if kind is not None:
+        raise BuildTargetError(configuration_message(kind, target.selected_attr()))
+    return root
+
+
+async def _build_root(build: BuildSession, root: AsyncValue) -> dict[str, str]:
+    """Build every output of *root*, and give the path of each one.
+
+    ``drv_path`` is Nix's own test of a derivation, and raises Nix's message
+    for any other value.
+    """
+    drv_path = await build.evaluation_store.print_store_path(await root.drv_path())
+    derived = await build.build_store.parse_derived_path(f"{drv_path}^*")
+    eval_store = None if build.evaluation_store is build.build_store else build.evaluation_store
+    [result] = await build.build_store.build_paths_with_results([derived], eval_store=eval_store)
+    error = result.error()
+    if error is not None:
+        raise error
+    success = result.success()
+    if success is None:
+        raise RuntimeError("a build reported neither success nor failure")
+    return {
+        name: await build.build_store.print_store_path(realisation.out_path())
+        for name, realisation in success.built_outputs().items()
+    }
+
+
+def _messages(logs: CapturedLogs) -> list[str]:
+    return [nanopynix.strip_ansi(record_message(record)) for record in logs.records if record.action() == "msg"]
+
+
+async def _updated_source(source_file: Path, mismatch: FodHashMismatch) -> str:
+    """The text of *source_file* with the hash of *mismatch* replaced, and its diff printed."""
+    try:
+        source = await AnyioPath(source_file).read_text()
+        literal = find_fod_hash_literal(
+            source,
+            mismatch.specified,
+            derivation_name=derivation_name_from_path(mismatch.drv_path),
+        )
+        updated = replace_fod_hash(source, literal, mismatch.got)
+    except (OSError, FodSourceUpdateError) as exc:
+        raise BuildTargetError(f"cannot update fixed-output hash: {exc}") from exc
+    _print_diff(source_file, source, updated)
+    return updated
+
+
+async def _build_target(
+    target: EvaluationTarget,
+    build: BuildSession,
+    *,
+    update_fod: bool,
+    dry_run: bool,
+) -> tuple[dict[str, str], int]:
+    """Build a target, applying only unambiguous plain-string FOD updates.
+
+    Each attempt evaluates again, after the evaluator forgets every file it
+    read, so it reads its own edit. A mismatch that names a derivation must be
+    a fixed-output member of the target's closure before the source changes.
+    """
+    reference = await target.file_reference()
+    source_file = reference.local_path if reference is not None else None
+    updates = 0
+    while True:
+        root: AsyncValue | None = None
+        # A failed dependency's cause is not in the error of the target that
+        # needed it. It arrives on the process stream, and only a capture has
+        # all of it when the build returns.
+        async with build.session.capture_process(level=_CAUSE_LEVEL) as logs:
+            try:
+                root = await _evaluate_build_target(target, build.state)
+                return await _build_root(build, root), updates
+            except NixError as exc:
+                error = exc
+        mismatch = extract_fod_hash_mismatch(str(error)) or extract_unique_fod_hash_mismatch(_messages(logs))
+        if not update_fod or mismatch is None:
+            raise error
+        if mismatch.drv_path is not None and (
+            root is None or not await mismatch_is_target_fod(build.evaluation_store, build.state, root, mismatch)
+        ):
+            raise BuildTargetError(
+                "fixed-output hash mismatch was not found in the evaluated target derivation closure"
+            ) from error
+        if source_file is None:
+            raise BuildTargetError("--update-fod currently requires --file") from error
+        if updates >= _MAX_FOD_UPDATES:
+            raise BuildTargetError(f"stopped after {_MAX_FOD_UPDATES} fixed-output hash updates") from error
+        updated = await _updated_source(source_file, mismatch)
+        updates += 1
+        if dry_run:
+            return {}, updates
+        await AnyioPath(source_file).write_text(updated)
+        for path in await build.state.cached_files():
+            await build.state.forget_file(path)
+
+
+async def _build_on_huggorm(
+    command: Build, target: EvaluationTarget, settings: PynixNixSettings
+) -> tuple[dict[str, str], int]:
+    async with huggorm_build_session(
+        command.store,
+        eval_store_uri=command.eval_store,
+        settings=settings.to_worker_settings(explicit_only=True),
+        verbosity=command.verbosity,
+        print_build_logs=command.print_build_logs,
+    ) as (session, build_store, eval_store, state):
+        logger.info("pynix build evaluating target")
+        built = await _build_target(
+            target,
+            BuildSession(session, build_store, eval_store, state),
+            update_fod=command.update_fod,
+            dry_run=command.dry_run,
+        )
+    logger.info("pynix build finished")
+    return built
+
+
+def _on_nanopynix(command: Build, *, namespaced: bool) -> bool:
+    """Whether this build still runs on nanopynix: issue #1051 has not moved
+    ``--nom``, ``--namespaced`` and ``--copy`` to huggorm yet."""
+    return namespaced or command.nom or command.copy is not None
+
+
+async def _build_target_on_nanopynix(  # noqa: PLR0913 -- tracked complexity/arg-count debt, see TODO.md
     target: EvaluationTarget,
     session: Any,
     *,
@@ -177,7 +344,7 @@ async def _build_target(  # noqa: PLR0913 -- tracked complexity/arg-count debt, 
     """Build a target, applying only unambiguous plain-string FOD updates."""
 
     async def _evaluate() -> ValueProxy:
-        root = await _evaluate_build_target(target, session)
+        root = await _evaluate_build_target_on_nanopynix(target, session)
         logger.info("pynix build target evaluated")
         if monitor is not None:
             monitor.plan = await _plan_or_none(evaluation_store, build_store or evaluation_store, root)
@@ -311,7 +478,13 @@ async def run_build(command: Build) -> None:
     # Outside the session, so the error passes through its log forwarding:
     # --nom counts it in the last frame, and the message prints after that.
     try:
-        outputs, updates, copied = await _build_in_session(command, target, namespaced=namespaced, settings=settings)
+        if _on_nanopynix(command, namespaced=namespaced):
+            outputs, updates, copied = await _build_in_session(
+                command, target, namespaced=namespaced, settings=settings
+            )
+        else:
+            outputs, updates = await _build_on_huggorm(command, target, settings)
+            copied = None
     except BuildTargetError as exc:
         report_and_exit(exc)
 
@@ -360,7 +533,7 @@ async def _build_in_session(
             async with nix.store(store_uri) as store:
                 async with nix.eval(store) as session:
                     logger.info("pynix build evaluating target")
-                    outputs, updates = await _build_target(
+                    outputs, updates = await _build_target_on_nanopynix(
                         target,
                         session,
                         nix=nix,
@@ -381,7 +554,7 @@ async def _build_in_session(
             ):
                 async with nix.eval(eval_store) as session:
                     logger.info("pynix build evaluating target")
-                    outputs, updates = await _build_target(
+                    outputs, updates = await _build_target_on_nanopynix(
                         target,
                         session,
                         nix=nix,

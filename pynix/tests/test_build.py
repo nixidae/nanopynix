@@ -6,16 +6,17 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from anyio import Path as AnyioPath
-from nanopynix_helpers import build as nanopynix_helpers_build
-from nanopynix_helpers.fod import replace_fod_hash as _real_replace_fod_hash
+from huggorm.errors import BuildError, EvalError
+from huggorm.fod import replace_fod_hash as _real_replace_fod_hash
 
 import nanopynix
 from nanopynix._ansi import strip_ansi
-from nanopynix.exceptions import EvalError, StoreError
 from nanopynix_testing.nix_environment import with_nixpkgs
 from nanopynix_testing.nix_markers import LINUX_CHROOT_BUILD
-from pynix import parse
+from pynix import _util, parse
+from pynix._impl import build as build_impl
 from pynix._impl.build import (  # pyright: ignore[reportPrivateUsage] -- test drives the private build step directly to exercise FOD-update/dry-run paths
+    BuildSession,
     BuildTargetError,
     _build_target,
 )
@@ -495,7 +496,7 @@ async def test_build_propagates_a_non_fod_build_failure(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A build failure unrelated to a FOD hash mismatch must surface as the
-    original StoreError, not be swallowed or turned into a FOD update."""
+    original BuildError, not be swallowed or turned into a FOD update."""
     nix_file = tmp_path / "build-test.nix"
     nix_file.write_text(
         with_nixpkgs(
@@ -515,7 +516,7 @@ async def test_build_propagates_a_non_fod_build_failure(
     )
     cmd = parse(["build", "--file", str(nix_file), *shared_nix_environment.pynix_store_args()])
 
-    with pytest.raises(StoreError):
+    with pytest.raises(BuildError):
         await cmd.run()
 
     assert capsys.readouterr().out == ""
@@ -834,11 +835,11 @@ runCommand "payload" {
     async def _always_false(*_args: object, **_kwargs: object) -> bool:
         return False
 
-    monkeypatch.setattr(nanopynix_helpers_build, "mismatch_is_target_fod", _always_false)
+    monkeypatch.setattr(build_impl, "mismatch_is_target_fod", _always_false)
 
-    async with shared_nix_environment.rpc_session() as nix, nix.store() as store, nix.eval(store) as session:
+    async with _util.huggorm_build_session(shared_nix_environment.store_uri) as opened:
         with pytest.raises(BuildTargetError, match="not found in the evaluated target derivation closure"):
-            await _build_target(target, session, nix=nix, evaluation_store=store, update_fod=True, dry_run=False)
+            await _build_target(target, BuildSession(*opened), update_fod=True, dry_run=False)
 
 
 async def test_build_target_requires_a_file_target_to_update_a_fod(
@@ -856,9 +857,9 @@ async def test_build_target_requires_a_file_target_to_update_a_fod(
     init_flake_repo(flake_dir, f'default = builtins.fetchurl {{ url = "file://{payload}"; sha256 = ""; }};')
     target = EvaluationTarget(file=None, attr=None, flake=f"{flake_dir}#default")
 
-    async with shared_nix_environment.rpc_session() as nix, nix.store() as store, nix.eval(store) as session:
+    async with _util.huggorm_build_session(shared_nix_environment.store_uri) as opened:
         with pytest.raises(BuildTargetError, match="--update-fod currently requires --file"):
-            await _build_target(target, session, nix=nix, evaluation_store=store, update_fod=True, dry_run=False)
+            await _build_target(target, BuildSession(*opened), update_fod=True, dry_run=False)
 
 
 @LINUX_CHROOT_BUILD
@@ -889,8 +890,8 @@ runCommand "payload" {
     def _rewrite_with_still_wrong_hash(source: str, literal: Any, _got: str) -> str:
         return _real_replace_fod_hash(source, literal, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 
-    monkeypatch.setattr(nanopynix_helpers_build, "replace_fod_hash", _rewrite_with_still_wrong_hash)
+    monkeypatch.setattr(build_impl, "replace_fod_hash", _rewrite_with_still_wrong_hash)
 
-    async with shared_nix_environment.rpc_session() as nix, nix.store() as store, nix.eval(store) as session:
+    async with _util.huggorm_build_session(shared_nix_environment.store_uri) as opened:
         with pytest.raises(BuildTargetError, match="stopped after 10 fixed-output hash updates"):
-            await _build_target(target, session, nix=nix, evaluation_store=store, update_fod=True, dry_run=False)
+            await _build_target(target, BuildSession(*opened), update_fod=True, dry_run=False)
