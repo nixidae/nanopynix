@@ -7,6 +7,8 @@ string in ``pynix`` and in ``easykubenix``, character for character.
 
 from __future__ import annotations
 
+import pytest
+
 from libpynix import Command, attr_option, build_parser, dispatch, file_option, flake_option
 
 
@@ -50,6 +52,22 @@ def test_a_flake_reference_is_a_string_and_keeps_every_separator() -> None:
 def test_none_of_the_three_is_required() -> None:
     command = parse()
     assert (command.file, command.attr, command.flake) == (None, None, None)
+
+
+@pytest.mark.parametrize("flag", ["--file", "-f", "--attr", "-A", "--flake"])
+def test_a_second_use_is_refused(flag: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """argparse kept the last of two and said nothing, so `--attr a --attr b`
+    built `b` alone with exit 0 (nixidae/nixidae#1050)."""
+    with pytest.raises(SystemExit) as raised:
+        parse(flag, "a", flag, "b")
+    assert raised.value.code == 2
+    assert f"{flag} may be given once" in capsys.readouterr().err
+
+
+def test_the_long_and_the_short_spelling_are_one_option(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        parse("--attr", "a", "-A", "b")
+    assert "may be given once" in capsys.readouterr().err
 
 
 def test_each_option_carries_a_help_line() -> None:

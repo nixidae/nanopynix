@@ -49,6 +49,7 @@ def file_option(*, complete: Completer | None = None) -> str | None:
         short="f",
         help="Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path.",
         complete=complete,
+        once=True,
     )
 
 
@@ -60,6 +61,7 @@ def attr_option(*, complete: Completer | None = None) -> str | None:
         short="A",
         help="Dot-separated attribute path within the evaluation result.",
         complete=complete,
+        once=True,
     )
 
 
@@ -70,4 +72,5 @@ def flake_option(*, complete: Completer | None = None) -> str | None:
         None,
         help="Evaluate FLAKE, optionally with a '#'-separated attribute path.",
         complete=complete,
+        once=True,
     )

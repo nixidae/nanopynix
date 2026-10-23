@@ -93,6 +93,11 @@ class Spec:
     #: `nix shell --command CMD ARGS...` does. Options only, on a `list[str]`
     #: field. `parse_args` is what makes a `--` after the flag reach it.
     remainder: bool = False
+    #: True for a single-value option that a second use refuses. argparse
+    #: keeps the last value of a repeated option and says nothing, so
+    #: `--attr a --attr b` selected `b` alone, and a caller who meant both
+    #: got exit 0 (nixidae/nixidae#1050).
+    once: bool = False
 
 
 #: The default of a positional that the caller must give. Not `None`, which is
@@ -111,6 +116,7 @@ def opt(  # noqa: PLR0913 -- one keyword for each thing a declaration can say; c
     required: bool = False,
     complete: Completer | None = None,
     remainder: bool = False,
+    once: bool = False,
 ) -> Any:
     """Declare an option.
 
@@ -122,7 +128,7 @@ def opt(  # noqa: PLR0913 -- one keyword for each thing a declaration can say; c
     :class:`pynix._settings.ConfiguredCommand` reads it.
 
     *remainder* makes the option take every argument after it; see
-    :attr:`Spec.remainder`.
+    :attr:`Spec.remainder`. *once* refuses a second use; see :attr:`Spec.once`.
     """
     if required and configured:
         raise ValueError("an option cannot be both required and configured; see Spec.required")
@@ -135,6 +141,7 @@ def opt(  # noqa: PLR0913 -- one keyword for each thing a declaration can say; c
         required=required,
         complete=complete,
         remainder=remainder,
+        once=once,
     )
 
 
@@ -340,6 +347,22 @@ class _Remainder(argparse.Action):
         setattr(namespace, _REMAINDER_FIELD, self.dest)
 
 
+class _Once(argparse.Action):
+    """Store the value, and refuse a second one."""
+
+    @override
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: str | Sequence[Any] | None,
+        option_string: str | None = None,
+    ) -> None:
+        if hasattr(namespace, self.dest):
+            parser.error(f"{option_string} may be given once")
+        setattr(namespace, self.dest, values)
+
+
 def parse_args(parser: argparse.ArgumentParser, argv: Sequence[str] | None = None) -> argparse.Namespace:
     """`parser.parse_args(argv)`, and a `--` after a remainder option reaches it.
 
@@ -388,6 +411,8 @@ def _option_kwargs(field: str, spec: Spec, inner: Any, *, repeated: bool) -> dic
         kwargs["action"] = "store_true"
     elif repeated:
         kwargs["action"] = "append"
+    elif spec.once:
+        kwargs["action"] = _Once
     if spec.required:
         kwargs["required"] = True
     return kwargs
