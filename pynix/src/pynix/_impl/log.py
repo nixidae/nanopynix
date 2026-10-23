@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import sys
 
-from pynix._util import store_session
+from pynix._util import huggorm_store_session
 from pynix.log import Log
 
 
 async def run_log(command: Log) -> None:
     """The body of :meth:`pynix.log.Log.run`."""
-    async with store_session(command.store) as (_nix, store):
-        log = await store.get_build_log(command.path)
+    async with huggorm_store_session(command.store) as (_session, store):
+        log = await store.get_build_log(await store.parse_store_path(command.path))
 
     if log is None:
         raise SystemExit(f"build log of '{command.path}' is not available")

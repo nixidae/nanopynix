@@ -22,13 +22,14 @@ import anyio.to_thread
 import structlog
 
 from nanopynix._typechecking import BEARTYPING
-from nanopynix.models import StorePath
-from pynix._util import error_exit, print_json, resolve_local_store_path, store_session
+from pynix._util import error_exit, huggorm_local_store_path, huggorm_store_session, print_json
 from pynix.why_depends import WhyDepends
 
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import Iterator
     from typing import Any
+
+    from huggorm import AsyncStore
 logger = structlog.get_logger("pynix.why_depends")
 
 #: Bytes of context on each side of a hit. The number `nix why-depends
@@ -36,7 +37,7 @@ logger = structlog.get_logger("pynix.why_depends")
 _EXCERPT_MARGIN = 32
 
 
-async def _shortest_chain(store: Any, package: str, dependency: str) -> list[str] | None:
+async def _shortest_chain(store: AsyncStore, package: str, dependency: str) -> list[str] | None:
     """The shortest chain of references from *package* to *dependency*.
 
     A breadth-first walk, so the first chain it reaches is a shortest one.
@@ -55,9 +56,9 @@ async def _shortest_chain(store: Any, package: str, dependency: str) -> list[str
     queue: deque[str] = deque([package])
     while queue:
         current = queue.popleft()
-        info = await store.query_path_info(current)
-        for reference in info.references:
-            child = str(reference)
+        info = await store.query_path_info(await store.parse_store_path(current))
+        for reference in info.references():
+            child = await store.print_store_path(reference)
             if child in reached_from:
                 continue
             reached_from[child] = current
@@ -152,7 +153,7 @@ def _printable(raw: bytes) -> str:
     return "".join(chr(byte) if 0x20 <= byte < 0x7F else "." for byte in raw)  # noqa: PLR2004 -- the printable ASCII range
 
 
-async def _precise_edges(store: Any, chain: list[str]) -> list[dict[str, Any]]:
+async def _precise_edges(store: AsyncStore, chain: list[str]) -> list[dict[str, Any]]:
     """For each link of *chain*, the files of the referrer that hold the referee.
 
     Empty for a chain of one node, which is what a path that depends on itself
@@ -160,8 +161,8 @@ async def _precise_edges(store: Any, chain: list[str]) -> list[dict[str, Any]]:
     """
     edges: list[dict[str, Any]] = []
     for referrer, referee in itertools.pairwise(chain):
-        root = await resolve_local_store_path(store, referrer)
-        hash_part = StorePath(referee).hash_part
+        root = await huggorm_local_store_path(store, referrer)
+        hash_part = (await store.parse_store_path(referee)).hash_part()
         logger.info("pynix why-depends scanning", referrer=referrer, referee=referee)
         hits = await anyio.to_thread.run_sync(functools.partial(_scan_for_hash, root, hash_part))
         edges.append({"from": referrer, "to": referee, "hits": hits})
@@ -170,9 +171,10 @@ async def _precise_edges(store: Any, chain: list[str]) -> list[dict[str, Any]]:
 
 async def run_why_depends(command: WhyDepends) -> None:
     """The body of :meth:`pynix.why_depends.WhyDepends.run`."""
-    async with store_session(command.store) as (_nix, store):
+    async with huggorm_store_session(command.store) as (_session, store):
         try:
-            closure = {str(path) for path in await store.compute_fs_closure(command.package)}
+            package = await store.parse_store_path(command.package)
+            closure = {await store.print_store_path(path) for path in await store.compute_fs_closure([package])}
         except Exception as exc:
             # stderr, and not stdout: the output of this command is JSON, and
             # `pynix why-depends ... | jq` must not read this instead.

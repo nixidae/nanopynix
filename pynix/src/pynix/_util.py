@@ -6,7 +6,7 @@ import logging
 import os
 import sys
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 
 # A real import, and not a `TYPE_CHECKING` one: `resolve_local_store_path`
 # builds a `Path` at run time.
@@ -24,6 +24,7 @@ import nanopynix
 from nanopynix._typechecking import BEARTYPING, no_runtime_type_check
 from nanopynix.libstore import init_libexpr, load_config_once, load_plugins_once
 from pynix._build_monitor import MonitorState, RecordEvent, render
+from pynix._store_layout import StoreLayout
 
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import AsyncGenerator, Mapping, Sequence
@@ -306,6 +307,16 @@ async def resolve_local_store_path(store: Any, path: str) -> Path:
     return Path(dirs.real_store_dir) / store_path.removeprefix(f"{store_dir}/") / suffix
 
 
+async def huggorm_local_store_path(store: huggorm.AsyncStore, path: str) -> Path:
+    """:func:`resolve_local_store_path`, for a huggorm store."""
+    layout = await StoreLayout.of(store)
+    store_path, suffix = _split_store_path(path, layout.store_dir)
+    await store.query_path_info(await store.parse_store_path(store_path))
+    if layout.real_store_dir is None:
+        raise SystemExit("store does not expose a local filesystem path")
+    return Path(layout.to_disk(store_path)) / suffix
+
+
 def _split_store_path(path: str, store_dir: str) -> tuple[str, Path]:
     prefix = f"{store_dir}/"
     if not path.startswith(prefix):
@@ -371,6 +382,20 @@ async def huggorm_eval_session(
 
 
 @asynccontextmanager
+async def huggorm_store_session(
+    store_uri: str,
+    *,
+    verbosity: nanopynix.LogLevelInput | None = None,
+) -> AsyncGenerator[tuple[huggorm.AsyncSession, huggorm.AsyncStore]]:
+    """Open a huggorm session and store with no evaluator, forwarding logs for the duration of the block."""
+    init_nix()
+    async with huggorm.AsyncSession(store_uri) as session:
+        store = session.store()
+        async with forward_state_logs(session, None, verbosity=verbosity):
+            yield session, store
+
+
+@asynccontextmanager
 async def huggorm_build_session(  # noqa: PLR0913 -- keyword-only, one per session option, as nix_session
     store_uri: str,
     *,
@@ -408,7 +433,7 @@ async def huggorm_build_session(  # noqa: PLR0913 -- keyword-only, one per sessi
 @no_runtime_type_check  # log_file is duck-typed against TextIO -- see configure_logging above.
 async def forward_state_logs(  # noqa: PLR0913 -- keyword-only, one per forwarding option, as forward_nix_logs
     session: huggorm.AsyncSession,
-    state: AsyncEvalState,
+    state: AsyncEvalState | None,
     *,
     verbosity: nanopynix.LogLevelInput | None = None,
     print_build_logs: bool = False,
@@ -450,7 +475,7 @@ async def forward_state_logs(  # noqa: PLR0913 -- keyword-only, one per forwardi
     callback = write if monitor is None else fold
     try:
         async with (
-            session.forward(state, callback, level=int(gate.level)),
+            session.forward(state, callback, level=int(gate.level)) if state is not None else nullcontext(),
             session.forward_process(callback, level=int(gate.level)),
             _redrawing(live, monitor),
         ):

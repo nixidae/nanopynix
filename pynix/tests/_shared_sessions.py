@@ -55,7 +55,14 @@ if TYPE_CHECKING:
 #: shares them.
 FAITHFUL_SESSIONS_ENV_VAR = "NANOPYNIX_TEST_FAITHFUL_SESSIONS"
 
-_PATCHED_NAMES = ("nix_session", "store_session", "eval_session", "huggorm_eval_session", "huggorm_build_session")
+_PATCHED_NAMES = (
+    "nix_session",
+    "store_session",
+    "eval_session",
+    "huggorm_eval_session",
+    "huggorm_store_session",
+    "huggorm_build_session",
+)
 
 
 class SharedSessions:
@@ -257,6 +264,18 @@ class SharedSessions:
             session, store, state = await self._shared_state(store_uri)
         async with pynix_util.forward_state_logs(session, state, print_build_logs=print_build_logs):
             yield session, store, state
+
+    @contextlib.asynccontextmanager
+    async def huggorm_store_session(
+        self,
+        store_uri: str,
+        *,
+        verbosity: nanopynix.LogLevelInput | None = None,
+    ) -> AsyncGenerator[tuple[Any, Any]]:
+        async with self._lock:
+            session, store, _state = await self._shared_state(store_uri)
+        async with pynix_util.forward_state_logs(session, None, verbosity=verbosity):
+            yield session, store
 
     @contextlib.asynccontextmanager
     async def huggorm_build_session(  # noqa: PLR0913 -- mirrors pynix._util.huggorm_build_session
