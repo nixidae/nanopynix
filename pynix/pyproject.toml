@@ -10,6 +10,7 @@ requires-python = ">=3.13"
 license = "Apache-2.0"
 license-files = [ "LICENSE" ]
 dependencies = [
+  "huggorm",
   "nanopynix",
   "nanopynix-helpers",
   # The command-line layer, which issue #222 moved out of this project so that
