@@ -23,7 +23,7 @@ from rich.text import Text
 import nanopynix
 from nanopynix._typechecking import BEARTYPING, no_runtime_type_check
 from nanopynix.libstore import init_libexpr, load_config_once, load_plugins_once
-from pynix._build_monitor import MonitorState, render
+from pynix._build_monitor import MonitorState, RecordEvent, render
 
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import AsyncGenerator, Mapping, Sequence
@@ -199,12 +199,7 @@ async def forward_nix_logs(
                     await _drain_logs(activity)
                 tg.cancel_scope.cancel()
                 if live is not None:
-                    live.update(_monitor_view(live, state, finished_at=time.strftime("%H:%M:%S")), refresh=True)
-                    live.stop()
-                    # rich ends the last frame with a newline on a terminal
-                    # only; without one, the caller's error ran on after it.
-                    if not live.console.is_terminal:
-                        live.console.line()
+                    _stop_monitor(live, state)
     except* BaseException as eg:
         # anyio task groups always wrap exceptions in a group, even a lone
         # one raised by the yielded body itself -- unwrap the common single
@@ -376,13 +371,14 @@ async def huggorm_eval_session(
 
 
 @asynccontextmanager
-async def huggorm_build_session(
+async def huggorm_build_session(  # noqa: PLR0913 -- keyword-only, one per session option, as nix_session
     store_uri: str,
     *,
     eval_store_uri: str | None = None,
     settings: Mapping[str, str] | None = None,
     verbosity: nanopynix.LogLevelInput | None = None,
     print_build_logs: bool = False,
+    monitor: MonitorState | None = None,
 ) -> AsyncGenerator[tuple[huggorm.AsyncSession, huggorm.AsyncStore, huggorm.AsyncStore, AsyncEvalState]]:
     """Open a huggorm session for a build, forwarding logs for the duration of the block.
 
@@ -402,19 +398,22 @@ async def huggorm_build_session(
         else:
             eval_store = session.store(eval_store_uri)
             state = session.eval(eval_store, None, build_store)
-        async with forward_state_logs(session, state, verbosity=verbosity, print_build_logs=print_build_logs):
+        async with forward_state_logs(
+            session, state, verbosity=verbosity, print_build_logs=print_build_logs, monitor=monitor
+        ):
             yield session, build_store, eval_store, state
 
 
 @asynccontextmanager
 @no_runtime_type_check  # log_file is duck-typed against TextIO -- see configure_logging above.
-async def forward_state_logs(
+async def forward_state_logs(  # noqa: PLR0913 -- keyword-only, one per forwarding option, as forward_nix_logs
     session: huggorm.AsyncSession,
     state: AsyncEvalState,
     *,
     verbosity: nanopynix.LogLevelInput | None = None,
     print_build_logs: bool = False,
     log_file: TextIO | None = None,
+    monitor: MonitorState | None = None,
 ) -> AsyncGenerator[LogGate]:
     """Print what *state* logs while the block runs, as Nix prints it.
 
@@ -422,9 +421,14 @@ async def forward_state_logs(
     those reach huggorm's fallback logger, which prints at CHATTY. A nanopynix
     session must not be open beside this: its log pump subscribes to the same
     process stream, and a second subscriber replaces the first.
+
+    With ``monitor``, fold the records into it and draw nom's status at the
+    bottom of stderr instead, as :func:`forward_nix_logs` does.
     """
     gate = LogGate(DEFAULT_VERBOSITY if verbosity is None else nanopynix.normalize_log_level(verbosity))
     old_config = structlog.get_config()
+    live = _start_monitor() if monitor is not None else None
+    # After the monitor starts, for the reason `forward_nix_logs` gives.
     configure_logging(file=log_file, verbosity=gate.level)
     # Bound once, as in `_forward_nix_logs`.
     out = log_file if log_file is not None else sys.stderr
@@ -435,14 +439,87 @@ async def forward_state_logs(
         if line is not None:
             out.write(f"{line if colour else nanopynix.strip_ansi(line)}\n")
 
+    def fold(record: LogRecord) -> None:
+        event = monitor_event(record)
+        if event is None or live is None or monitor is None:
+            return
+        for line in monitor.apply(event, time.monotonic()):
+            # Unwrapped, as in `_monitor_nix_logs`.
+            live.console.print(line, soft_wrap=True)
+
+    callback = write if monitor is None else fold
     try:
         async with (
-            session.forward(state, write, level=int(gate.level)),
-            session.forward_process(write, level=int(gate.level)),
+            session.forward(state, callback, level=int(gate.level)),
+            session.forward_process(callback, level=int(gate.level)),
+            _redrawing(live, monitor),
         ):
             yield gate
+    except Exception as exc:
+        # Counted in the last frame, as `forward_nix_logs` counts it.
+        if monitor is not None:
+            monitor.note_error(str(exc))
+        raise
     finally:
+        if live is not None and monitor is not None:
+            _stop_monitor(live, monitor)
         structlog.configure(**old_config)
+
+
+@asynccontextmanager
+async def _redrawing(live: Live | None, state: MonitorState | None) -> AsyncGenerator[None]:
+    """Redraw *live* from *state* while the block runs; nothing without a monitor."""
+    if live is None or state is None:
+        yield
+        return
+    try:
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(_redraw, live, state)
+            try:
+                yield
+            finally:
+                tg.cancel_scope.cancel()
+    except* BaseException as eg:
+        # The body's own exception, unwrapped, as `forward_nix_logs` does.
+        if len(eg.exceptions) == 1:
+            raise eg.exceptions[0] from None
+        raise
+
+
+def _stop_monitor(live: Live, state: MonitorState) -> None:
+    live.update(_monitor_view(live, state, finished_at=time.strftime("%H:%M:%S")), refresh=True)
+    live.stop()
+    # rich ends the last frame with a newline on a terminal only; without
+    # one, the caller's error runs on after it.
+    if not live.console.is_terminal:
+        live.console.line()
+
+
+def monitor_event(record: LogRecord) -> RecordEvent | None:
+    """*record* as the event :meth:`MonitorState.apply` reads, or ``None``.
+
+    nanopynix's ``_callback_args`` mapping: a message with error info is an
+    ``error``, and the fields of an activity are plain ints and strings.
+    """
+    match record.action():
+        case "msg" if (info := record.info()) is not None:
+            return RecordEvent("error", [record.level(), info.msg()], info.msg())
+        case "msg":
+            return RecordEvent("msg", [record.level(), record.text()], record.text())
+        case "start":
+            fields = _field_values(record)
+            args = [record.id(), record.level(), record.type(), record.text(), fields, record.parent()]
+            return RecordEvent("start", args)
+        case "stop":
+            return RecordEvent("stop", [record.id()])
+        case "result":
+            return RecordEvent("result", [record.id(), record.type(), _field_values(record)])
+        case _:
+            return None
+
+
+def _field_values(record: LogRecord) -> list[int | str]:
+    return [field.integer() if field.is_int() else field.text() for field in record.fields()]
 
 
 def record_message(record: LogRecord) -> str:

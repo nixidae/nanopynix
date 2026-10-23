@@ -267,6 +267,7 @@ class SharedSessions:
         settings: Mapping[str, str] | None = None,
         verbosity: nanopynix.LogLevelInput | None = None,
         print_build_logs: bool = False,
+        monitor: MonitorState | None = None,
     ) -> AsyncGenerator[tuple[Any, Any, Any, Any]]:
         if settings:
             # A setting is a process global, and a shared evaluator was built
@@ -281,6 +282,7 @@ class SharedSessions:
                     settings=settings,
                     verbosity=verbosity,
                     print_build_logs=print_build_logs,
+                    monitor=monitor,
                 ) as quad:
                     yield quad
             finally:
@@ -291,7 +293,7 @@ class SharedSessions:
         async with self._lock:
             session, build_store, eval_store, state = await self._shared_build(store_uri, eval_store_uri)
         async with pynix_util.forward_state_logs(
-            session, state, verbosity=verbosity, print_build_logs=print_build_logs
+            session, state, verbosity=verbosity, print_build_logs=print_build_logs, monitor=monitor
         ):
             yield session, build_store, eval_store, state
 

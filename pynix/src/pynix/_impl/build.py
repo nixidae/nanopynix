@@ -212,13 +212,57 @@ async def _evaluate_build_target(target: EvaluationTarget, state: AsyncEvalState
     return root
 
 
-async def _build_root(build: BuildSession, root: AsyncValue) -> dict[str, str]:
-    """Build every output of *root*, and give the path of each one.
+async def _plan(build: BuildSession, drv_path: str) -> BuildPlan:
+    """:func:`plan_build` on huggorm's stores."""
+    missing = await build.build_store.query_missing([await build.build_store.parse_derived_path(f"{drv_path}^*")])
+    builds = frozenset([await build.build_store.print_store_path(p) for p in missing.will_build()])
+    downloads = frozenset([await build.build_store.print_store_path(p) for p in missing.will_substitute()])
+    store_dir = drv_path.rsplit("/", 1)[0]
+    paths: dict[str, frozenset[str]] = {}
 
-    ``drv_path`` is Nix's own test of a derivation, and raises Nix's message
-    for any other value.
-    """
-    drv_path = await build.evaluation_store.print_store_path(await root.drv_path())
+    async def input_drvs(path: str) -> list[str]:
+        derivation = await build.evaluation_store.read_derivation(await build.evaluation_store.parse_store_path(path))
+        try:
+            return [f"{store_dir}/{base}" for base in await derivation.input_drvs()]
+        finally:
+            await derivation.aclose()
+
+    async def output_paths(path: str) -> frozenset[str]:
+        # The static map: a floating content-addressed output has no path
+        # yet, and leaves its node without one, as nanopynix's plan does.
+        if path not in paths:
+            try:
+                found = await build.evaluation_store.query_derivation_output_map(
+                    await build.evaluation_store.parse_store_path(path)
+                )
+            except NixError:
+                found = {}
+            paths[path] = frozenset([await build.evaluation_store.print_store_path(p) for p in found.values()])
+        return paths[path]
+
+    children: dict[str, tuple[str, ...]] = {}
+    outputs: dict[str, frozenset[str]] = {}
+    for node in (drv_path, *sorted(builds - {drv_path})):
+        outputs[node] = await output_paths(node)
+        kids: list[str] = []
+        for input_drv in await input_drvs(node):
+            if input_drv in builds:
+                kids.append(input_drv)
+            elif downloads and (input_outputs := await output_paths(input_drv)) & downloads:
+                outputs[input_drv] = input_outputs
+                kids.append(input_drv)
+        children[node] = tuple(kids)
+    return BuildPlan(roots=(drv_path,), children=children, outputs=outputs, builds=builds, downloads=downloads)
+
+
+async def _drv_path(build: BuildSession, root: AsyncValue) -> str:
+    """The ``.drv`` of *root*. ``drv_path`` is Nix's own test of a
+    derivation, and raises Nix's message for any other value."""
+    return await build.evaluation_store.print_store_path(await root.drv_path())
+
+
+async def _build_root(build: BuildSession, drv_path: str) -> dict[str, str]:
+    """Build every output of *drv_path*, and give the path of each one."""
     derived = await build.build_store.parse_derived_path(f"{drv_path}^*")
     eval_store = None if build.evaluation_store is build.build_store else build.evaluation_store
     [result] = await build.build_store.build_paths_with_results([derived], eval_store=eval_store)
@@ -260,6 +304,7 @@ async def _build_target(
     *,
     update_fod: bool,
     dry_run: bool,
+    monitor: MonitorState | None = None,
 ) -> tuple[dict[str, str], int]:
     """Build a target, applying only unambiguous plain-string FOD updates.
 
@@ -278,7 +323,10 @@ async def _build_target(
         async with build.session.capture_process(level=_CAUSE_LEVEL) as logs:
             try:
                 root = await _evaluate_build_target(target, build.state)
-                return await _build_root(build, root), updates
+                drv_path = await _drv_path(build, root)
+                if monitor is not None:
+                    monitor.plan = await _plan_or_none(build, drv_path)
+                return await _build_root(build, drv_path), updates
             except NixError as exc:
                 error = exc
         mismatch = extract_fod_hash_mismatch(str(error)) or extract_unique_fod_hash_mismatch(_messages(logs))
@@ -306,12 +354,14 @@ async def _build_target(
 async def _build_on_huggorm(
     command: Build, target: EvaluationTarget, settings: PynixNixSettings
 ) -> tuple[dict[str, str], int]:
+    monitor = MonitorState(started=time.monotonic(), print_build_logs=command.print_build_logs) if command.nom else None
     async with huggorm_build_session(
         command.store,
         eval_store_uri=command.eval_store,
         settings=settings.to_worker_settings(explicit_only=True),
         verbosity=command.verbosity,
         print_build_logs=command.print_build_logs,
+        monitor=monitor,
     ) as (session, build_store, eval_store, state):
         logger.info("pynix build evaluating target")
         built = await _build_target(
@@ -319,6 +369,7 @@ async def _build_on_huggorm(
             BuildSession(session, build_store, eval_store, state),
             update_fod=command.update_fod,
             dry_run=command.dry_run,
+            monitor=monitor,
         )
     logger.info("pynix build finished")
     return built
@@ -326,8 +377,8 @@ async def _build_on_huggorm(
 
 def _on_nanopynix(command: Build, *, namespaced: bool) -> bool:
     """Whether this build still runs on nanopynix: issue #1051 has not moved
-    ``--nom``, ``--namespaced`` and ``--copy`` to huggorm yet."""
-    return namespaced or command.nom or command.copy is not None
+    ``--namespaced`` and ``--copy`` to huggorm yet."""
+    return namespaced or command.copy is not None
 
 
 async def _build_target_on_nanopynix(  # noqa: PLR0913 -- tracked complexity/arg-count debt, see TODO.md
@@ -347,7 +398,7 @@ async def _build_target_on_nanopynix(  # noqa: PLR0913 -- tracked complexity/arg
         root = await _evaluate_build_target_on_nanopynix(target, session)
         logger.info("pynix build target evaluated")
         if monitor is not None:
-            monitor.plan = await _plan_or_none(evaluation_store, build_store or evaluation_store, root)
+            monitor.plan = await _plan_or_none_on_nanopynix(evaluation_store, build_store or evaluation_store, root)
         return root
 
     # The local file, and not the raw argument. --update-fod rewrites the hash
@@ -410,7 +461,7 @@ async def plan_build(evaluation_store: Any, build_store: Any, drv_path: str) -> 
     return BuildPlan(roots=(drv_path,), children=children, outputs=outputs, builds=builds, downloads=downloads)
 
 
-async def _plan_or_none(evaluation_store: Any, build_store: Any, root: ValueProxy) -> BuildPlan | None:
+async def _plan_or_none_on_nanopynix(evaluation_store: Any, build_store: Any, root: ValueProxy) -> BuildPlan | None:
     """The plan of ``root``, or None, which leaves the monitor a flat list.
 
     A missing plan costs the tree and nothing else, so an error here must not
@@ -420,6 +471,15 @@ async def _plan_or_none(evaluation_store: Any, build_store: Any, root: ValueProx
         drv_path = await root.attr("drvPath").as_string()
         return await plan_build(evaluation_store, build_store, drv_path)
     except nanopynix.NixError as exc:
+        logger.warning("pynix build could not plan the dependency graph", error=str(exc))
+        return None
+
+
+async def _plan_or_none(build: BuildSession, drv_path: str) -> BuildPlan | None:
+    """:func:`_plan_or_none_on_nanopynix` on huggorm."""
+    try:
+        return await _plan(build, drv_path)
+    except NixError as exc:
         logger.warning("pynix build could not plan the dependency graph", error=str(exc))
         return None
 

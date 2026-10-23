@@ -172,7 +172,7 @@ derivation {{
     cmd = parse(["build", "--nom", "--file", str(nix_file), *shared_nix_environment.pynix_store_args()])
 
     # `main` prints the error after the command returns, so after the last frame.
-    with pytest.raises(nanopynix.NixError, match="Cannot build"):
+    with pytest.raises(BuildError, match="Cannot build"):
         await cmd.run()
 
     err = capsys.readouterr().err

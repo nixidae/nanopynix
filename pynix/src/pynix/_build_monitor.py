@@ -17,15 +17,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Final
+from typing import Any, Final, Protocol
 
 from rich.text import Text
 
 from nanopynix import ActivityType, LogLevel, ResultType
-from nanopynix._typechecking import BEARTYPING
-
-if TYPE_CHECKING or BEARTYPING:
-    from nanopynix import LogEvent
 
 VERTICAL: Final = "┃"
 LOWER_LEFT: Final = "┗"
@@ -52,6 +48,27 @@ _LOCAL_STORES: Final = frozenset({"", "local", "daemon", "auto"})
 _DRV_PATH = re.compile(r"/[^\s'\"]+\.drv")
 _HASH_PREFIX = re.compile(r"^[0-9a-z]{32}-")
 _LOG_LINE_RESULTS: Final = frozenset({ResultType.BUILD_LOG_LINE, ResultType.POST_BUILD_LOG_LINE})
+
+
+class MonitorEvent(Protocol):
+    """One log event, in the shape of ``internal-json``: ``args`` holds the
+    fields of a ``start``, a ``stop`` or a ``result`` in Nix's order."""
+
+    @property
+    def action(self) -> str: ...
+    @property
+    def args(self) -> list[Any]: ...
+    @property
+    def message(self) -> str | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class RecordEvent:
+    """A :class:`MonitorEvent` made from a huggorm ``LogRecord``."""
+
+    action: str
+    args: list[Any]
+    message: str | None = None
 
 
 def store_path_name(path: str) -> str:
@@ -297,7 +314,7 @@ class MonitorState:
                 tree[transfer.path] = []
         return roots, tree
 
-    def apply(self, event: LogEvent, now: float) -> list[Text]:
+    def apply(self, event: MonitorEvent, now: float) -> list[Text]:
         """Fold one event in, and return the lines to print above the monitor."""
         match event.action:
             case "start":
