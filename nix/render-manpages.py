@@ -105,7 +105,31 @@ def _sanitize(text: str) -> str:
     one `.PP` from one `.profile`. It leaves `.` lines alone.
     """
     plain = _ANSI_ESCAPE.sub("", text)
-    return "\n".join(f"\\&{line}" if line.startswith("'") else line for line in plain.split("\n"))
+    return "\n".join(f"\\&{line}" if line.startswith("'") else line for line in _unfilled_usage(plain.split("\n")))
+
+
+def _unfilled_usage(lines: list[str]) -> list[str]:
+    """*lines*, with each `usage:` block of argparse in no-fill mode.
+
+    argparse aligns the continuation lines of a usage with spaces, and
+    `Manpage` writes them as filled text. troff then cannot adjust such a
+    line when it lands at the foot of a page: "cannot adjust line; underset
+    by 17n". Measured on the root page of `pynix`, the warning came and went
+    with the line count before the block, so any new command could raise it.
+    """
+    result: list[str] = []
+    in_usage = False
+    for line in lines:
+        if line.startswith("usage: "):
+            result.append(".nf")
+            in_usage = True
+        elif in_usage and not line.startswith(" "):
+            result.append(".fi")
+            in_usage = False
+        result.append(line)
+    if in_usage:
+        result.append(".fi")
+    return result
 
 
 def _child_parsers(parser: argparse.ArgumentParser) -> Iterator[argparse.ArgumentParser]:
