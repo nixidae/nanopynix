@@ -1,11 +1,5 @@
 """Tests for the interactive pynix REPL loop."""
 
-# ruff: noqa: ASYNC109
-# The doubles below subclass real ValueProxy/EvalSession/ReplSession
-# classes, whose async methods take a `timeout` keyword; an override has
-# to keep it. Same exemption, same reason as
-# nanopynix/rpc/client/_session.py, where the real signatures live.
-
 # pyright: reportPrivateUsage=false
 # Tests intentionally access private symbols from pynix._impl.repl
 
@@ -18,25 +12,24 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 import pytest
-from nanopynix_proto.nix.common import LogLevel
+from huggorm import AsyncValue
+from huggorm.errors import NixError
 from prompt_toolkit.completion import CompleteEvent, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import ANSI, FormattedText
 
-from nanopynix import BuildMode
-from nanopynix.exceptions import EvaluatorAbandonedError, NixError
-from nanopynix.models import AttrDoc, Doc, NixType
-from nanopynix.rpc import ReplSession, Store, ValueProxy
-from nanopynix.settings import NixFlakeSettings
-from nanopynix.verbosity import LogLevelInput, normalize_log_level
-from pynix import parse
+import nanopynix
+from nanopynix.verbosity import normalize_log_level
+from pynix import _util as util_module, parse
 from pynix._impl.repl import (  # type: ignore[reportPrivateUsage] -- tests intentionally access private symbols
     _HELP,
     ReplRunError,
+    _AttrDoc,
     _derivation_name_part,
     _edit,
     _editor_argv,
     _exec_argv,
+    _forwarding,
     _interruptible,
     _load_initial_target,
     _main_program,
@@ -46,9 +39,11 @@ from pynix._impl.repl import (  # type: ignore[reportPrivateUsage] -- tests inte
     _print_error,
     _repl_history,
     _ReplCompleter,
+    _ReplEngine,
     _run_derivation,
     _run_repl_loop,
     _shell,
+    _ValueDoc,
 )
 from pynix.repl import Repl
 from pynix.target import EvaluationTarget
@@ -95,190 +90,183 @@ def test_repl_history_uses_xdg_state_home(monkeypatch: Any, tmp_path: Path) -> N
     assert list(_repl_history().load_history_strings()) == ["pkgs.hello"]
 
 
-# Every double below subclasses the real class it stands in for, so that
-# beartype's isinstance checks on annotated parameters accept it. That makes
-# each one a genuine subtype rather than a lookalike, which is why the
-# signatures match exactly -- including the `timeout` keyword they all accept
-# and ignore, having no RPC to time out.
-class _Value(ValueProxy):
+# Every value double subclasses `AsyncValue`, and every engine double
+# `_ReplEngine`, so that beartype's isinstance checks on annotated parameters
+# accept them. The engine doubles hand each value operation to the value.
+class _Value(AsyncValue):
     def __init__(self) -> None:
         pass
 
-    async def to_python(self, *, copy_to_store: bool = False, timeout: float | None = None) -> Any:
+    async def as_python(self) -> object:
         return {"answer": 42}
 
 
-class _RunValue(ValueProxy):
+class _RunValue(AsyncValue):
     def __init__(self, attrs: dict[str, object], outputs: dict[str, str]) -> None:
         self._attrs = attrs
         self._outputs = outputs
 
-    async def has_attr(self, name: str, *, timeout: float | None = None) -> bool:
-        return name in self._attrs
-
-    def attr(self, name: str, *, timeout: float | None = None) -> _RunValue:
+    def attr(self, name: str) -> _RunValue | None:
+        if name not in self._attrs:
+            return None
         value = self._attrs[name]
         return value if isinstance(value, _RunValue) else _RunValue({"value": value}, {})
 
-    async def to_python(self, *, copy_to_store: bool = False, timeout: float | None = None) -> Any:
+    async def as_python(self) -> object:
         return self._attrs["value"]
 
-    async def build(
-        self,
-        *,
-        build_mode: BuildMode | int | None = None,
-        store: Store | None = None,
-        timeout: float | None = None,
-    ) -> dict[str, str]:
+    async def build(self) -> dict[str, str]:
         return self._outputs
 
 
-class _CommandValue(ValueProxy):
+class _CommandValue(AsyncValue):
     def __init__(self, *, argv: list[str] | None = None, command: str | None = None) -> None:
         self._argv = argv
         self._command = command
 
-    async def realise_argv(self, *, timeout: float | None = None) -> list[str]:
+    async def realise_argv(self) -> list[str]:
         if self._argv is None:
             raise AssertionError("unexpected :exec value")
         return self._argv
 
-    async def realise_string(self, *, timeout: float | None = None) -> str:
+    async def realise_string(self) -> str:
         if self._command is None:
             raise AssertionError("unexpected :shell value")
         return self._command
 
 
-class _EditValue(ValueProxy):
+class _EditValue(AsyncValue):
     def __init__(self) -> None:
         pass
 
-    async def edit_location(self, *, timeout: float | None = None) -> tuple[str, int]:
+    async def location(self) -> tuple[str, int]:
         return "/tmp/source.nix", 42
 
 
-class _TypedValue(ValueProxy):
+class _TypedValue(AsyncValue):
     def __init__(self) -> None:
         pass
 
-    # Returns the real NixType rather than a stub with a `.name` attribute:
-    # subclassing ValueProxy means honouring its return type, and the code
-    # under test only reads `.name`, which the enum member already has.
-    async def get_type(self, *, timeout: float | None = None) -> NixType:
-        return NixType.INT
+    async def type_name(self) -> str:
+        return "int"
 
 
-class _DocValue(ValueProxy):
-    def __init__(self, doc: Doc | None) -> None:
-        self._doc = doc
-
-    async def get_doc(self, *, timeout: float | None = None) -> Doc | None:
-        return self._doc
+class _DocValue(AsyncValue):
+    def __init__(self, doc: _ValueDoc | None) -> None:
+        self.value_doc = doc
 
 
-class _AttrDocValue(ValueProxy):
-    def __init__(self, attr_doc: AttrDoc | None) -> None:
-        self._attr_doc = attr_doc
-
-    async def get_doc(self, *, timeout: float | None = None) -> Doc | None:
-        return None
-
-    async def attr_doc(self, name: str, *, timeout: float | None = None) -> AttrDoc | None:
-        return self._attr_doc
+class _AttrDocValue(AsyncValue):
+    def __init__(self, attr_doc: _AttrDoc | None) -> None:
+        self.value_doc = None
+        self.found = attr_doc
 
 
-class _Repl(ReplSession):
+type _AnyValue = _Value | _RunValue | _CommandValue | _EditValue | _TypedValue | _DocValue | _AttrDocValue
+
+
+class _Repl(_ReplEngine):
     def __init__(self) -> None:
         self.lines: list[str] = []
         self.loaded_files: list[str] = []
         self.loaded_flakes: list[str] = []
         self.file_cache_resets = 0
-        self.value: _Value | _RunValue | _CommandValue | _EditValue | _TypedValue | _DocValue | _AttrDocValue = _Value()
-        self.verbosity = LogLevel.NOTICE
+        self.value: _AnyValue = _Value()
+        self.verbosity = nanopynix.LogLevel.NOTICE
         self.raise_on_line: str | None = None
 
-    async def line(self, text: str, base: str | None = None, *, timeout: float | None = None) -> _Value | None:
+    async def line(self, text: str) -> _Value | None:
         if text == self.raise_on_line:
-            raise NixError("ThrownError", "boom failed")
+            raise NixError("boom failed")
         self.lines.append(text)
         return None if text == "answer = 42" else _Value()
 
-    async def load_file(self, path: str, *, timeout: float | None = None) -> _Value:
+    async def load_file(self, path: str) -> _Value:
         self.loaded_files.append(path)
         return _Value()
 
-    async def eval_flake(
-        self,
-        ref: str,
-        *,
-        write_lock_file: bool = True,
-        flake_settings: NixFlakeSettings | None = None,
-        timeout: float | None = None,
-    ) -> _Value:
+    async def load_target(self, target: EvaluationTarget) -> _Value:
+        assert target.file is not None
+        return await self.load_file(target.file)
+
+    async def eval_flake(self, ref: str) -> _Value:
         self.loaded_flakes.append(ref)
         return _Value()
 
-    async def add_attrs(self, value: ValueProxy, *, timeout: float | None = None) -> list[str]:
+    async def add_attrs(self, value: AsyncValue) -> list[str]:
         return ["answer"]
 
-    async def reset_file_cache(self, *, timeout: float | None = None) -> None:
+    async def reset_file_cache(self) -> None:
         self.file_cache_resets += 1
 
-    async def get_verbosity(self) -> LogLevel:
+    async def get_verbosity(self) -> nanopynix.LogLevel:
         return self.verbosity
 
-    # LogLevelInput, not LogLevel: a parameter type may only widen in an
-    # override, and the real session accepts the whole input union.
-    async def set_verbosity(self, verbosity: LogLevelInput) -> LogLevel:
-        self.verbosity = normalize_log_level(verbosity)
+    async def set_verbosity(self, level: nanopynix.LogLevelInput) -> nanopynix.LogLevel:
+        self.verbosity = normalize_log_level(level)
         return self.verbosity
 
-    async def repl_select(self, expr: str, *, timeout: float | None = None) -> tuple[str, ValueProxy] | None:
+    async def repl_select(self, expr: str) -> tuple[str, AsyncValue] | None:
         if "." in expr:
             _prefix, _, name = expr.rpartition(".")
             return name, self.value
         return None
 
-    async def string(
-        self,
-        expr: str,
-        base: str | None = None,
-        *,
-        timeout: float | None = None,
-    ) -> _Value | _RunValue | _CommandValue | _EditValue | _TypedValue | _DocValue | _AttrDocValue:
+    async def string(self, expr: str) -> _AnyValue:
         return self.value
 
+    async def to_python(self, value: Any) -> object:
+        return await value.as_python()
 
-class _CompletionValue(ValueProxy):
+    async def type_name(self, value: Any) -> str:
+        return await value.type_name()
+
+    async def attr(self, value: Any, name: str) -> AsyncValue | None:
+        return value.attr(name)
+
+    async def build(self, value: Any) -> dict[str, str]:
+        return await value.build()
+
+    async def doc(self, value: Any) -> _ValueDoc | None:
+        return value.value_doc
+
+    async def attr_doc(self, value: Any, name: str) -> _AttrDoc | None:
+        return value.found
+
+    async def edit_location(self, value: Any) -> tuple[str, int]:
+        return await value.location()
+
+    async def realise_argv(self, value: Any) -> list[str]:
+        return await value.realise_argv()
+
+    async def realise_string(self, value: Any) -> str:
+        return await value.realise_string()
+
+
+class _CompletionValue(AsyncValue):
     def __init__(self, names: list[str]) -> None:
-        self._names = names
+        self.attr_names = names
         self.released = False
 
-    async def attr_names(self, *, timeout: float | None = None) -> list[str]:
-        return self._names
 
-    async def release(self, *, timeout: float | None = None) -> None:
-        self.released = True
-
-
-class _CompletionRepl(ReplSession):
+class _CompletionRepl(_ReplEngine):
     def __init__(self) -> None:
         self.value = _CompletionValue(["hello", "hello-unfree", "world"])
 
-    async def scope_names(self, *, timeout: float | None = None) -> list[str]:
+    async def scope_names(self) -> list[str]:
         return ["answer", "builtins", "pkgs"]
 
-    async def string(
-        self,
-        expr: str,
-        base: str | None = None,
-        *,
-        timeout: float | None = None,
-    ) -> _CompletionValue:
+    async def string(self, expr: str) -> _CompletionValue:
         if expr == "badexpr":
-            raise NixError("EvalError", "badexpr is undefined")
+            raise NixError("badexpr is undefined")
         assert expr == "pkgs"
         return self.value
+
+    async def attr_names(self, value: Any) -> list[str]:
+        return value.attr_names
+
+    async def release(self, value: Any) -> None:
+        value.released = True
 
 
 async def test_repl_loop_keeps_bindings_and_prints_expression_values(monkeypatch: Any) -> None:
@@ -344,12 +332,12 @@ def test_repl_preserves_nix_error_ansi(monkeypatch: Any) -> None:
     output: list[object] = []
     monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
 
-    error = NixError("UndefinedVarError", "\x1b[31;1merror:\x1b[0m undefined variable 'll'")
+    error = NixError("\x1b[31;1merror:\x1b[0m undefined variable 'll'")
     _print_error(error)
 
     assert len(output) == 1
     assert isinstance(output[0], ANSI)
-    assert output[0].value == error.msg
+    assert output[0].value == error.colored
 
 
 def test_editor_argv_only_includes_line_for_line_aware_editors(monkeypatch: Any) -> None:
@@ -365,7 +353,7 @@ async def test_repl_edit_reloads_initial_sources(monkeypatch: Any) -> None:
     edited: list[_EditValue] = []
     monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
 
-    async def edit(value: _EditValue, line_editors: tuple[str, ...]) -> int:
+    async def edit(_repl: _Repl, value: _EditValue, line_editors: tuple[str, ...]) -> int:
         edited.append(value)
         assert line_editors == ("hx",)
         return 0
@@ -399,7 +387,7 @@ async def test_repl_run_prefers_meta_main_program(tmp_path: Path, monkeypatch: A
     program.chmod(0o755)
     value = _RunValue({"meta": _RunValue({"mainProgram": "actual-program"}, {})}, {"out": str(out)})
 
-    assert await _run_derivation(value) == 0
+    assert await _run_derivation(_Repl(), value) == 0
     assert marker.read_text() == "ran\n"
     assert output == []
 
@@ -453,7 +441,7 @@ async def test_repl_run_warns_when_using_pname(monkeypatch: Any) -> None:
     monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
     value = _RunValue({"pname": "fallback-program"}, {})
 
-    assert await _main_program(value) == (
+    assert await _main_program(_Repl(), value) == (
         "fallback-program",
         "derivation has no meta.mainProgram; using pname 'fallback-program'",
     )
@@ -792,7 +780,7 @@ async def test_run_derivation_prints_main_program_fallback_warning(tmp_path: Pat
     program.chmod(0o755)
     value = _RunValue({"pname": "fallback-program"}, {"out": str(out)})
 
-    assert await _run_derivation(value) == 0
+    assert await _run_derivation(_Repl(), value) == 0
     assert output == ["warning: derivation has no meta.mainProgram; using pname 'fallback-program'"]
 
 
@@ -802,7 +790,7 @@ async def test_run_derivation_reports_exec_failure(tmp_path: Path) -> None:
     value = _RunValue({"meta": _RunValue({"mainProgram": "missing-program"}, {})}, {"out": str(out)})
 
     with pytest.raises(ReplRunError, match="cannot run"):
-        await _run_derivation(value)
+        await _run_derivation(_Repl(), value)
 
 
 async def test_run_derivation_warns_on_nonzero_exit(tmp_path: Path, monkeypatch: Any) -> None:
@@ -815,7 +803,7 @@ async def test_run_derivation_warns_on_nonzero_exit(tmp_path: Path, monkeypatch:
     program.chmod(0o755)
     value = _RunValue({"meta": _RunValue({"mainProgram": "failing"}, {})}, {"out": str(out)})
 
-    assert await _run_derivation(value) == 1
+    assert await _run_derivation(_Repl(), value) == 1
     assert output == [f"warning: {program} exited with status 1"]
 
 
@@ -843,7 +831,7 @@ async def test_edit_runs_editor_and_returns_code(tmp_path: Path, monkeypatch: An
     editor.chmod(0o755)
     monkeypatch.setenv("EDITOR", str(editor))
 
-    assert await _edit(_EditValue(), ()) == 0
+    assert await _edit(_Repl(), _EditValue(), ()) == 0
     assert marker.read_text() == "edited\n"
 
 
@@ -851,7 +839,7 @@ async def test_edit_reports_launch_failure(monkeypatch: Any) -> None:
     monkeypatch.setenv("EDITOR", "/nonexistent/editor-binary")
 
     with pytest.raises(ReplRunError, match="cannot start editor"):
-        await _edit(_EditValue(), ())
+        await _edit(_Repl(), _EditValue(), ())
 
 
 async def test_edit_warns_on_nonzero_exit(tmp_path: Path, monkeypatch: Any) -> None:
@@ -862,7 +850,7 @@ async def test_edit_warns_on_nonzero_exit(tmp_path: Path, monkeypatch: Any) -> N
     editor.chmod(0o755)
     monkeypatch.setenv("EDITOR", str(editor))
 
-    assert await _edit(_EditValue(), ()) == 3
+    assert await _edit(_Repl(), _EditValue(), ()) == 3
     assert output == ["warning: editor exited with status 3"]
 
 
@@ -937,7 +925,7 @@ async def test_shell_warns_on_nonzero_exit(monkeypatch: Any) -> None:
 async def test_main_program_falls_back_to_pname_when_meta_lacks_main_program() -> None:
     value = _RunValue({"meta": _RunValue({}, {}), "pname": "fallback"}, {})
 
-    assert await _main_program(value) == (
+    assert await _main_program(_Repl(), value) == (
         "fallback",
         "derivation has no meta.mainProgram; using pname 'fallback'",
     )
@@ -947,34 +935,34 @@ async def test_main_program_rejects_non_string_meta_main_program() -> None:
     value = _RunValue({"meta": _RunValue({"mainProgram": 123}, {})}, {})
 
     with pytest.raises(ReplRunError, match=r"meta\.mainProgram is not a string"):
-        await _main_program(value)
+        await _main_program(_Repl(), value)
 
 
 async def test_main_program_rejects_non_string_pname() -> None:
     value = _RunValue({"pname": 123}, {})
 
     with pytest.raises(ReplRunError, match="pname is not a string"):
-        await _main_program(value)
+        await _main_program(_Repl(), value)
 
 
 async def test_main_program_rejects_derivation_with_no_identifying_attrs() -> None:
     value = _RunValue({}, {})
 
     with pytest.raises(ReplRunError, match=r"has neither meta\.mainProgram, pname, nor name"):
-        await _main_program(value)
+        await _main_program(_Repl(), value)
 
 
 async def test_main_program_rejects_non_string_name() -> None:
     value = _RunValue({"name": 123}, {})
 
     with pytest.raises(ReplRunError, match="name is not a string"):
-        await _main_program(value)
+        await _main_program(_Repl(), value)
 
 
 async def test_main_program_falls_back_to_derivation_name() -> None:
     value = _RunValue({"name": "hello-1.2.3"}, {})
 
-    assert await _main_program(value) == (
+    assert await _main_program(_Repl(), value) == (
         "hello",
         "derivation has no meta.mainProgram; using name 'hello'",
     )
@@ -1122,7 +1110,7 @@ class _HangingRepl(_Repl):
         super().__init__()
         self.entered = 0
 
-    async def line(self, text: str, base: str | None = None, *, timeout: float | None = None) -> _Value | None:
+    async def line(self, text: str) -> _Value | None:
         self.entered += 1
         signal.raise_signal(signal.SIGINT)
         # Gives the loop a chance to run the signal callback, which cancels the
@@ -1153,35 +1141,61 @@ async def test_repl_loop_returns_to_the_prompt_when_ctrl_c_stops_an_evaluation(
     assert output == [_HELP, "^C", "^C"]
 
 
-class _AbandonedRepl(_Repl):
-    """An evaluator that a Ctrl-C left abandoned.
+async def test_a_second_ctrl_c_ends_pynix_when_nix_ignores_the_first() -> None:
+    """After the first Ctrl-C, SIGINT has the kernel's default action again.
 
-    Stands in for the state after Nix would not answer its interrupt: the
-    executor is poisoned, so every call raises at once instead of running.
+    huggorm waits for the evaluator thread to stop, and a pure evaluation never
+    polls for the interrupt. A handler on the event loop could only cancel
+    again, so the second Ctrl-C would do nothing until the evaluation ends.
     """
+    with _interruptible() as scope:
+        signal.raise_signal(signal.SIGINT)
+        # Shielded, so the loop runs the signal callback and this sleep ends.
+        with anyio.CancelScope(shield=True):
+            await anyio.sleep(0.1)
+        assert scope.cancel_called
+        assert signal.getsignal(signal.SIGINT) is signal.SIG_DFL
+    assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
 
-    async def line(self, text: str, base: str | None = None, *, timeout: float | None = None) -> _Value | None:
-        raise EvaluatorAbandonedError("a Nix operation did not answer an interrupt within 2.0s")
 
+async def test_ctrl_c_stops_a_build_and_returns_to_the_prompt(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """A real build polls for the interrupt, so Ctrl-C ends it and the loop goes on.
 
-async def test_the_repl_leaves_when_the_evaluator_is_abandoned(monkeypatch: Any) -> None:
-    """An abandoned evaluator ends the REPL with a message, not with a traceback.
+    The interrupt comes after a delay, and not on a sign from the builder: the
+    sandbox lets the builder write nothing the test can see. The evaluation
+    takes milliseconds, so the delay lands inside the build, which never ends.
 
-    Found in a real REPL under tmux. `EvaluatorAbandonedError` is an
-    `ObjectMisuseError`, so the loop's `except (NixError, ReplRunError)` missed
-    it and pynix died on the next expression after the Ctrl-C.
+    The sandbox has no `sleep`, so the builder counts in the shell. It writes a
+    line on each round: Nix polls for the interrupt only when a child's output
+    wakes the build loop (nixidae/nixidae#1058).
     """
-    output: list[str] = []
+    output: list[object] = []
     monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    spin = "while :; do echo tick; i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done; done"
+    build = (
+        f'derivation {{ name = "repl-interrupt-{tmp_path.name}"; system = builtins.currentSystem; '
+        f'builder = "/bin/sh"; args = [ "-c" "{spin}" ]; }}'
+    )
 
-    with anyio.fail_after(10):
-        await _run_repl_loop(_AbandonedRepl(), _Prompt(["1 + 1", "2 + 2"]))
+    async def interrupt_the_build() -> None:
+        await anyio.sleep(3)
+        signal.raise_signal(signal.SIGINT)
 
-    # Three lines and no more: the help, the error, and the reason for leaving.
-    # A fourth would mean the loop read "2 + 2" and kept going.
-    assert len(output) == 3
-    assert output[1].startswith("error: a Nix operation did not answer an interrupt")
-    assert "cannot be used again" in output[2]
+    async with (
+        util_module.huggorm_eval_session(shared_nix_environment.store_uri) as (session, store, state),
+        _forwarding(session, state) as logs,
+        anyio.create_task_group() as tg,
+    ):
+        engine = _ReplEngine(store, state, await state.repl(), logs)
+        tg.start_soon(interrupt_the_build)
+        with anyio.fail_after(30):
+            await _run_repl_loop(engine, _Prompt([f":b {build}", "1 + 1", ":quit"]))
+
+    assert output == [_HELP, "^C", "2"]
 
 
 async def test_the_repl_leaves_no_sigint_handler_behind() -> None:
@@ -1212,9 +1226,7 @@ async def test_repl_doc_builtin(monkeypatch: Any) -> None:
     output: list[object] = []
     monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
     repl = _Repl()
-    repl.value = _DocValue(
-        Doc(name="add", args=["e1", "e2"], arity=2, doc="Return the sum of the numbers e1 and e2.", path=None, line=0)
-    )
+    repl.value = _DocValue(_ValueDoc(name="add", args=("e1", "e2"), doc="Return the sum of the numbers e1 and e2."))
 
     await _run_repl_loop(repl, _Prompt([":doc builtins.add", ":quit"]))
     assert len(output) == 2
@@ -1228,16 +1240,7 @@ async def test_repl_doc_lambda(monkeypatch: Any) -> None:
     output: list[object] = []
     monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
     repl = _Repl()
-    repl.value = _DocValue(
-        Doc(
-            name=None,
-            args=[],
-            arity=0,
-            doc="Function `f`\n  … defined at /tmp/f.nix:1\n\nAdds one.",
-            path="/tmp/f.nix",
-            line=1,
-        )
-    )
+    repl.value = _DocValue(_ValueDoc(name=None, args=(), doc="Function `f`\n  … defined at /tmp/f.nix:1\n\nAdds one."))
 
     await _run_repl_loop(repl, _Prompt([":doc f", ":quit"]))
     assert len(output) == 2
@@ -1252,7 +1255,7 @@ async def test_repl_doc_attr_selection(monkeypatch: Any) -> None:
     output: list[object] = []
     monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
     repl = _Repl()
-    repl.value = _AttrDocValue(AttrDoc(path="/tmp/pkgs.nix", line=42, doc="Hello package."))
+    repl.value = _AttrDocValue(_AttrDoc(path="/tmp/pkgs.nix", line=42, doc="Hello package."))
 
     await _run_repl_loop(repl, _Prompt([":doc pkgs.hello", ":quit"]))
     assert len(output) == 2
@@ -1268,7 +1271,7 @@ async def test_repl_doc_attr_selection_no_doc(monkeypatch: Any) -> None:
     output: list[object] = []
     monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
     repl = _Repl()
-    repl.value = _AttrDocValue(AttrDoc(path="/tmp/pkgs.nix", line=42, doc=None))
+    repl.value = _AttrDocValue(_AttrDoc(path="/tmp/pkgs.nix", line=42, doc=None))
 
     await _run_repl_loop(repl, _Prompt([":doc pkgs.hello", ":quit"]))
     assert len(output) == 2

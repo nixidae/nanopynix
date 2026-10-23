@@ -28,11 +28,14 @@ from pynix.target import (
     CONFIGURATION_KINDS,
     EvaluationTargetError,
     configuration_message,
+    names_stdin,
     resolve_file_reference,
 )
 
 if TYPE_CHECKING or BEARTYPING:
-    from huggorm import AsyncEvalState, AsyncLockedFlake, AsyncValue
+    from collections.abc import Awaitable, Callable
+
+    from huggorm import AsyncEvalState, AsyncLockedFlake, AsyncRepl, AsyncValue
 
     from pynix.target import EvaluationTarget, FileReference
 
@@ -58,8 +61,14 @@ def _is_a_search_path_miss(exc: ThrownError) -> bool:
     return any(marker in str(exc) for marker in _SEARCH_PATH_MISS)
 
 
-async def open_file_reference(reference: FileReference, state: AsyncEvalState) -> AsyncValue:
+async def open_file_reference(
+    reference: FileReference,
+    opener: Callable[[str], Awaitable[AsyncValue]],
+) -> AsyncValue:
     """Open the first candidate of *reference* that the evaluator can resolve.
+
+    *opener* is `state.eval_file` or `repl.load_file`, so a REPL keeps its own
+    ``:load`` semantics.
 
     **Only a miss in the lookup path moves to the next candidate.** A name that
     the lookup path holds, whose file then fails to evaluate, raises that
@@ -69,7 +78,7 @@ async def open_file_reference(reference: FileReference, state: AsyncEvalState) -
     last: ThrownError | None = None
     for candidate in reference.arguments:
         try:
-            return await state.eval_file(candidate)
+            return await opener(candidate)
         except ThrownError as exc:
             if not _is_a_search_path_miss(exc):
                 raise
@@ -187,6 +196,25 @@ async def evaluate_target_selected(
         raise EvaluationTargetError(str(exc)) from exc
 
 
+async def load_repl_target(target: EvaluationTarget, state: AsyncEvalState, repl: AsyncRepl) -> AsyncValue:
+    """Evaluate *target* as ``nix repl`` loads it: a file as ``:load`` does."""
+    target.validate(required=True)
+    if names_stdin(target.file):
+        raise EvaluationTargetError("--file - reads standard input, and the REPL reads its commands there")
+    if target.file is None:
+        return await evaluate_target(target, state, attr_search=repl_attr_search())
+    reference = await resolve_file_reference(target.file)
+    value = await open_file_reference(reference, repl.load_file)
+    try:
+        if reference.fragment:
+            value = await select_attr(state, value, reference.fragment)
+        if target.attr:
+            value = await select_attr(state, value, target.attr)
+    except AttrPathError as exc:
+        raise EvaluationTargetError(str(exc)) from exc
+    return value
+
+
 async def _evaluate_selected(
     target: EvaluationTarget,
     state: AsyncEvalState,
@@ -199,7 +227,7 @@ async def _evaluate_selected(
     if target.file is not None:
         reference = await resolve_file_reference(target.file)
         value = (
-            await open_file_reference(reference, state)
+            await open_file_reference(reference, state.eval_file)
             if reference.expression is None
             else await state.eval_expr(reference.expression)
         )

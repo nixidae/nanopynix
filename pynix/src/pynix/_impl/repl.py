@@ -15,11 +15,17 @@ import shlex
 import signal
 import sys
 import textwrap
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, override
 
 import anyio
+import anyio.abc
+import huggorm
+from huggorm import AsyncValue
+from huggorm.errors import NixError
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.formatted_text import ANSI, StyleAndTextTuples
@@ -34,29 +40,26 @@ from tree_sitter import Query, QueryCursor
 
 import nanopynix
 from nanopynix._typechecking import BEARTYPING
-from nanopynix.exceptions import EvaluatorAbandonedError, NixError
 from nanopynix.verbosity import normalize_log_level
+from pynix import _evaluate
 from pynix._completion import completion_prefix_at
 from pynix._markdown import render_markdown
 from pynix._nix_syntax import NIX_GRAMMAR_PATH, NIX_LANGUAGE, parse_nix
-from pynix._util import LogGate, forward_nix_logs
+from pynix._util import DEFAULT_VERBOSITY, build_derivation, forward_state_logs, init_nix
 from pynix._value_render import format_json
 from pynix.repl import Repl
-from pynix.target import (
-    EvaluationTarget,
-    EvaluationTargetError,
-    load_repl_target,
-    repl_attr_search,
-)
+from pynix.target import EvaluationTarget, EvaluationTargetError
 
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Iterable
 
+    from huggorm import AsyncEvalState, AsyncRepl, AsyncSession, AsyncStore
     from prompt_toolkit.document import Document
 
-    from nanopynix import AsyncReplSession
-
 _PROMPT = "pynix> "
+# Nix's `editorFor` passes `+LINE` to these, and to no other editor.
+_LINE_EDITORS = ("emacs", "nano", "vim", "kak", "hx")
+_FEATURES = ("flakes", "nix-command")
 _COMMANDS = {
     ":a": "Add an attribute set to scope",
     ":add": "Add an attribute set to scope",
@@ -256,7 +259,7 @@ class _NixLexer(Lexer):
 class _ReplCompleter(Completer):
     """Complete REPL commands and names from the current Nix lexical scope."""
 
-    def __init__(self, repl: AsyncReplSession[Any]) -> None:
+    def __init__(self, repl: _ReplEngine) -> None:
         self._repl = repl
 
     def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterable[Completion]:
@@ -333,11 +336,182 @@ class _ReplCompleter(Completer):
         try:
             value = await self._repl.string(expression)
             try:
-                return await value.attr_names()
+                return await self._repl.attr_names(value)
             finally:
-                await value.release()
+                await self._repl.release(value)
         except NixError:
             return []
+
+
+@dataclass(frozen=True, slots=True)
+class _ValueDoc:
+    """What `EvalState::getDoc` says of a value."""
+
+    name: str | None
+    args: tuple[str, ...]
+    doc: str
+
+
+@dataclass(frozen=True, slots=True)
+class _AttrDoc:
+    """Where a set defines an attribute, and the comment there."""
+
+    path: str
+    line: int
+    doc: str | None
+
+
+class _LogForwarder:
+    """Print what the evaluator logs, at a level that `:verbosity` moves.
+
+    A level reaches Nix when a subscription opens, so a new level reopens the
+    forwarding. One task owns it: a cancel scope that `:verbosity` entered
+    would otherwise close in a different scope than the one that opened it.
+    """
+
+    def __init__(self, session: AsyncSession, state: AsyncEvalState) -> None:
+        self._session = session
+        self._state = state
+        self.level = DEFAULT_VERBOSITY
+        self._changed = anyio.Event()
+        self._ready = anyio.Event()
+
+    async def run(self, *, task_status: anyio.abc.TaskStatus[None] = anyio.TASK_STATUS_IGNORED) -> None:
+        started = False
+        while True:
+            async with forward_state_logs(self._session, self._state, verbosity=self.level, log_file=sys.stdout):
+                self._ready.set()
+                if not started:
+                    started = True
+                    task_status.started()
+                await self._changed.wait()
+            self._changed = anyio.Event()
+
+    async def set_level(self, level: nanopynix.LogLevel) -> None:
+        self._ready = anyio.Event()
+        self.level = level
+        self._changed.set()
+        await self._ready.wait()
+
+
+@asynccontextmanager
+async def _forwarding(session: AsyncSession, state: AsyncEvalState) -> AsyncGenerator[_LogForwarder]:
+    forwarder = _LogForwarder(session, state)
+    try:
+        async with anyio.create_task_group() as tg:
+            await tg.start(forwarder.run)
+            try:
+                yield forwarder
+            finally:
+                tg.cancel_scope.cancel()
+    except* BaseException as eg:
+        # The body's own exception, unwrapped, as `_util._redrawing` does.
+        if len(eg.exceptions) == 1:
+            raise eg.exceptions[0] from None
+        raise
+
+
+class _ReplEngine:
+    """One `nix repl` scope on a huggorm evaluator, as the commands read it."""
+
+    line_editors = _LINE_EDITORS
+
+    def __init__(self, store: AsyncStore, state: AsyncEvalState, repl: AsyncRepl, logs: _LogForwarder) -> None:
+        self._store = store
+        self._state = state
+        self._repl = repl
+        self._logs = logs
+
+    async def scope_names(self) -> list[str]:
+        return await self._repl.names()
+
+    async def string(self, expr: str) -> AsyncValue:
+        return await self._repl.eval_expr(expr)
+
+    async def line(self, text: str) -> AsyncValue | None:
+        return await self._repl.process_line(text)
+
+    async def load_file(self, path: str) -> AsyncValue:
+        return await self._repl.load_file(path)
+
+    async def load_target(self, target: EvaluationTarget) -> AsyncValue:
+        return await _evaluate.load_repl_target(target, self._state, self._repl)
+
+    async def eval_flake(self, ref: str) -> AsyncValue:
+        """The value of `callFlake`, as `:load-flake` adds it: the outputs and the metadata."""
+        locked = await self._state.lock_flake(huggorm.parse_flake_ref(ref))
+        try:
+            return await self._state.call_flake(locked)
+        finally:
+            await locked.aclose()
+
+    async def add_attrs(self, value: AsyncValue) -> list[str]:
+        return await self._repl.add_attrs(value)
+
+    async def reset_file_cache(self) -> None:
+        # `«nix-internal»/derivation-internal.nix` names no file to forget.
+        for path in await self._state.cached_files():
+            if path.startswith("/"):
+                await self._state.forget_file(path)
+
+    async def repl_select(self, expr: str) -> tuple[str, AsyncValue] | None:
+        selection = await self._repl.select(expr)
+        if selection is None:
+            return None
+        return await selection.name(), await selection.attrs()
+
+    async def get_verbosity(self) -> nanopynix.LogLevel:
+        return self._logs.level
+
+    async def set_verbosity(self, level: nanopynix.LogLevelInput) -> nanopynix.LogLevel:
+        verbosity = normalize_log_level(level)
+        await self._logs.set_level(verbosity)
+        return verbosity
+
+    async def to_python(self, value: AsyncValue) -> object:
+        return await _evaluate.to_python(value)
+
+    async def type_name(self, value: AsyncValue) -> str:
+        await self._state.force(value)
+        return await value.type_name()
+
+    async def attr(self, value: AsyncValue, name: str) -> AsyncValue | None:
+        return await _evaluate.optional_set(self._state, value, name)
+
+    async def attr_names(self, value: AsyncValue) -> list[str]:
+        await self._state.force(value)
+        return await value.names()
+
+    async def release(self, value: AsyncValue) -> None:
+        await value.aclose()
+
+    async def build(self, value: AsyncValue) -> dict[str, str]:
+        await self._state.force(value)
+        return await build_derivation(self._store, await self._store.print_store_path(await value.drv_path()))
+
+    async def doc(self, value: AsyncValue) -> _ValueDoc | None:
+        await self._state.force(value)
+        doc = await value.doc()
+        if doc is None:
+            return None
+        return _ValueDoc(name=doc.name(), args=tuple(doc.args()), doc=doc.doc())
+
+    async def attr_doc(self, value: AsyncValue, name: str) -> _AttrDoc | None:
+        await self._state.force(value)
+        found = await value.attr_doc(name)
+        if found is None:
+            return None
+        return _AttrDoc(path=found.path(), line=found.line(), doc=found.doc())
+
+    async def edit_location(self, value: AsyncValue) -> tuple[str, int]:
+        location = await value.edit_location()
+        return location.path(), location.line()
+
+    async def realise_argv(self, value: AsyncValue) -> list[str]:
+        return await value.realise_argv()
+
+    async def realise_string(self, value: AsyncValue) -> str:
+        return await value.realise_string()
 
 
 class _ReplState:
@@ -345,26 +519,24 @@ class _ReplState:
 
     def __init__(
         self,
-        repl: AsyncReplSession[Any],
+        repl: _ReplEngine,
         line_editors: tuple[str, ...],
         loaded: list[tuple[str, str]],
         last_loaded: list[str],
-        log_gate: LogGate | None = None,
     ) -> None:
         self.repl = repl
         self.line_editors = line_editors
         self.loaded = loaded
         self.last_loaded = last_loaded
-        self.log_gate = log_gate
 
-    async def add_attrs(self, value: Any) -> list[str]:
+    async def add_attrs(self, value: AsyncValue) -> list[str]:
         self.last_loaded = await self.repl.add_attrs(value)
         print_formatted_text(f"Added {len(self.last_loaded)} variables: {' '.join(self.last_loaded)}")
         return self.last_loaded
 
-    async def evaluate(self, expr: str) -> Any:
+    async def evaluate(self, expr: str) -> AsyncValue:
         value = await self.repl.string(expr)
-        print_formatted_text(format_json(await value.to_python()))
+        print_formatted_text(format_json(await self.repl.to_python(value)))
         return value
 
     async def reload_sources(self) -> None:
@@ -379,19 +551,16 @@ async def _cmd_print(state: _ReplState, argument: str) -> None:
 
 
 async def _cmd_type(state: _ReplState, argument: str) -> None:
-    value = await state.repl.string(argument)
-    print_formatted_text((await value.get_type()).name.lower())
+    print_formatted_text(await state.repl.type_name(await state.repl.string(argument)))
 
 
 async def _cmd_build(state: _ReplState, argument: str) -> None:
-    value = await state.repl.string(argument)
-    outputs = await value.build()
+    outputs = await state.repl.build(await state.repl.string(argument))
     print_formatted_text(format_json(outputs))
 
 
 async def _cmd_doc(state: _ReplState, argument: str) -> None:
-    value = await state.repl.string(argument)
-    doc = await value.get_doc()
+    doc = await state.repl.doc(await state.repl.string(argument))
     if doc is not None:
         doc_text = textwrap.dedent(doc.doc).strip()
         if doc.args and doc.name:
@@ -405,7 +574,7 @@ async def _cmd_doc(state: _ReplState, argument: str) -> None:
     sel = await state.repl.repl_select(argument)
     if sel is not None:
         name, parent_attrs = sel
-        attr = await parent_attrs.attr_doc(name)
+        attr = await state.repl.attr_doc(parent_attrs, name)
         if attr is not None:
             pos_str = f"{attr.path}:{attr.line}"
             comment = attr.doc if attr.doc is not None else "No documentation found."
@@ -417,20 +586,20 @@ async def _cmd_doc(state: _ReplState, argument: str) -> None:
 
 
 async def _cmd_edit(state: _ReplState, argument: str) -> None:
-    await _edit(await state.repl.string(argument), state.line_editors)
+    await _edit(state.repl, await state.repl.string(argument), state.line_editors)
     await state.reload_sources()
 
 
 async def _cmd_run(state: _ReplState, argument: str) -> None:
-    await _run_derivation(await state.repl.string(argument))
+    await _run_derivation(state.repl, await state.repl.string(argument))
 
 
 async def _cmd_exec(state: _ReplState, argument: str) -> None:
-    await _exec_argv(await (await state.repl.string(argument)).realise_argv())
+    await _exec_argv(await state.repl.realise_argv(await state.repl.string(argument)))
 
 
 async def _cmd_shell(state: _ReplState, argument: str) -> None:
-    await _shell(await (await state.repl.string(argument)).realise_string())
+    await _shell(await state.repl.realise_string(await state.repl.string(argument)))
 
 
 async def _cmd_add(state: _ReplState, argument: str) -> None:
@@ -463,22 +632,16 @@ async def _cmd_help(state: _ReplState, argument: str) -> None:
 
 
 async def _cmd_verbosity(state: _ReplState, argument: str) -> None:
-    """Show or set the level this repl's evaluator logs at.
+    """Show or set the level this repl logs at.
 
-    Scoped to this repl, and not to the process. A store operation this repl
-    runs still logs at the session's level, and so do the threads Nix starts
-    for itself, such as a substituter.
+    The level covers the evaluator and the work it starts, such as a fetch or
+    a build.
     """
     try:
-        verbosity = await (
-            state.repl.get_verbosity() if not argument else state.repl.set_verbosity(normalize_log_level(argument))
-        )
+        verbosity = await (state.repl.get_verbosity() if not argument else state.repl.set_verbosity(argument))
     except (TypeError, ValueError) as exc:
         print_formatted_text(f"error: {exc}")
     else:
-        # Activities reach the forwarder ungated, so it needs the new level too.
-        if argument and state.log_gate is not None:
-            state.log_gate.level = verbosity
         print_formatted_text(f"{verbosity.name.lower()} ({int(verbosity)})")
 
 
@@ -512,14 +675,13 @@ _COMMAND_HANDLERS: dict[str, Callable[[_ReplState, str], Awaitable[None]]] = {
 }
 
 
-async def _run_repl_loop(  # noqa: PLR0913 -- keyword-only, one per piece of state the caller opens around the loop
-    repl: AsyncReplSession[Any],
+async def _run_repl_loop(
+    repl: _ReplEngine,
     prompt: Any,
     *,
     initial_loaded: list[str] | None = None,
     initial_sources: list[tuple[str, str]] | None = None,
     line_editors: tuple[str, ...] = (),
-    log_gate: LogGate | None = None,
 ) -> None:
     """Read and evaluate lines until the user exits the REPL."""
     state = _ReplState(
@@ -527,7 +689,6 @@ async def _run_repl_loop(  # noqa: PLR0913 -- keyword-only, one per piece of sta
         line_editors=line_editors,
         loaded=list(initial_sources or []),
         last_loaded=list(initial_loaded or []),
-        log_gate=log_gate,
     )
 
     print_formatted_text(_HELP)
@@ -553,22 +714,13 @@ async def _run_repl_loop(  # noqa: PLR0913 -- keyword-only, one per piece of sta
                 await _dispatch(state, repl, command, argument, line)
             if scope.cancel_called:
                 print_formatted_text("^C")
-        except EvaluatorAbandonedError as exc:
-            # Ctrl-C reached an evaluation that Nix cannot stop, so the
-            # evaluator thread is abandoned. Every later expression raises this
-            # same error, because the evaluator is gone for the life of the
-            # process. A prompt that only repeats the error is worse than no
-            # prompt, so leave, and say what happened.
-            print_formatted_text(f"error: {exc}")
-            print_formatted_text("this evaluator cannot be used again; start pynix again")
-            return
         except (NixError, ReplRunError) as exc:
             _print_error(exc)
 
 
 async def _dispatch(
     state: _ReplState,
-    repl: AsyncReplSession[Any],
+    repl: _ReplEngine,
     command: str,
     argument: str,
     line: str,
@@ -582,32 +734,36 @@ async def _dispatch(
     else:
         value = await repl.line(line)
         if value is not None:
-            print_formatted_text(format_json(await value.to_python()))
+            print_formatted_text(format_json(await repl.to_python(value)))
 
 
 @contextlib.contextmanager
 def _interruptible() -> Generator[anyio.CancelScope]:
     """Let Ctrl-C stop the running evaluation and return to the prompt.
 
-    Cancelling the scope is all this needs to do. ``NixThreadExecutor`` turns a
-    cancellation into Nix's own per-thread interrupt, so the evaluator thread
-    stops instead of running on unwatched. Before that existed, Ctrl-C here
-    cancelled the REPL's task and left Nix evaluating.
+    huggorm turns the cancellation into Nix's interrupt of that one call, and
+    waits for the evaluator thread to stop. Nix answers only where it polls
+    ``checkInterrupt()``: a store operation stops, and so does a build that
+    writes output. A pure evaluation does not poll, and a download and a silent
+    build do not reach a poll (nixidae/nixidae#1058), so the wait lasts until
+    they end. So the first Ctrl-C also gives SIGINT back to the kernel, and a
+    second one ends pynix.
 
     ``loop.add_signal_handler`` rather than ``signal.signal``, because the
     handler must run on the event loop and cancel a scope. The arm at
     ``prompt_async`` above stays: that one covers Ctrl-C while the user types,
     where prompt_toolkit owns the terminal and no evaluation is in flight.
-
-    Nix answers an interrupt only where it polls ``checkInterrupt()``. A fetch,
-    a store operation and a build stop. A pure evaluation does not, and there
-    the evaluator is abandoned -- so restore the default handler first, and a
-    second Ctrl-C leaves the REPL rather than doing nothing.
     """
     loop = asyncio.get_running_loop()
     with anyio.CancelScope() as scope:
+
+        def interrupt() -> None:
+            scope.cancel()
+            loop.remove_signal_handler(signal.SIGINT)
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+
         try:
-            loop.add_signal_handler(signal.SIGINT, scope.cancel)
+            loop.add_signal_handler(signal.SIGINT, interrupt)
         except NotImplementedError:
             # No signal handlers on this loop (Windows, or a non-main thread).
             # The REPL still works; Ctrl-C just keeps its old behaviour.
@@ -617,22 +773,22 @@ def _interruptible() -> Generator[anyio.CancelScope]:
             yield scope
         finally:
             loop.remove_signal_handler(signal.SIGINT)
+            signal.signal(signal.SIGINT, signal.default_int_handler)
 
 
 def _print_error(exc: NixError | ReplRunError) -> None:
     """Print a REPL error, preserving Nix's ANSI diagnostics."""
     if isinstance(exc, NixError):
-        print_formatted_text(ANSI(exc.msg))
+        print_formatted_text(ANSI(exc.colored))
     else:
         print_formatted_text(f"error: {exc}")
 
 
-async def _load_initial_target(repl: AsyncReplSession[Any], target: EvaluationTarget) -> list[str]:
+async def _load_initial_target(repl: _ReplEngine, target: EvaluationTarget) -> list[str]:
     """Load a command-line target into the persistent REPL scope."""
     if target.file is None and target.flake is None:
         return []
-    value = await load_repl_target(target, repl, attr_search=repl_attr_search())
-    names = await repl.add_attrs(value)
+    names = await repl.add_attrs(await repl.load_target(target))
     print_formatted_text(f"Added {len(names)} variables: {' '.join(names)}")
     return names
 
@@ -641,13 +797,13 @@ class ReplRunError(RuntimeError):
     """A command could not be selected or started by the REPL."""
 
 
-async def _run_derivation(value: Any) -> int:
+async def _run_derivation(repl: _ReplEngine, value: AsyncValue) -> int:
     """Build *value* and run it using Nix's derivation executable convention."""
-    main_program, warning = await _main_program(value)
+    main_program, warning = await _main_program(repl, value)
     if warning is not None:
         print_formatted_text(f"warning: {warning}")
 
-    outputs = await value.build()
+    outputs = await repl.build(value)
     out_path = _primary_output(outputs)
     program = Path(out_path) / "bin" / main_program
     try:
@@ -675,9 +831,9 @@ def _editor_argv(path: str, line: int, line_editors: tuple[str, ...]) -> list[st
     return argv
 
 
-async def _edit(value: Any, line_editors: tuple[str, ...]) -> int:
+async def _edit(repl: _ReplEngine, value: AsyncValue, line_editors: tuple[str, ...]) -> int:
     """Open the Nix-selected source location for *value* in the user's editor."""
-    path, line = await value.edit_location()
+    path, line = await repl.edit_location(value)
     argv = _editor_argv(path, line, line_editors)
     try:
         process = await anyio.open_process(argv, stdin=None, stdout=None, stderr=None)
@@ -724,27 +880,33 @@ async def _shell(command: str) -> int:
     return return_code
 
 
-async def _main_program(value: Any) -> tuple[str, str | None]:
-    """Select a derivation executable using the same order as ``nix run``."""
-    if await value.has_attr("meta"):
-        meta = value.attr("meta")
-        if await meta.has_attr("mainProgram"):
-            main_program = await meta.attr("mainProgram").to_python()
-            if not isinstance(main_program, str):
-                raise ReplRunError("derivation meta.mainProgram is not a string")
-            return main_program, None
+async def _string_attr(repl: _ReplEngine, value: AsyncValue | None, name: str) -> str | None:
+    """The attribute *name* of *value* when it is there; a non-string raises."""
+    found = None if value is None else await repl.attr(value, name)
+    if found is None:
+        return None
+    text = await repl.to_python(found)
+    if not isinstance(text, str):
+        raise ReplRunError(f"derivation {name} is not a string")
+    return text
 
-    if await value.has_attr("pname"):
-        pname = await value.attr("pname").to_python()
-        if not isinstance(pname, str):
-            raise ReplRunError("derivation pname is not a string")
+
+async def _main_program(repl: _ReplEngine, value: AsyncValue) -> tuple[str, str | None]:
+    """Select a derivation executable using the same order as ``nix run``."""
+    try:
+        main_program = await _string_attr(repl, await repl.attr(value, "meta"), "mainProgram")
+    except ReplRunError as exc:
+        raise ReplRunError("derivation meta.mainProgram is not a string") from exc
+    if main_program is not None:
+        return main_program, None
+
+    pname = await _string_attr(repl, value, "pname")
+    if pname is not None:
         return pname, f"derivation has no meta.mainProgram; using pname {pname!r}"
 
-    if not await value.has_attr("name"):
+    name = await _string_attr(repl, value, "name")
+    if name is None:
         raise ReplRunError("derivation has neither meta.mainProgram, pname, nor name")
-    name = await value.attr("name").to_python()
-    if not isinstance(name, str):
-        raise ReplRunError("derivation name is not a string")
     main_program = _derivation_name_part(name)
     return main_program, f"derivation has no meta.mainProgram; using name {main_program!r}"
 
@@ -771,16 +933,15 @@ async def run_repl(command: Repl) -> None:
         print_formatted_text(f"error: {exc}")
         raise SystemExit(1) from exc
 
-    # The REPL keeps an RPC session. A REPL runs new expressions from the user
-    # repeatedly. Process isolation ensures that an unrecoverable evaluator fault
-    # or abandoned evaluator thread does not crash the interactive prompt.
-    async with nanopynix.rpc.Session(experimental_features=["flakes", "nix-command"]) as nix:
+    init_nix()
+    for feature in _FEATURES:
+        huggorm.enable_experimental_feature(feature)
+    async with huggorm.AsyncSession(command.store) as session:
+        store = session.store()
+        state = session.eval(store)
         with patch_stdout():
-            async with (
-                forward_nix_logs(nix, log_file=sys.stdout) as log_gate,
-                nix.store(command.store) as store,
-                nix.repl(store) as repl,
-            ):
+            async with _forwarding(session, state) as logs:
+                repl = _ReplEngine(store, state, await state.repl(), logs)
                 prompt: PromptSession[str] = PromptSession(
                     completer=_ReplCompleter(repl),
                     complete_while_typing=True,
@@ -804,5 +965,4 @@ async def run_repl(command: Repl) -> None:
                     initial_loaded=initial_loaded,
                     initial_sources=initial_sources,
                     line_editors=repl.line_editors,
-                    log_gate=log_gate,
                 )
