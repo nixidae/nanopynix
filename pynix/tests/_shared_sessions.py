@@ -219,7 +219,9 @@ class SharedSessions:
     ) -> AsyncGenerator[tuple[Any, Any, Any]]:
         async with self._lock:
             session, store, state = await self._shared_state(store_uri)
-        async with pynix_util.forward_state_logs(session, state, print_build_logs=print_build_logs):
+        # No process stream: the shared nanopynix sessions of this suite hold
+        # it, and a second subscriber would replace theirs.
+        async with pynix_util.forward_state_logs(session, state, print_build_logs=print_build_logs, process_logs=False):
             yield session, store, state
 
     # ── installation ───────────────────────────────────────────────────

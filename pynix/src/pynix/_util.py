@@ -6,7 +6,7 @@ import logging
 import os
 import sys
 import time
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 # A real import, and not a `TYPE_CHECKING` one: `resolve_local_store_path`
 # builds a `Path` at run time.
@@ -383,12 +383,14 @@ async def forward_state_logs(
     *,
     print_build_logs: bool = False,
     log_file: TextIO | None = None,
+    process_logs: bool = True,
 ) -> AsyncGenerator[LogGate]:
     """Print what *state* logs while the block runs, as Nix prints it.
 
-    The records of the state's own thread only. A fetch or a build that runs
-    on another Nix thread reaches huggorm's process stream, and nanopynix's
-    log pump holds that stream while a nanopynix session is open. Issue #1053.
+    With *process_logs*, also what no evaluator claims: a fetch, a download,
+    a build. Unforwarded, those reach huggorm's fallback logger, which prints
+    at CHATTY. Turn it off only beside an open nanopynix session, whose log
+    pump holds the process stream; a second subscriber replaces the first.
     """
     gate = LogGate(DEFAULT_VERBOSITY)
     old_config = structlog.get_config()
@@ -403,7 +405,10 @@ async def forward_state_logs(
             out.write(f"{line if colour else nanopynix.strip_ansi(line)}\n")
 
     try:
-        async with session.forward(state, write, level=int(gate.level)):
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(session.forward(state, write, level=int(gate.level)))
+            if process_logs:
+                await stack.enter_async_context(session.forward_process(write, level=int(gate.level)))
             yield gate
     finally:
         structlog.configure(**old_config)
