@@ -20,6 +20,7 @@ jobs:
         system prune --all --force; docker builder prune --all --force; df -h /
       if: runner.os == 'Linux'
       timeout-minutes: 10
+      working-directory: /
     - uses: actions/checkout@main
       timeout-minutes: 10
     - uses: cachix/install-nix-action@master
