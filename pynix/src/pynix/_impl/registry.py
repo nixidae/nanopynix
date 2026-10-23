@@ -23,10 +23,11 @@ registry list``.
 
 from __future__ import annotations
 
+import huggorm
 import structlog
+from huggorm import aio
 
-from nanopynix import attrs_to_python
-from pynix._util import print_json, store_session
+from pynix._util import huggorm_store_session, print_json
 from pynix.registry import Add, List, Pin, Remove
 
 logger = structlog.get_logger("pynix.registry")
@@ -54,28 +55,28 @@ async def run_list(command: List) -> None:
     press, and gives the measurement.
     """
     global_layer = "read"
-    async with store_session(command.store) as (_nix, store):
-        path = await store.user_registry_path()
+    async with huggorm_store_session(command.store) as (_session, store):
+        path = huggorm.user_registry_path()
         try:
-            entries = await store.registry_entries()
+            entries = await aio.registry_entries(store)
         # Broad, because Nix reports every layer's failure the same way and the
         # second call is harmless whatever the first one hit: a store that
         # cannot answer at all fails again, and that failure reaches the caller.
         except Exception:
             logger.warning("the global registry layer is unreachable, so this lists the local layers alone")
             global_layer = "unavailable"
-            entries = await store.registry_entries(fetch_settings={_NO_GLOBAL_REGISTRY: ""})
+            entries = await aio.registry_entries(store, {_NO_GLOBAL_REGISTRY: ""})
     print_json(
         {
             "userRegistry": path,
             "globalLayer": global_layer,
             "entries": [
                 {
-                    "type": entry.type,
-                    "from": entry.from_,
-                    "to": entry.to,
-                    "exact": entry.exact,
-                    "extraAttrs": attrs_to_python(entry.extra_attrs),
+                    "type": entry.layer(),
+                    "from": entry.source(),
+                    "to": entry.target(),
+                    "exact": entry.exact(),
+                    "extraAttrs": entry.extra_attrs(),
                 }
                 for entry in entries
             ],
@@ -85,16 +86,16 @@ async def run_list(command: List) -> None:
 
 async def run_add(command: Add) -> None:
     """The body of :meth:`pynix.registry.Add.run`."""
-    async with store_session(command.store) as (_nix, store):
-        write = await store.registry_add(command.from_ref, command.to_ref, path=command.registry)
-    print_json({"path": write.path, "replaced": write.removed, "from": command.from_ref, "to": write.to})
+    async with huggorm_store_session(command.store):
+        write = await aio.registry_add(command.registry, command.from_ref, command.to_ref)
+    print_json({"path": write.path(), "replaced": write.removed(), "from": command.from_ref, "to": write.target()})
 
 
 async def run_remove(command: Remove) -> None:
     """The body of :meth:`pynix.registry.Remove.run`."""
-    async with store_session(command.store) as (_nix, store):
-        write = await store.registry_remove(command.from_ref, path=command.registry)
-    print_json({"path": write.path, "removed": write.removed, "from": command.from_ref})
+    async with huggorm_store_session(command.store):
+        write = await aio.registry_remove(command.registry, command.from_ref)
+    print_json({"path": write.path(), "removed": write.removed(), "from": command.from_ref})
 
 
 async def run_pin(command: Pin) -> None:
@@ -104,16 +105,17 @@ async def run_pin(command: Pin) -> None:
     pins to an entry that still moves, and the caller is the one who can tell
     whether that matters.
     """
-    async with store_session(command.store) as (_nix, store):
-        write = await store.registry_pin(command.from_ref, command.locked, path=command.registry)
-    if write.locked is False:
-        logger.warning("the pinned reference carries no revision, so it still moves", to=write.to)
+    async with huggorm_store_session(command.store) as (_session, store):
+        write = await aio.registry_pin(store, command.registry, command.from_ref, command.locked)
+    locked = write.locked()
+    if locked is False:
+        logger.warning("the pinned reference carries no revision, so it still moves", to=write.target())
     print_json(
         {
-            "path": write.path,
-            "replaced": write.removed,
+            "path": write.path(),
+            "replaced": write.removed(),
             "from": command.from_ref,
-            "to": write.to,
-            "locked": write.locked,
+            "to": write.target(),
+            "locked": locked,
         },
     )
