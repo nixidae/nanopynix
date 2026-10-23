@@ -23,7 +23,7 @@ a gap or a bug found here is a pynix issue, not a reason to drop it quietly.
 | `nix log P`, `nix why-depends A B [--precise]` | same verb |
 | `nix copy --to S P` | `pynix copy --to S P`, or `--file`/`--flake` instead of P |
 | `nix store gc/ls/cat/diff-closures/verify/...` | `pynix store <same>` |
-| `nix derivation show --file . a` | `pynix derivation show --file . --attr a` (a target, not a `.drv` path) |
+| `nix derivation show --file . a` | `pynix derivation show --file . --attr a` (a target, not a `.drv` path; stdout is nix's document, `.derivations["<base>.drv"]`) |
 | `nix flake show/metadata`, `nix config show`, `nix registry` | same verbs |
 | `nix search`, option search | `pynix search --file '<nixpkgs>' [--options/--packages] QUERY [--json-output]`; `--file`/`--flake` required |
 
