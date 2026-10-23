@@ -15,17 +15,36 @@
 # pyproject.nix builders projects, so its dependencies are resolved here and
 # in nix/completion-spike.nix, and nowhere else.
 let
-  repo = import ../. { };
+  sources = import ../nix/sources.nix;
+  repo = import ../. { inherit sources; };
   inherit (repo) pkgs;
+  inherit (import sources.nixvenv { inherit pkgs; }) nixvenv;
 
-  python = pkgs.python3.withPackages (
-    ps: with ps; [
-      cyclopts
-      pexpect
-      pyte
-      pytest
-    ]
-  );
+  # `src` and `test-support/src` are editable, and there is no install step:
+  # an edit is live, which is what a spike needs. The Nix build tests the
+  # installed program instead, and tests/conftest.py takes whichever of the
+  # two it finds.
+  #
+  # `test-support` is here as well, because the pty driver lives there now.
+  # Issue #213 moved it out of `completion_spike._pty`, so that
+  # `pynix/completions/tests/` could drive the same three shells.
+  python = nixvenv {
+    python = pkgs.python3;
+    packages = ps: [
+      ps.cyclopts
+      ps.pexpect
+      ps.pyte
+      ps.pytest
+    ];
+    executables = [
+      "python"
+      "pytest"
+    ];
+    editable = [
+      ./src
+      ../test-support/src
+    ];
+  };
 in
 pkgs.mkShellNoCC {
   name = "completion-spike-shell";
@@ -38,16 +57,7 @@ pkgs.mkShellNoCC {
     pkgs.ncurses
   ];
 
-  # Set as derivation attributes rather than in a `shellHook`, so that they
-  # apply to `nix develop --command` and not only to an interactive shell.
-  #
-  # `src` on the path, and no install step: an edit is live, which is what a
-  # spike needs. The Nix build tests the installed program instead, and
-  # tests/conftest.py takes whichever of the two it finds.
-  #
-  # `test-support` is on the path as well, because the pty driver lives there
-  # now. Issue #213 moved it out of `completion_spike._pty`, so that
-  # `pynix/completions/tests/` could drive the same three shells.
-  PYTHONPATH = "${toString ./src}:${toString ../test-support/src}";
+  # A derivation attribute rather than a `shellHook` line, so that it applies
+  # to `nix develop --command` and not only to an interactive shell.
   TERMINFO_DIRS = "${pkgs.ncurses}/share/terminfo";
 }
