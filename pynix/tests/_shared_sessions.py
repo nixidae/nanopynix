@@ -38,6 +38,7 @@ import urllib.parse
 from typing import TYPE_CHECKING, Any
 
 import anyio
+import huggorm
 
 import nanopynix
 import pynix._util as pynix_util
@@ -54,7 +55,7 @@ if TYPE_CHECKING:
 #: shares them.
 FAITHFUL_SESSIONS_ENV_VAR = "NANOPYNIX_TEST_FAITHFUL_SESSIONS"
 
-_PATCHED_NAMES = ("nix_session", "store_session", "eval_session")
+_PATCHED_NAMES = ("nix_session", "store_session", "eval_session", "huggorm_eval_session")
 
 
 class SharedSessions:
@@ -69,6 +70,8 @@ class SharedSessions:
         # Keyed by _store_key, not by URI alone -- see that function.
         self._stores: dict[tuple[str, tuple[int, int] | None], Any] = {}
         self._evaluators: dict[tuple[str, tuple[int, int] | None], Any] = {}
+        self._huggorm: huggorm.AsyncSession | None = None
+        self._huggorm_states: dict[tuple[str, tuple[int, int] | None], tuple[Any, Any]] = {}
         self._originals = {name: getattr(pynix_util, name) for name in _PATCHED_NAMES}
 
     # ── shared object construction ─────────────────────────────────────
@@ -103,6 +106,20 @@ class SharedSessions:
             evaluator = await self._stack.enter_async_context(session.eval(store))
             self._evaluators[key] = evaluator
         return session, store, evaluator
+
+    async def _shared_state(self, store_uri: str) -> tuple[huggorm.AsyncSession, Any, Any]:
+        if self._huggorm is None:
+            # `load_config=False`, for the reason `_shared_session` gives.
+            pynix_util.init_nix(load_config=False)
+            self._huggorm = await self._stack.enter_async_context(huggorm.AsyncSession())
+        key = _store_key(store_uri)
+        pair = self._huggorm_states.get(key)
+        if pair is None:
+            store = self._huggorm.store(store_uri)
+            pair = (store, self._huggorm.eval(store))
+            self._huggorm_states[key] = pair
+        store, state = pair
+        return self._huggorm, store, state
 
     # ── the patched helpers ────────────────────────────────────────────
 
@@ -192,6 +209,18 @@ class SharedSessions:
             session, store, evaluator = await self._shared_evaluator(store_uri)
         async with pynix_util.forward_nix_logs(session, verbosity=verbosity, print_build_logs=print_build_logs):
             yield session, store, evaluator
+
+    @contextlib.asynccontextmanager
+    async def huggorm_eval_session(
+        self,
+        store_uri: str,
+        *,
+        print_build_logs: bool = False,
+    ) -> AsyncGenerator[tuple[Any, Any, Any]]:
+        async with self._lock:
+            session, store, state = await self._shared_state(store_uri)
+        async with pynix_util.forward_state_logs(session, state, print_build_logs=print_build_logs):
+            yield session, store, state
 
     # ── installation ───────────────────────────────────────────────────
 
