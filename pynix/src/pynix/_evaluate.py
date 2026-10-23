@@ -234,6 +234,35 @@ async def _attr_json(value: AsyncValue, name: str) -> object:
     return json.loads(await (await value.get(name)).to_json())
 
 
+async def optional_attr(state: AsyncEvalState, value: AsyncValue | None, name: str) -> object:
+    """The attribute *name* of the attribute set *value*, as JSON data.
+
+    ``None`` when *value* is ``None``, is not an attribute set, or lacks *name*.
+    """
+    if value is None:
+        return None
+    await state.force(value)
+    if await value.type_name() != "attrs" or not await value.has(name):
+        return None
+    return await _attr_json(value, name)
+
+
+async def optional_set(state: AsyncEvalState, value: AsyncValue, name: str) -> AsyncValue | None:
+    """The attribute *name* of *value*, or ``None`` when *value* lacks it."""
+    await state.force(value)
+    if await value.type_name() != "attrs" or not await value.has(name):
+        return None
+    return await value.get(name)
+
+
+async def realised_attr(state: AsyncEvalState, value: AsyncValue, name: str) -> str:
+    """The string at *name*, with each store path that it names built."""
+    await state.force(value)
+    attr = await value.get(name)
+    await state.force(attr)
+    return await attr.realise_string()
+
+
 async def configuration_kind(state: AsyncEvalState, value: AsyncValue) -> tuple[str, str] | None:
     """The name of *value* and its derivation attribute, when it is a configuration.
 

@@ -14,14 +14,15 @@ from typing import TYPE_CHECKING, Literal
 
 from anyio import Path as AnyioPath
 
-from nanopynix import store_exec_prefix
 from nanopynix._typechecking import BEARTYPING
-from pynix._impl.develop import physical_path_mapper
-from pynix._util import error_exit, eval_session, report_and_exit
-from pynix.target import EvaluationTarget, EvaluationTargetError, app_attr_search, evaluate_target_selected
+from pynix import _evaluate
+from pynix._store_layout import StoreLayout
+from pynix._util import error_exit, huggorm_build_session, report_and_exit
+from pynix.target import EvaluationTarget, EvaluationTargetError
 
 if TYPE_CHECKING or BEARTYPING:
-    from nanopynix.protocols import AsyncStore, AsyncValue
+    from huggorm import AsyncEvalState, AsyncValue
+
     from pynix.run import Run
 
 #: ``DrvName`` ends the name at the first dash that a non-letter follows.
@@ -68,60 +69,59 @@ class ResolvedProgram:
     exec_prefix: list[str]
 
 
-async def _optional_string(value: AsyncValue, name: str) -> str | None:
-    if not await value.has_attr(name):
-        return None
-    result = await value.attr(name).to_python()
-    if not isinstance(result, str):
+async def _optional_string(state: AsyncEvalState, value: AsyncValue | None, name: str) -> str | None:
+    result = await _evaluate.optional_attr(state, value, name)
+    if result is not None and not isinstance(result, str):
         raise EvaluationTargetError(f"attribute '{name}' should be a string")
     return result
 
 
-async def _program(value: AsyncValue, selected: str) -> str:
+async def _program(state: AsyncEvalState, value: AsyncValue, selected: str) -> str:
     """The realised program of *value*, as ``toApp`` and ``resolve`` give it."""
     shown = selected or "the selected value"
     expected = expected_type(selected)
-    kind = await _optional_string(value, "type")
+    kind = await _optional_string(state, value, "type")
     if kind != expected:
         raise EvaluationTargetError(f"attribute '{shown}' should have type '{expected}'")
     if kind == "app":
-        return await value.attr("program").realise_string()
-    out_path = await value.attr("outPath").realise_string()
-    meta = value.attr("meta") if await value.has_attr("meta") else None
-    main = await _optional_string(meta, "mainProgram") if meta is not None else None
-    name = await _optional_string(value, "name") or ""
-    return f"{out_path}/bin/{main_program(main=main, pname=await _optional_string(value, 'pname'), name=name)}"
+        return await _evaluate.realised_attr(state, value, "program")
+    out_path = await _evaluate.realised_attr(state, value, "outPath")
+    meta = await _evaluate.optional_set(state, value, "meta")
+    main = await _optional_string(state, meta, "mainProgram")
+    name = await _optional_string(state, value, "name") or ""
+    pname = await _optional_string(state, value, "pname")
+    return f"{out_path}/bin/{main_program(main=main, pname=pname, name=name)}"
 
 
 async def resolve_program(command: Run) -> ResolvedProgram:
     """Evaluate, build and check the program that *command* runs."""
     target = EvaluationTarget.from_command(command)
     try:
-        async with eval_session(
+        async with huggorm_build_session(
             command.store, verbosity=command.verbosity, print_build_logs=command.print_build_logs
-        ) as (_nix, store, session):
-            value, locked, selected = await evaluate_target_selected(
-                target, session, auto_call_file=True, attr_search=app_attr_search()
+        ) as (_session, store, _eval_store, state):
+            value, locked, selected = await _evaluate.evaluate_target_selected(
+                target, state, auto_call_file=True, attr_search=_evaluate.app_attr_search()
             )
             try:
-                program = await _program(value, selected)
+                program = await _program(state, value, selected)
             finally:
                 if locked is not None:
-                    await locked.release()
-            program = await _locate(store, program, command.bin)
-            return ResolvedProgram(program=program, exec_prefix=await store_exec_prefix(store))
+                    await locked.aclose()
+            layout = await StoreLayout.of(store)
+            program = await _locate(layout, program, command.bin)
+            return ResolvedProgram(program=program, exec_prefix=layout.exec_prefix())
     except EvaluationTargetError as exc:
         report_and_exit(exc)
 
 
-async def _locate(store: AsyncStore, program: str, wanted: str | None) -> str:
+async def _locate(layout: StoreLayout, program: str, wanted: str | None) -> str:
     """Refuse a *program* outside the store, as ``resolve`` does, and apply ``--bin``."""
-    store_dir = (await store.store_dirs()).store_dir.rstrip("/")
-    if not program.startswith(store_dir + "/"):
+    if not program.startswith(layout.store_dir + "/"):
         raise EvaluationTargetError(f"app program '{program}' is not in the Nix store")
     if wanted is None:
         return program
-    directory = AnyioPath((await physical_path_mapper(store))(str(PurePosixPath(program).parent)))
+    directory = AnyioPath(layout.to_disk(str(PurePosixPath(program).parent)))
     names = [entry.name async for entry in directory.iterdir()] if await directory.is_dir() else []
     return choose_bin(program, wanted, names)
 
