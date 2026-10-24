@@ -25,7 +25,7 @@ from pynix import parse
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 _STRUCTLOG = re.compile(r"^\d{4}-\d{2}-\d{2}\s")
 

@@ -17,10 +17,10 @@ from typing import TYPE_CHECKING
 import pytest
 from cyclonedx.schema import SchemaVersion
 from cyclonedx.validation.json import JsonStrictValidator
+from huggorm.testing.environment import with_nixpkgs
 from spdx_tools.spdx.parser.json.json_parser import parse_from_file
 from spdx_tools.spdx.validation.document_validator import validate_full_spdx_document
 
-from nanopynix_testing.nix_environment import with_nixpkgs
 from pynix._impl._sbom_cyclonedx import document
 from pynix._impl._sbom_model import (
     License,
@@ -38,7 +38,7 @@ from pynix._impl.sbom import created_at
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 
 @pytest.mark.parametrize(

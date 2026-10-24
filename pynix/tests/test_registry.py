@@ -43,7 +43,7 @@ from test_support.subprocess_output import run_process
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 #: A flake with no inputs and one attribute, so a resolution through the
 #: registry can be observed without a fetch of anything remote.

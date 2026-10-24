@@ -18,9 +18,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from anyio import Path as AnyioPath, run_process
+from huggorm.testing.environment import LINUX_CHROOT_BUILD, with_nixpkgs
 
-from nanopynix_testing.nix_environment import with_nixpkgs
-from nanopynix_testing.nix_markers import LINUX_CHROOT_BUILD
 from pynix import parse
 from pynix._dev_env import BuildEnvironment, make_rc_script, quote
 from pynix._impl.develop import (  # pyright: ignore[reportPrivateUsage] -- the ref-selection decision is unit-tested directly; the end-to-end path builds bashInteractive
@@ -34,7 +33,7 @@ from support.nix_oracle import require_matching_nix_cli
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 #: A store path, with the hash reduced to a placeholder. The ``-env``
 #: derivation is content-addressed over ``get-env.sh``, so any difference in

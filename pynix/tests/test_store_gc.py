@@ -6,13 +6,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 import pytest
+from huggorm.testing.environment import LINUX_CHROOT_BUILD, with_nixpkgs
 
 import pynix._util as util_module
-from nanopynix_testing.nix_environment import with_nixpkgs
-from nanopynix_testing.nix_markers import LINUX_CHROOT_BUILD
 from pynix import parse
 
 

@@ -28,7 +28,7 @@ from pynix._packages import (
 from pynix.target import EvaluationTarget
 
 if TYPE_CHECKING:
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 _PKGSET = Path(__file__).parent / "test_packages" / "pkgset.nix"
 

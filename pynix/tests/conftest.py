@@ -40,10 +40,6 @@ from typing import TYPE_CHECKING, NoReturn
 
 import pytest
 import structlog
-from structlog.exceptions import DropEvent
-
-import pynix._util as pynix_util
-from _shared_sessions import FAITHFUL_SESSIONS_ENV_VAR, SharedSessions
 
 # Session scope, and anyio's own `anyio_backend` is module scope. Both are
 # global plugins now that `pytest.ini` registers ours with `-p`, and anyio
@@ -51,15 +47,19 @@ from _shared_sessions import FAITHFUL_SESSIONS_ENV_VAR, SharedSessions
 # with `ScopeMismatch`. A conftest beats any plugin, so importing the fixture
 # here settles it. `nanopynix/tests/conftest.py` carries the same import and
 # the full account.
-from nanopynix_testing.nix_environment import anyio_backend as anyio_backend
+from huggorm.testing.environment import anyio_backend as anyio_backend
+from structlog.exceptions import DropEvent
+
+import pynix._util as pynix_util
+from _shared_sessions import FAITHFUL_SESSIONS_ENV_VAR, SharedSessions
 from pynix import parse
+from test_support.subprocess_output import run_process
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Generator, Iterator
 
+    from huggorm.testing.environment import NixTestEnvironment
     from structlog.typing import EventDict, WrappedLogger
-
-    from nanopynix_testing.nix_environment import NixTestEnvironment
 
 _CURRENT_PYNIX_TEST: ContextVar[str] = ContextVar("_CURRENT_PYNIX_TEST", default="unknown")
 
@@ -474,6 +474,24 @@ def _capture_pynix_test_structlog(  # type: ignore[reportUnusedFunction] -- pyte
             pynix_live_log.append({"event": "pytest test finish", "test": test_name})
             structlog.configure(**old_config)
             _CURRENT_PYNIX_TEST.reset(token)
+
+
+@pytest.fixture(scope="session")
+def repo_root(pytestconfig: pytest.Config) -> Path:
+    """The checkout root, found from the rootdir: this file may run from a venv copy."""
+    for candidate in (pytestconfig.rootpath, *pytestconfig.rootpath.parents):
+        if (candidate / "flake.nix").is_file():
+            return candidate
+    raise RuntimeError(f"no flake.nix at or above the pytest rootdir {pytestconfig.rootpath}")
+
+
+@pytest.fixture(scope="module")
+async def nixpkgs_path(repo_root: Path) -> str:
+    """The pinned nixpkgs, realised once per module."""
+    result = await run_process(["nix", "eval", "--impure", "--raw", "--file", str(repo_root), "pkgs.path"])
+    if result.returncode != 0:
+        raise RuntimeError(f"nix eval of pkgs.path {result.describe()}")
+    return result.stdout.strip()
 
 
 @pytest.fixture(scope="module")

@@ -16,10 +16,9 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from huggorm.errors import NixError
+from huggorm.testing.environment import LINUX_CHROOT_BUILD, force_rmtree, with_nixpkgs
 
 from nanopynix import stores
-from nanopynix_testing.nix_environment import force_rmtree, with_nixpkgs
-from nanopynix_testing.nix_markers import LINUX_CHROOT_BUILD
 from pynix import parse
 from test_support.subprocess_output import run_process
 
@@ -27,7 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from pathlib import Path
 
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 # `runCommand` with no build inputs, so each output holds the store path below
 # it and nothing else. The closure of `top` is `{top, leaf}`.
@@ -67,7 +66,7 @@ async def destination_store(tmp_path_factory: pytest.TempPathFactory) -> AsyncIt
     try:
         yield stores.Local(root=str(root), require_sigs=True).uri()
     finally:
-        await force_rmtree(root)
+        force_rmtree(root)
 
 
 @pytest.fixture

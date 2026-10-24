@@ -4,16 +4,16 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
+from huggorm.testing.environment import with_nixpkgs
 
 import nanopynix
 from nanopynix._ansi import strip_ansi
-from nanopynix_testing.nix_environment import with_nixpkgs
 from pynix import parse
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 
 async def test_show_file(

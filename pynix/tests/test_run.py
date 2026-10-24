@@ -24,7 +24,7 @@ from test_support.git_fixtures import commit_files, init_repo
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 
 @pytest.mark.parametrize(

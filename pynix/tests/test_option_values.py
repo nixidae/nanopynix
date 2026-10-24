@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
     from contextlib import AbstractAsyncContextManager
 
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 _MODULE = Path(__file__).parent / "test_search" / "system.nix"
 _OPTION = "services.example-daemon"

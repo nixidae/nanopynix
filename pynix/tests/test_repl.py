@@ -48,7 +48,7 @@ from pynix.repl import Repl
 from pynix.target import EvaluationTarget
 
 if TYPE_CHECKING:
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 
 class _Prompt:

@@ -21,7 +21,7 @@ from test_support.subprocess_output import run_process
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 
 async def _pynix(environment: NixTestEnvironment, *argv: str) -> None:

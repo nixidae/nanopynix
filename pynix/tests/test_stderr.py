@@ -15,14 +15,14 @@ from typing import TYPE_CHECKING
 
 import anyio
 import pytest
+from huggorm.testing.environment import LINUX_CHROOT_BUILD
 
-from nanopynix_testing.nix_markers import LINUX_CHROOT_BUILD
 from pynix import parse
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 _CLI = "import sys, pynix; sys.argv[0] = 'pynix'; pynix.main()"
 

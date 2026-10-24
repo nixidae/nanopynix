@@ -22,8 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from huggorm import AsyncEvalState, AsyncValue
-
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 _FIXTURES = Path(__file__).parent / "test_search_target"
 _NIXOS_SHAPE = Path(__file__).parent / "test_search" / "system.nix"

@@ -27,10 +27,9 @@ from pynix.target import EvaluationTarget
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Sequence
 
+    from huggorm.testing.environment import NixTestEnvironment
     from prompt_toolkit.formatted_text import StyleAndTextTuples
     from prompt_toolkit.input import PipeInput
-
-    from nanopynix_testing.nix_environment import NixTestEnvironment
 
 _FIXTURE_DIR = Path(__file__).parent / "test_search"
 _SYSTEM_NIX = _FIXTURE_DIR / "system.nix"

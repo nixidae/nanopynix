@@ -13,14 +13,14 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
+from huggorm.testing.environment import with_nixpkgs
 
-from nanopynix_testing.nix_environment import with_nixpkgs
 from pynix._impl.env import bin_directories, default_outputs
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 
 @pytest.mark.parametrize(

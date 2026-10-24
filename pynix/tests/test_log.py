@@ -7,25 +7,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from nanopynix_proto.nix.store import GetBuildLogRequest
+from huggorm.testing.environment import LINUX_CHROOT_BUILD
 
-from nanopynix_testing.nix_markers import LINUX_CHROOT_BUILD
 from pynix import parse
 
 if TYPE_CHECKING:
-    from nanopynix_testing.nix_environment import NixTestEnvironment
-
-
-@LINUX_CHROOT_BUILD
-async def test_nanopynix_store_get_build_log_from_populated_store(
-    populated_store: dict[str, str],
-    shared_nix_environment: NixTestEnvironment,
-) -> None:
-    async with shared_nix_environment.rpc_session() as nix, nix.store() as store:
-        response = await store.rpc.get_build_log(GetBuildLogRequest(path=populated_store["log_path"]))
-
-    assert response.log is not None
-    assert "pynix-log-line" in response.log
+    from huggorm.testing.environment import NixTestEnvironment
 
 
 @LINUX_CHROOT_BUILD

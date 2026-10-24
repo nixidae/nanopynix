@@ -8,11 +8,9 @@ import pytest
 from anyio import Path as AnyioPath
 from huggorm.errors import BuildError, EvalError
 from huggorm.fod import replace_fod_hash as _real_replace_fod_hash
+from huggorm.testing.environment import LINUX_CHROOT_BUILD, with_nixpkgs
 
-import nanopynix
 from nanopynix._ansi import strip_ansi
-from nanopynix_testing.nix_environment import with_nixpkgs
-from nanopynix_testing.nix_markers import LINUX_CHROOT_BUILD
 from pynix import _util, parse
 from pynix._impl import build as build_impl
 from pynix._impl.build import (  # pyright: ignore[reportPrivateUsage] -- test drives the private build step directly to exercise FOD-update/dry-run paths
@@ -26,56 +24,7 @@ from test_support.git_fixtures import init_flake_repo
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from nanopynix.rpc import Store, ValueProxy
-    from nanopynix_testing.nix_environment import NixTestEnvironment
-
-
-async def _fixed_output_derivations_in_value(
-    value: ValueProxy,
-    visited: set[int],
-    derivations: set[str],
-) -> None:
-    """Walk values exposed from an evaluated root without resolving strings."""
-    value_type = await value.get_type()
-    if value.handle in visited:
-        return
-    visited.add(value.handle)
-    if value_type == nanopynix.NixType.LIST:
-        for index in range(await value.list_length()):
-            await _fixed_output_derivations_in_value(value.list_get(index), visited, derivations)
-        return
-    if value_type != nanopynix.NixType.ATTRS:
-        return
-    if await value.has_attr("type") and await value.attr("type").to_python() == "derivation":
-        drv_attrs = value.attr("drvAttrs")
-        if await drv_attrs.has_attr("outputHash"):
-            drv_path = await value.attr("drvPath").to_python()
-            if not isinstance(drv_path, str):
-                raise TypeError("derivation drvPath was not a string")
-            derivations.add(drv_path)
-        # A derivation attrset contains Nixpkgs convenience fields such as
-        # ``all`` that can be recursively self-referential. Dependencies are
-        # carried by its serialized inputDrvs, not those fields.
-        return
-    for name in await value.attr_names():
-        await _fixed_output_derivations_in_value(value.attr(name), visited, derivations)
-
-
-async def _fixed_output_derivations_in_closure(store: Store, root_drv_path: str) -> set[str]:
-    """Walk serialized input derivations without building any derivation."""
-    pending = [root_drv_path]
-    visited: set[str] = set()
-    fixed_output: set[str] = set()
-    while pending:
-        drv_path = pending.pop()
-        if drv_path in visited:
-            continue
-        visited.add(drv_path)
-        derivation = await store.read_derivation(drv_path)
-        if any(output.type == "CAFixed" for output in derivation.outputs.values()):
-            fixed_output.add(drv_path)
-        pending.extend(derivation.input_drvs)
-    return fixed_output
+    from huggorm.testing.environment import NixTestEnvironment
 
 
 @LINUX_CHROOT_BUILD
@@ -735,47 +684,6 @@ in runCommand "combined" {} "cat ${first} ${second} > $out"
     assert data["updatedFods"] == 2
     assert data["outputs"]["out"]
     assert nix_file.read_text().count('outputHash = "sha256-') == 2
-
-
-async def test_eval_only_finds_fixed_output_dependencies_in_derivation_closure(
-    shared_nix_environment: NixTestEnvironment,
-    nixpkgs_path: str,
-    tmp_path: Path,
-) -> None:
-    """String context hides FOD values, but ``inputDrvs`` retains their identity."""
-    nix_file = tmp_path / "source.nix"
-    nix_file.write_text(
-        with_nixpkgs(
-            """with import <nixpkgs> {};
-let
-  first = runCommand "first" {
-    outputHash = "";
-    outputHashAlgo = "sha256";
-    outputHashMode = "flat";
-  } "printf '%s\\n' first > $out";
-  second = runCommand "second" {
-    outputHash = "";
-    outputHashAlgo = "sha256";
-    outputHashMode = "flat";
-  } "printf '%s\\n' second > $out";
-in runCommand "combined" {} "cat ${first} ${second} > $out"
-""",
-            nixpkgs_path,
-        ),
-    )
-
-    async with shared_nix_environment.rpc_session() as nix, nix.store() as store, nix.eval(store) as eval:
-        root = await eval.file(str(nix_file))
-        fixed_output_values: set[str] = set()
-        await _fixed_output_derivations_in_value(root, set(), fixed_output_values)
-
-        root_drv_path = await root.attr("drvPath").to_python()
-        if not isinstance(root_drv_path, str):
-            raise TypeError("root derivation drvPath was not a string")
-        fixed_output_closure = await _fixed_output_derivations_in_closure(store, root_drv_path)
-
-    assert fixed_output_values == set()
-    assert {"first.drv", "second.drv"} <= {path.rsplit("-", 1)[-1] for path in fixed_output_closure}
 
 
 async def test_build_update_fod_reports_an_ambiguous_hash_literal(

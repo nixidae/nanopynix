@@ -12,8 +12,7 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
-
-from nanopynix_testing.nix_markers import LINUX_CHROOT_BUILD
+from huggorm.testing.environment import LINUX_CHROOT_BUILD
 
 if TYPE_CHECKING:
     from conftest import PynixStoreScenario

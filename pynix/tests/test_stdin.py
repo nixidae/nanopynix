@@ -13,14 +13,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 from anyio import Path as AnyioPath
+from huggorm.testing.environment import LINUX_CHROOT_BUILD
 
-from nanopynix_testing.nix_markers import LINUX_CHROOT_BUILD
 from pynix import parse
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 
 def _stdin(monkeypatch: pytest.MonkeyPatch, text: str) -> None:

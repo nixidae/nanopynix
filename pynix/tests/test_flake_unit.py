@@ -20,7 +20,7 @@ from pynix._impl.flake import (  # pyright: ignore[reportPrivateUsage] -- test u
 )
 
 if TYPE_CHECKING:
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 
 async def _labels(environment: NixTestEnvironment, expr: str, budget: _TreeBudget | None = None) -> list[str]:

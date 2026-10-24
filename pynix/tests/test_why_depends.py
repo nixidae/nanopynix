@@ -12,10 +12,9 @@ import re
 from typing import TYPE_CHECKING
 
 import pytest
+from huggorm.testing.environment import LINUX_CHROOT_BUILD, with_nixpkgs
 
 from nanopynix import strip_ansi
-from nanopynix_testing.nix_environment import with_nixpkgs
-from nanopynix_testing.nix_markers import LINUX_CHROOT_BUILD
 from pynix import parse
 from support.nix_oracle import require_matching_nix_cli
 from test_support.subprocess_output import run_process
@@ -23,7 +22,7 @@ from test_support.subprocess_output import run_process
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
 
 # Each output holds the store path of the one below it, and nothing else. A
 # `runCommand` with no build inputs keeps the closure to these three paths, so

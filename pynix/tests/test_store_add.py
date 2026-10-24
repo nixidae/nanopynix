@@ -4,32 +4,13 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
-from nanopynix_proto.nix.store import AddToStoreRequest, ComputeStorePathRequest
 
 from pynix import parse
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from nanopynix_testing.nix_environment import NixTestEnvironment
-
-
-async def test_nanopynix_add_to_store_imports_file(
-    shared_nix_environment: NixTestEnvironment,
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "message.txt"
-    source.write_text("nanopynix-add-file\n")
-
-    async with shared_nix_environment.rpc_session() as nix, nix.store() as store:
-        computed = await store.rpc.compute_store_path(
-            ComputeStorePathRequest(path=str(source), method="flat", hash_algo="sha256"),
-        )
-        added = await store.rpc.add_to_store(AddToStoreRequest(path=str(source), method="flat", hash_algo="sha256"))
-
-    assert added.path == computed.path
-    physical_path = shared_nix_environment.physical_path(added.path)
-    assert physical_path.read_text() == "nanopynix-add-file\n"
+    from huggorm.testing.environment import NixTestEnvironment
 
 
 async def test_pynix_store_add_file_imports_and_can_be_read(

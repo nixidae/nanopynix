@@ -3,21 +3,34 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+import huggorm
 import pytest
 
 from pynix import parse
+from pynix._util import init_nix
 
 if TYPE_CHECKING:
-    from nanopynix.models import StorePath
-    from nanopynix_testing.nix_environment import NixTestEnvironment
+    from huggorm.testing.environment import NixTestEnvironment
+
+
+@pytest.fixture
+async def seeded_store_path(shared_nix_environment: NixTestEnvironment) -> str:
+    """A content-addressed path of this suite's own, never one borrowed from the host store."""
+    init_nix(load_config=False)
+    async with huggorm.AsyncSession() as session:
+        store = session.store(shared_nix_environment.store_uri)
+        added = await store.add_to_store(
+            "pynix-test-fixture", b"pynix hermetic fixture\n", method=huggorm.ContentAddressMethod.FLAT
+        )
+        return await store.print_store_path(added)
 
 
 async def test_path_info(
     shared_nix_environment: NixTestEnvironment,
-    seeded_store_path: StorePath,
+    seeded_store_path: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    path = str(seeded_store_path)
+    path = seeded_store_path
 
     cmd = parse(["path-info", path, *shared_nix_environment.pynix_store_args()])
     await cmd.run()
