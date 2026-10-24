@@ -85,18 +85,6 @@ CONSUMER_PRIVATE_IMPORTS: dict[tuple[str, str], str] = {
 }
 
 
-_OWN_STORE = (
-    "Paired with a concrete `Session`. `Session.eval` takes `StoreT`, so it "
-    "accepts only its own engine's store, and `AsyncStore` is not "
-    "substitutable there. Declaring the wider type on the protocol makes "
-    "pyright reject both engines for narrowing it."
-)
-_CONSTRUCTS = (
-    "Constructs the session, so the annotation is the constructed type. "
-    "Choosing rpc for its process isolation is a real decision, not drift. "
-    "`AsyncSession` is unsatisfiable bare anyway -- `StoreT` is invariant."
-)
-
 # Each place a consumer names an rpc engine class in an annotation, keyed by
 # (file, class), with the reason the protocol will not do.
 #
@@ -109,12 +97,7 @@ _CONSTRUCTS = (
 # store, a session evaluates in its own store, a repl adds attributes from its
 # own value. The protocols express this with an invariant type parameter, which
 # is honest and which is exactly what makes them non-substitutable here.
-CONSUMER_ENGINE_ANNOTATIONS: dict[tuple[str, str], str] = {
-    ("pynix-lsp/src/pynix_lsp/_context.py", "Session"): _CONSTRUCTS,
-    ("pynix-lsp/src/pynix_lsp/_context.py", "Store"): _OWN_STORE,
-    ("pynix-lsp/src/pynix_lsp/_handlers.py", "Session"): _CONSTRUCTS,
-    ("pynix-lsp/src/pynix_lsp/_handlers.py", "Store"): _OWN_STORE,
-}
+CONSUMER_ENGINE_ANNOTATIONS: dict[tuple[str, str], str] = {}
 
 # Five entries retired here, and the `ValueProxy` one named its own condition:
 # "expressing it would make `AsyncValue` generic over the store type. Until
