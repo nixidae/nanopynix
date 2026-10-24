@@ -6,8 +6,8 @@ that is not ``bash``, rewrite the derivation so that its builder is
 ``get-env.sh``, write the rewritten derivation, build it, and read the JSON
 that the builder wrote.
 
-The first four steps are one binding,
-:meth:`~nanopynix.protocols.AsyncStore.write_dev_shell_derivation`, because the
+The first four steps are one call,
+:func:`huggorm.devshell.awrite_dev_shell_derivation`, because the
 three supported Nix versions disagree about how a derivation is written. The
 last two are here. :mod:`pynix._dev_env` turns the JSON back into bash.
 

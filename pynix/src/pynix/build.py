@@ -39,10 +39,8 @@ class Build(ConfiguredCommand):
 
     trusted_public_keys: str | None = opt(None, help="Space-separated substituter public keys.")
 
-    # None, not a literal level: nanopynix leaves Nix's own compiled-in default
-    # (info) alone when no verbosity is named, and pynix has no reason to
-    # disagree with the library it dogfoods. This used to force notice, so
-    # `pynix build` was quieter than every other consumer of the same session.
+    # None, not a literal level: Nix's own compiled-in default (info) stands
+    # when no verbosity is named, as it does for `nix build`.
     verbosity: str | None = verbosity_option()
 
     print_build_logs: bool = print_build_logs_option()
