@@ -38,7 +38,6 @@ from huggorm.fod import (
 from huggorm.namespace import OverlayNamespace, remove_layers
 from huggorm.spawn import spawned
 
-import nanopynix
 from nanopynix._typechecking import BEARTYPING
 from pynix import _evaluate
 from pynix._build_monitor import BuildPlan, MonitorState
@@ -190,7 +189,7 @@ async def _plan(build: BuildSession, drv_path: str) -> BuildPlan:
 
     async def output_paths(path: str) -> frozenset[str]:
         # The static map: a floating content-addressed output has no path
-        # yet, and leaves its node without one, as nanopynix's plan does.
+        # yet, and leaves its node without one.
         if path not in paths:
             try:
                 found = await build.evaluation_store.query_derivation_output_map(
@@ -223,7 +222,11 @@ async def _drv_path(build: BuildSession, root: AsyncValue) -> str:
 
 
 def _messages(logs: CapturedLogs) -> list[str]:
-    return [nanopynix.strip_ansi(record_message(record)) for record in logs.records if record.action() == "msg"]
+    return [
+        huggorm.filter_ansi_escapes(record_message(record), filter_all=True)
+        for record in logs.records
+        if record.action() == "msg"
+    ]
 
 
 async def _updated_source(source_file: Path, mismatch: FodHashMismatch) -> str:
