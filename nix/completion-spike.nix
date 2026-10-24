@@ -8,7 +8,7 @@
 # derivation in nix/checks.nix to run at all.
 #
 # Nothing depends on this package, so being an application costs nothing here.
-# `nix/python-set.nix` records the reason that matters: `withPackages` drops an
+# nixvenv's `python-set.nix` records the reason that matters: `withPackages` drops an
 # application together with everything it propagates, so a *library* that
 # `pynix` depended on could not take this shape.
 {

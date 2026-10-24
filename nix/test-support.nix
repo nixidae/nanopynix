@@ -2,7 +2,7 @@
 # the pyproject.nix builders package.
 #
 # Every project here reaches `test_support` through `pythonSet`, which
-# nix/python-set.nix builds with pyproject.nix's builders.
+# nixvenv's python-set.nix builds with pyproject.nix's builders.
 # `completion-spike` cannot: it is a nixpkgs `buildPythonApplication`, because
 # `pytestCheckHook` is what runs its suite inside its own build, and a builders
 # package is not an input that a nixpkgs build can take. Its suite drives three

@@ -1,5 +1,5 @@
 /*
-  One source filter, applied to the repository or to a single project.
+  The source filter of the whole repository.
 
   **A bare path copies the working directory and not the repository.** Under a
   flake evaluation the source is git-filtered and the difference does not show.

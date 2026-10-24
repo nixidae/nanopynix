@@ -145,9 +145,9 @@ let
   completionSpike = pythonBase.pkgs.callPackage ./nix/completion-spike.nix { };
 
   # This repo's seam onto pyproject.nix's builders: `ps` builds package sets
-  # (nix/python-set.nix), `mkApp` turns one of their packages into a release
-  # application (nix/mk-app.nix).
-  ps = pkgs.callPackage ./nix/python-set.nix { inherit pyproject-nix; };
+  # (nixvenv's python-set.nix), `mkApp` turns one of their packages into a
+  # release application (nix/mk-app.nix).
+  inherit (import sources.nixvenv { inherit pkgs sources; }) ps;
   mkApp = pkgs.callPackage ./nix/mk-app.nix {
     pyprojectUtil = pkgs.callPackage pyproject-nix.build.util { };
   };
@@ -214,7 +214,7 @@ let
           easykubenix does, for its `ekn` CLI. Adding the project to the
           overlay is not enough on its own: a set's nixpkgs packages are
           lifted once, from the roots `mkPythonSet` is seeded with, and
-          the lifting machinery is internal to nix/python-set.nix. So a
+          the lifting machinery is internal to nixvenv's python-set.nix. So a
           dependency that only the consumer's project declares (`kr8s`,
           for `ekn`) has no way into the set after the fact -- an
           `overrideScope` can add the project but not the closure it
@@ -554,9 +554,7 @@ lib.throwIf (unlistedVariants != [ ])
       tofuCoreSchemaTool
       storeExecTool
       storeExecTools
-      # The seam onto pyproject.nix's builders, exported for the same reason
-      # `pythonSet` above is. `ps.mkProject` renders a project from its own
-      # pyproject.toml; `mkApp` turns one of those into a release application.
+      # `mkApp` turns a project of `ps` (nixvenv) into a release application.
       #
       # `mkApp` is the part a consumer cannot do without. Its `caBundle`
       # wrapper is the fix for issue #62: a program that initialises OpenSSL
@@ -564,7 +562,6 @@ lib.throwIf (unlistedVariants != [ ])
       # sandbox, which has no trust store. easykubenix runs its `ekn` CLI in
       # exactly that position from three derivations, and gates it on its own
       # side. See nix/mk-app.nix.
-      ps
       mkApp
       ;
   }
