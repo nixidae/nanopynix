@@ -196,27 +196,26 @@ async def test_an_unsigned_path_needs_no_check_sigs(
 
 #: A child that turns the process-wide ``keep-going`` on and then copies.
 #:
-#: **A child, and not this process.** ``pynix/tests/_shared_sessions.py``
-#: patches ``pynix._util.nix_session`` so the whole suite reuses one inproc
-#: session with its stores open, and ``set_settings`` is refused while a store
-#: is open. A child has neither, so it is the only place this setting can be
-#: applied to the session that the command itself opens.
+#: **A child, and not this process.** A setting is a process global, and
+#: ``pynix/tests/_shared_sessions.py`` shares one session across the whole
+#: suite, so ``keep-going`` set here would reach every later test.
 _QUIET_COPY_PROBE = """
 import json
 import sys
 
 import anyio
+import huggorm
 
-import nanopynix
 from pynix import parse
+from pynix._util import init_nix
 from test_support.subprocess_output import run_process
 
 source, path, destination = sys.argv[1], sys.argv[2], sys.argv[3]
 
 
 async def main() -> None:
-    async with nanopynix.inproc.Session() as session:
-        await session.set_settings(nanopynix.NixGlobalSettings(keep_going=True))
+    init_nix()
+    huggorm.set_setting("keep-going", "true")
     command = parse(["copy", path, "--to", destination, "--store", source])
     try:
         await command.run()

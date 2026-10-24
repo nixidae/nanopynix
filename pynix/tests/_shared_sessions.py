@@ -1,15 +1,14 @@
 """The local fast path: one Nix session shared by every pynix command.
 
-Every pynix command opens its own ``nanopynix.rpc.Session``, store and
-evaluator -- that is what the real CLI does, and running it that way is what
-makes these tests end-to-end rather than unit tests. It is also the dominant
-cost of the suite: measured on the real ``eval_session`` -> ``eval_flake``
-path against a flake importing nixpkgs, a fresh session per call takes 9.04s,
-while a reused one takes 7.19s on the first call and **0.01s** after. Almost
-none of that is the worker process (~0.19s); it is re-importing nixpkgs into a
-brand-new evaluator, over and over.
+Every pynix command opens its own session, store and evaluator -- that is
+what the real CLI does, and running it that way is what makes these tests
+end-to-end rather than unit tests. It is also the dominant cost of the suite:
+measured on an evaluation of a flake importing nixpkgs, a fresh session per
+call takes 9.04s, while a reused one takes 7.19s on the first call and
+**0.01s** after. That time is re-importing nixpkgs into a brand-new
+evaluator, over and over.
 
-So this module rebinds ``nix_session``/``store_session``/``eval_session`` to
+So this module rebinds the ``huggorm_*_session`` helpers of ``pynix._util`` to
 versions that hand out a shared session, store and evaluator. Commands still
 run their real code, still forward logs per invocation, and still see a real
 Nix -- they just stop paying for a cold evaluator each time.
@@ -23,15 +22,13 @@ cannot catch, by construction, is anything that depends on a command getting a
 *fresh* process, store handle or evaluator -- leaked global state, first-call
 initialisation order, env read at worker spawn.
 
-A command that configures its session (``settings``, ``experimental_features``
-or ``verbosity``) is never shared: those change how the worker itself is set
-up, so such a call falls through to the real implementation.
+A build that names its own ``settings`` falls through to the real
+implementation, and the settings it changed are put back after it.
 """
 
 from __future__ import annotations
 
 import contextlib
-import os
 import pathlib
 import sys
 import urllib.parse
@@ -40,15 +37,15 @@ from typing import TYPE_CHECKING, Any
 import anyio
 import huggorm
 
-import nanopynix
 import pynix._util as pynix_util
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Mapping, Sequence
+    from collections.abc import AsyncGenerator, Mapping
 
     import pytest
 
     from pynix._build_monitor import MonitorState
+    from pynix._verbosity import VerbosityInput
 
 #: Set by CI to run the faithful path -- every command opens its own worker,
 #: store and evaluator, exactly as the real CLI does. Unset (the local default)
@@ -56,9 +53,6 @@ if TYPE_CHECKING:
 FAITHFUL_SESSIONS_ENV_VAR = "NANOPYNIX_TEST_FAITHFUL_SESSIONS"
 
 _PATCHED_NAMES = (
-    "nix_session",
-    "store_session",
-    "eval_session",
     "huggorm_eval_session",
     "huggorm_store_session",
     "huggorm_build_session",
@@ -70,70 +64,25 @@ class SharedSessions:
 
     def __init__(self) -> None:
         self._stack = contextlib.AsyncExitStack()
-        # Apart from `_stack`: a huggorm command closes it, as `_close_nanopynix` says.
-        self._nanopynix_stack = contextlib.AsyncExitStack()
         # Commands are driven sequentially by the tests, but the LSP tests
         # overlap operations, so opening the shared objects has to be atomic.
         self._lock = anyio.Lock()
-        self._session: Any = None
-        # Keyed by _store_key, not by URI alone -- see that function.
-        self._stores: dict[tuple[str, tuple[int, int] | None], Any] = {}
-        self._evaluators: dict[tuple[str, tuple[int, int] | None], Any] = {}
         self._huggorm: huggorm.AsyncSession | None = None
+        # Keyed by _store_key, not by URI alone -- see that function.
         self._huggorm_states: dict[tuple[str, tuple[int, int] | None], tuple[Any, Any]] = {}
         self._huggorm_builds: dict[tuple[Any, Any], tuple[Any, Any, Any]] = {}
         self._originals = {name: getattr(pynix_util, name) for name in _PATCHED_NAMES}
 
     # ── shared object construction ─────────────────────────────────────
 
-    async def _shared_session(self) -> Any:
-        if self._session is None:
+    async def _shared_huggorm(self) -> huggorm.AsyncSession:
+        if self._huggorm is None:
             # `load_config=False`, so the `nix.conf` of whoever runs the suite
             # reaches nothing here. `pynix` itself loads it, and must: the real
-            # CLI takes what the host configured. A test is the other case --
-            # it states what it wants and asserts on the result -- and the
-            # substituters, the experimental features and the sandbox of a
-            # developer machine are none of its business. This mattered less
-            # while a session sent its own defaults over the file anyway; it
-            # matters now that the file stands unless a caller speaks.
-            self._session = await self._nanopynix_stack.enter_async_context(nanopynix.inproc.Session(load_config=False))
-        return self._session
-
-    async def _shared_store(self, store_uri: str) -> tuple[Any, Any]:
-        key = _store_key(store_uri)
-        store = self._stores.get(key)
-        session = await self._shared_session()
-        if store is None:
-            store = await self._nanopynix_stack.enter_async_context(session.store(store_uri))
-            self._stores[key] = store
-        return session, store
-
-    async def _shared_evaluator(self, store_uri: str) -> tuple[Any, Any, Any]:
-        session, store = await self._shared_store(store_uri)
-        key = _store_key(store_uri)
-        evaluator = self._evaluators.get(key)
-        if evaluator is None:
-            evaluator = await self._nanopynix_stack.enter_async_context(session.eval(store))
-            self._evaluators[key] = evaluator
-        return session, store, evaluator
-
-    async def _close_nanopynix(self) -> None:
-        """Close the shared nanopynix session, which the next nanopynix command opens again.
-
-        Its log pump subscribes to the process stream, and so does a huggorm
-        command. The second subscriber replaces the first, so with both open
-        the build log and a failed dependency's cause reach the wrong one.
-        """
-        await self._nanopynix_stack.aclose()
-        self._nanopynix_stack = contextlib.AsyncExitStack()
-        self._session = None
-        self._stores.clear()
-        self._evaluators.clear()
-
-    async def _shared_huggorm(self) -> huggorm.AsyncSession:
-        await self._close_nanopynix()
-        if self._huggorm is None:
-            # `load_config=False`, for the reason `_shared_session` gives.
+            # CLI takes what the host configured. A test states what it wants
+            # and asserts on the result, and the substituters, the
+            # experimental features and the sandbox of a developer machine are
+            # none of its business.
             pynix_util.init_nix(load_config=False)
             self._huggorm = await self._stack.enter_async_context(huggorm.AsyncSession())
         return self._huggorm
@@ -167,93 +116,6 @@ class SharedSessions:
     # ── the patched helpers ────────────────────────────────────────────
 
     @contextlib.asynccontextmanager
-    async def nix_session(
-        self,
-        *,
-        settings: nanopynix.NixSettings | os.PathLike[str] | str | None = None,
-        experimental_features: Sequence[str] | None = None,
-        verbosity: nanopynix.LogLevelInput | None = None,
-        print_build_logs: bool = False,
-        monitor: MonitorState | None = None,
-    ) -> AsyncGenerator[Any]:
-        if _nix_is_stubbed():
-            async with self._originals["nix_session"](
-                settings=settings,
-                experimental_features=experimental_features,
-                verbosity=verbosity,
-                print_build_logs=print_build_logs,
-            ) as session:
-                yield session
-            return
-        async with self._lock:
-            session = await self._shared_session()
-        # Log forwarding stays per invocation: tests assert on the logs a
-        # single command produced, and log_stream() is a fan-out subscription,
-        # so each command gets its own consumer over the shared session.
-        if monitor is None:
-            async with pynix_util.forward_nix_logs(session, verbosity=verbosity, print_build_logs=print_build_logs):
-                yield session
-            return
-        # The shared session is inproc and opened without tracking, and a
-        # process holds one inproc session, so the monitor turns the
-        # process-wide gate on around the command instead.
-        with session.tracking_activities():
-            async with pynix_util.forward_nix_logs(
-                session, verbosity=verbosity, print_build_logs=print_build_logs, monitor=monitor
-            ):
-                yield session
-
-    @contextlib.asynccontextmanager
-    async def store_session(
-        self,
-        store_uri: str,
-        *,
-        settings: nanopynix.NixSettings | os.PathLike[str] | str | None = None,
-        experimental_features: Sequence[str] | None = None,
-        verbosity: nanopynix.LogLevelInput | None = None,
-        print_build_logs: bool = False,
-    ) -> AsyncGenerator[tuple[Any, Any]]:
-        if _nix_is_stubbed():
-            async with self._originals["store_session"](
-                store_uri,
-                settings=settings,
-                experimental_features=experimental_features,
-                verbosity=verbosity,
-                print_build_logs=print_build_logs,
-            ) as pair:
-                yield pair
-            return
-        async with self._lock:
-            session, store = await self._shared_store(store_uri)
-        async with pynix_util.forward_nix_logs(session, verbosity=verbosity, print_build_logs=print_build_logs):
-            yield session, store
-
-    @contextlib.asynccontextmanager
-    async def eval_session(
-        self,
-        store_uri: str,
-        *,
-        settings: nanopynix.NixSettings | os.PathLike[str] | str | None = None,
-        experimental_features: Sequence[str] | None = None,
-        verbosity: nanopynix.LogLevelInput | None = None,
-        print_build_logs: bool = False,
-    ) -> AsyncGenerator[tuple[Any, Any, Any]]:
-        if _nix_is_stubbed():
-            async with self._originals["eval_session"](
-                store_uri,
-                settings=settings,
-                experimental_features=experimental_features,
-                verbosity=verbosity,
-                print_build_logs=print_build_logs,
-            ) as triple:
-                yield triple
-            return
-        async with self._lock:
-            session, store, evaluator = await self._shared_evaluator(store_uri)
-        async with pynix_util.forward_nix_logs(session, verbosity=verbosity, print_build_logs=print_build_logs):
-            yield session, store, evaluator
-
-    @contextlib.asynccontextmanager
     async def huggorm_eval_session(
         self,
         store_uri: str,
@@ -270,7 +132,7 @@ class SharedSessions:
         self,
         store_uri: str,
         *,
-        verbosity: nanopynix.LogLevelInput | None = None,
+        verbosity: VerbosityInput | None = None,
     ) -> AsyncGenerator[tuple[Any, Any]]:
         async with self._lock:
             session, store, _state = await self._shared_state(store_uri)
@@ -284,15 +146,13 @@ class SharedSessions:
         *,
         eval_store_uri: str | None = None,
         settings: Mapping[str, str] | None = None,
-        verbosity: nanopynix.LogLevelInput | None = None,
+        verbosity: VerbosityInput | None = None,
         print_build_logs: bool = False,
         monitor: MonitorState | None = None,
     ) -> AsyncGenerator[tuple[Any, Any, Any, Any]]:
         if settings:
             # A setting is a process global, and a shared evaluator was built
             # before it. Put each one back, or every later test inherits it.
-            async with self._lock:
-                await self._close_nanopynix()
             before = {name: huggorm.get_setting(name) for name in settings}
             try:
                 async with self._originals["huggorm_build_session"](
@@ -321,7 +181,7 @@ class SharedSessions:
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Rebind the helpers in every pynix module that imported them.
 
-        The command modules use ``from pynix._util import store_session``, so
+        The command modules use ``from pynix._util import huggorm_store_session``, so
         each holds its own reference and patching ``pynix._util`` alone would
         miss all of them. Sweeping the already-imported ``pynix.*`` modules for
         the original function object catches every current call site and any
@@ -347,21 +207,7 @@ class SharedSessions:
             )
 
     async def aclose(self) -> None:
-        await self._nanopynix_stack.aclose()
         await self._stack.aclose()
-
-
-def _nix_is_stubbed() -> bool:
-    """Whether a test has replaced the Nix entry point with a fake.
-
-    Several tests swap ``pynix._util.nanopynix`` for a ``SimpleNamespace``
-    exposing a fake session, so a command runs against a scripted store rather
-    than a real one. Sharing a real session would bypass the fake entirely and
-    hand the command a store URI like ``test://store``; those calls have to
-    fall through to the real helper, which resolves the stub the same way it
-    always did.
-    """
-    return pynix_util.nanopynix is not nanopynix
 
 
 def _store_key(store_uri: str) -> tuple[str, tuple[int, int] | None]:

@@ -4,7 +4,7 @@
 write to it.** One line on stderr from anywhere lands in the middle of the
 drawing, and the screen stays wrong until the next full redraw. This is not a
 theoretical risk for ``pynix search``: the detail pane opens a Nix evaluator
-while the interface is up, and ``pynix._util.forward_nix_logs`` prints one
+while the interface is up, and ``pynix._util.forward_state_logs`` prints one
 structlog line for each log event that the evaluator sends.
 
 :func:`quiet_terminal` catches both halves of that, and prints what it caught

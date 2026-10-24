@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import functools
 import json
 import logging
 import os
@@ -11,7 +10,7 @@ from contextlib import asynccontextmanager, nullcontext
 # A real import, and not a `TYPE_CHECKING` one: `huggorm_local_store_path`
 # builds a `Path` at run time.
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn, TextIO, cast
+from typing import TYPE_CHECKING, Any, NoReturn, TextIO
 
 import anyio
 import huggorm
@@ -20,35 +19,26 @@ from rich.console import Console
 from rich.live import Live
 from rich.text import Text
 
-import nanopynix
 from nanopynix._typechecking import BEARTYPING, no_runtime_type_check
-from nanopynix.libstore import init_libexpr, load_config_once, load_plugins_once
 from pynix._build_monitor import MonitorState, RecordEvent, render
 from pynix._impl.settings import SettingError, nix_settings
 from pynix._store_layout import StoreLayout
 from pynix._verbosity import VerbosityInput, verbosity_of
 
 if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import AsyncGenerator, Mapping, Sequence
+    from collections.abc import AsyncGenerator, Mapping
 
     from huggorm import AsyncEvalState, LogRecord
     from nanopynix_helpers import EvaluationTargetError
     from structlog.typing import EventDict, WrappedLogger
 
-    from nanopynix import AsyncEvalSession, AsyncSession, AsyncStore
-
 _LOG_LINE_RESULTS = frozenset({huggorm.ResultType.BUILD_LOG_LINE, huggorm.ResultType.POST_BUILD_LOG_LINE})
-# Ceiling on the exit drain, and the idle window that normally ends it well
-# before that -- see _drain_logs.
-_LOG_DRAIN_SECONDS = 0.5
-_LOG_DRAIN_QUIET_SECONDS = 0.05
-# A Nix "result" action's args are at least [_, result_type], with an
-# optional trailing fields list.
-_MIN_RESULT_EVENT_ARGS = 2
 # nom redraws on every event; four times a second shows the same thing.
 _MONITOR_REDRAW_SECONDS = 0.25
 #: What `nix` logs at when no flag names a level (`nix::verbosity`, lvlInfo).
 DEFAULT_VERBOSITY = huggorm.Verbosity.INFO
+
+_config_loaded = False
 
 # Build-progress/error messages go here, not stdout -- so a command's
 # print_json() output stays clean, machine-parseable JSON even when the same
@@ -97,7 +87,7 @@ def report_and_exit(exc: EvaluationTargetError) -> NoReturn:
 
 
 class LogGate:
-    """The verbosity up to which :func:`forward_nix_logs` prints an activity.
+    """The verbosity up to which :func:`forward_state_logs` prints an activity.
 
     Mutable, because a REPL's ``:verbosity`` moves the level after the
     forwarder starts.
@@ -141,141 +131,6 @@ def configure_logging(*, file: TextIO | None = None, verbosity: huggorm.Verbosit
     )
 
 
-@asynccontextmanager
-@no_runtime_type_check  # log_file is duck-typed against TextIO -- see configure_logging above.
-async def forward_nix_logs(
-    session: Any,
-    *,
-    verbosity: VerbosityInput | None = None,
-    print_build_logs: bool = False,
-    log_file: TextIO | None = None,
-    monitor: MonitorState | None = None,
-) -> AsyncGenerator[LogGate]:
-    """Print the session's logs while the block runs, as Nix prints them.
-
-    *verbosity* is the session's, and ``None`` means Nix's default. It gates
-    the activities and pynix's own events; Nix gates its messages before they
-    arrive. The block receives the :class:`LogGate`, to move the level later.
-
-    With ``monitor``, fold them into it and draw nom's status at the bottom
-    of stderr instead, with the log above it. The caller keeps the state, so
-    it can hand the monitor a plan. The session must have activity tracking on.
-    """
-    gate = LogGate(DEFAULT_VERBOSITY if verbosity is None else verbosity_of(verbosity))
-    old_config = structlog.get_config()
-    live = _start_monitor() if monitor is not None else None
-    # After the monitor starts: `Live` swaps `sys.stderr` for a proxy that
-    # prints above it, and structlog binds whatever `sys.stderr` is now.
-    configure_logging(file=log_file, verbosity=gate.level)
-    activity = _LogActivity()
-    state = monitor if monitor is not None else MonitorState(started=time.monotonic())
-    try:
-        async with anyio.create_task_group() as tg:
-            if live is None:
-                tg.start_soon(
-                    functools.partial(
-                        _forward_nix_logs,
-                        session,
-                        print_build_logs=print_build_logs,
-                        activity=activity,
-                        gate=gate,
-                        file=log_file,
-                    )
-                )
-            else:
-                tg.start_soon(_monitor_nix_logs, session, live, state, activity)
-                tg.start_soon(_redraw, live, state)
-            try:
-                yield gate
-            except Exception as exc:
-                # The monitor's last frame counts it. The caller prints it,
-                # after that frame, where nom prints its errors too.
-                if live is not None:
-                    state.note_error(str(exc))
-                raise
-            finally:
-                # Shielded: the drain must run to completion even if the
-                # caller's block was cancelled, matching the original
-                # asyncio (edge-cancellation) behavior of this cleanup.
-                with anyio.CancelScope(shield=True):
-                    await _drain_logs(activity)
-                tg.cancel_scope.cancel()
-                if live is not None:
-                    _stop_monitor(live, state)
-    except* BaseException as eg:
-        # anyio task groups always wrap exceptions in a group, even a lone
-        # one raised by the yielded body itself -- unwrap the common single
-        # exception case so callers keep seeing the original exception type
-        # (e.g. SystemExit) instead of a BaseExceptionGroup.
-        if len(eg.exceptions) == 1:
-            raise eg.exceptions[0] from None
-        raise
-    finally:
-        structlog.configure(**old_config)
-
-
-@asynccontextmanager
-async def nix_session(  # noqa: PLR0913 -- keyword-only, one per session option; a bundle would hide which ones a command sets
-    *,
-    settings: nanopynix.NixSettings | os.PathLike[str] | str | None = None,
-    experimental_features: Sequence[str] | None = None,
-    verbosity: nanopynix.LogLevelInput | None = None,
-    print_build_logs: bool = False,
-    namespace: nanopynix.OverlayNamespace | None = None,
-    monitor: MonitorState | None = None,
-) -> AsyncGenerator[AsyncSession[Any, Any, Any]]:
-    """Open a Nix session and forward its logs for the duration of the block.
-
-    Defaults to :class:`nanopynix.inproc.Session`. When *namespace* is given,
-    opens :class:`nanopynix.rpc.Session` instead, because entering an overlay
-    namespace requires process isolation. *monitor* draws nom's status in
-    place of the log lines.
-    """
-    kwargs: dict[str, Any] = {}
-    forward_kwargs: dict[str, Any] = {}
-    if monitor is not None:
-        kwargs["activity_tracking"] = True
-        forward_kwargs["monitor"] = monitor
-    if settings is not None:
-        kwargs["settings"] = settings
-    if experimental_features is not None:
-        kwargs["experimental_features"] = list(experimental_features)
-    if verbosity is not None:
-        kwargs["verbosity"] = verbosity
-    if namespace is not None:
-        kwargs["namespace"] = namespace
-        session_factory = nanopynix.rpc.Session
-    else:
-        session_factory = nanopynix.inproc.Session
-    async with (
-        session_factory(**kwargs) as nix,
-        forward_nix_logs(nix, verbosity=verbosity, print_build_logs=print_build_logs, **forward_kwargs),
-    ):
-        yield nix
-
-
-@asynccontextmanager
-async def store_session(
-    store_uri: str,
-    *,
-    settings: nanopynix.NixSettings | os.PathLike[str] | str | None = None,
-    experimental_features: Sequence[str] | None = None,
-    verbosity: nanopynix.LogLevelInput | None = None,
-    print_build_logs: bool = False,
-) -> AsyncGenerator[tuple[AsyncSession[Any, Any, Any], AsyncStore]]:
-    """Open a session and store, forwarding logs for the duration of the block."""
-    async with (
-        nix_session(
-            settings=settings,
-            experimental_features=experimental_features,
-            verbosity=verbosity,
-            print_build_logs=print_build_logs,
-        ) as nix,
-        nix.store(store_uri) as store,
-    ):
-        yield nix, store
-
-
 async def huggorm_local_store_path(store: huggorm.AsyncStore, path: str) -> Path:
     """Where *path* really is on this filesystem, for a store that has one.
 
@@ -307,39 +162,22 @@ def _split_store_path(path: str, store_dir: str) -> tuple[str, Path]:
     return f"{store_dir}/{base_name}", suffix_path
 
 
-@asynccontextmanager
-async def eval_session(
-    store_uri: str,
-    *,
-    settings: nanopynix.NixSettings | os.PathLike[str] | str | None = None,
-    experimental_features: Sequence[str] | None = None,
-    verbosity: nanopynix.LogLevelInput | None = None,
-    print_build_logs: bool = False,
-) -> AsyncGenerator[tuple[AsyncSession[Any, Any, Any], AsyncStore, AsyncEvalSession[Any]]]:
-    """Open a session, store, and eval session, forwarding logs for the duration of the block."""
-    async with (
-        store_session(
-            store_uri,
-            settings=settings,
-            experimental_features=experimental_features,
-            verbosity=verbosity,
-            print_build_logs=print_build_logs,
-        ) as (nix, store),
-        nix.eval(store) as session,
-    ):
-        yield nix, store, session
-
-
 def init_nix(*, load_config: bool = True) -> None:
-    """Set up Nix for this process, as ``nanopynix.inproc.Session`` does.
+    """Set up Nix for this process: ``nix.conf``, the plugins, the evaluator.
 
-    nanopynix's once-guards and not huggorm's functions: a nanopynix session
-    in the same process would load ``nix.conf`` a second time, and that load
-    overwrites what a caller set after the first.
+    The configuration loads once: a second load of ``nix.conf`` overwrites
+    what a caller set after the first. Nix loads the plugins once per
+    process, and ``huggorm.init_plugins`` keeps that count for every caller.
+    ``fetch-tree`` is on here, before the first store opens, so ``NIX_PATH``
+    reaches ``nix-path`` as a session starts.
     """
-    load_config_once(load_config)
-    load_plugins_once()
-    init_libexpr()
+    global _config_loaded  # noqa: PLW0603 -- process-wide, like the Nix configuration
+    if load_config and not _config_loaded:
+        huggorm.load_config()
+        _config_loaded = True
+    huggorm.init_plugins()
+    huggorm.start_collector()
+    huggorm.enable_experimental_feature("fetch-tree")
 
 
 def configured_nix_settings(**flags: str | None) -> dict[str, str]:
@@ -382,7 +220,7 @@ async def huggorm_eval_session(
 async def huggorm_store_session(
     store_uri: str,
     *,
-    verbosity: nanopynix.LogLevelInput | None = None,
+    verbosity: VerbosityInput | None = None,
 ) -> AsyncGenerator[tuple[huggorm.AsyncSession, huggorm.AsyncStore]]:
     """Open a huggorm session and store with no evaluator, forwarding logs for the duration of the block."""
     apply_nix_settings()
@@ -393,12 +231,12 @@ async def huggorm_store_session(
 
 
 @asynccontextmanager
-async def huggorm_build_session(  # noqa: PLR0913 -- keyword-only, one per session option, as nix_session
+async def huggorm_build_session(  # noqa: PLR0913 -- keyword-only, one per session option; a bundle would hide which ones a command sets
     store_uri: str,
     *,
     eval_store_uri: str | None = None,
     settings: Mapping[str, str] | None = None,
-    verbosity: nanopynix.LogLevelInput | None = None,
+    verbosity: VerbosityInput | None = None,
     print_build_logs: bool = False,
     monitor: MonitorState | None = None,
 ) -> AsyncGenerator[tuple[huggorm.AsyncSession, huggorm.AsyncStore, huggorm.AsyncStore, AsyncEvalState]]:
@@ -448,7 +286,7 @@ async def build_derivation(
 
 @asynccontextmanager
 @no_runtime_type_check  # log_file is duck-typed against TextIO -- see configure_logging above.
-async def forward_state_logs(  # noqa: PLR0913 -- keyword-only, one per forwarding option, as forward_nix_logs
+async def forward_state_logs(  # noqa: PLR0913 -- keyword-only, one per forwarding option
     session: huggorm.AsyncSession | huggorm.AsyncRemoteSession,
     state: AsyncEvalState | None,
     *,
@@ -460,33 +298,39 @@ async def forward_state_logs(  # noqa: PLR0913 -- keyword-only, one per forwardi
     """Print what *state* logs while the block runs, as Nix prints it.
 
     Also what no evaluator claims: a fetch, a download, a build. Unforwarded,
-    those reach huggorm's fallback logger, which prints at CHATTY. A nanopynix
-    session must not be open beside this: its log pump subscribes to the same
-    process stream, and a second subscriber replaces the first.
+    those reach huggorm's fallback logger, which prints at CHATTY.
+
+    *verbosity* gates the activities and pynix's own events; Nix gates its
+    messages before they arrive. The block receives the :class:`LogGate`, to
+    move the level later.
 
     With ``monitor``, fold the records into it and draw nom's status at the
-    bottom of stderr instead, as :func:`forward_nix_logs` does.
+    bottom of stderr instead, with the log above it. The caller keeps the
+    state, so it can hand the monitor a plan.
     """
     gate = LogGate(DEFAULT_VERBOSITY if verbosity is None else verbosity_of(verbosity))
     old_config = structlog.get_config()
     live = _start_monitor() if monitor is not None else None
-    # After the monitor starts, for the reason `forward_nix_logs` gives.
+    # After the monitor starts: `Live` swaps `sys.stderr` for a proxy that
+    # prints above it, and structlog binds whatever `sys.stderr` is now.
     configure_logging(file=log_file, verbosity=gate.level)
-    # Bound once, as in `_forward_nix_logs`.
+    # Bound once, as structlog binds it: `quiet_terminal` swaps `sys.stderr`
+    # before a command that runs under it opens its session.
     out = log_file if log_file is not None else sys.stderr
     colour = _wants_colour(out)
 
     def write(record: LogRecord) -> None:
         line = _record_line(record, print_build_logs=print_build_logs, gate=gate)
         if line is not None:
-            out.write(f"{line if colour else nanopynix.strip_ansi(line)}\n")
+            out.write(f"{line if colour else huggorm.filter_ansi_escapes(line, filter_all=True)}\n")
 
     def fold(record: LogRecord) -> None:
         event = monitor_event(record)
         if event is None or live is None or monitor is None:
             return
         for line in monitor.apply(event, time.monotonic()):
-            # Unwrapped, as in `_monitor_nix_logs`.
+            # Unwrapped, as Nix prints it: a store path broken across lines
+            # cannot be copied.
             live.console.print(line, soft_wrap=True)
 
     callback = write if monitor is None else fold
@@ -498,7 +342,8 @@ async def forward_state_logs(  # noqa: PLR0913 -- keyword-only, one per forwardi
         ):
             yield gate
     except Exception as exc:
-        # Counted in the last frame, as `forward_nix_logs` counts it.
+        # The monitor's last frame counts it. The caller prints it, after
+        # that frame, where nom prints its errors too.
         if monitor is not None:
             monitor.note_error(str(exc))
         raise
@@ -522,7 +367,8 @@ async def _redrawing(live: Live | None, state: MonitorState | None) -> AsyncGene
             finally:
                 tg.cancel_scope.cancel()
     except* BaseException as eg:
-        # The body's own exception, unwrapped, as `forward_nix_logs` does.
+        # A task group wraps even the body's own lone exception in a group;
+        # unwrapped, a caller still sees SystemExit and not a group.
         if len(eg.exceptions) == 1:
             raise eg.exceptions[0] from None
         raise
@@ -540,8 +386,8 @@ def _stop_monitor(live: Live, state: MonitorState) -> None:
 def monitor_event(record: LogRecord) -> RecordEvent | None:
     """*record* as the event :meth:`MonitorState.apply` reads, or ``None``.
 
-    nanopynix's ``_callback_args`` mapping: a message with error info is an
-    ``error``, and the fields of an activity are plain ints and strings.
+    A message with error info is an ``error``, and the fields of an activity
+    are plain ints and strings.
     """
     match record.action():
         case "msg" if (info := record.info()) is not None:
@@ -571,7 +417,12 @@ def record_message(record: LogRecord) -> str:
 
 
 def _record_line(record: LogRecord, *, print_build_logs: bool, gate: LogGate) -> str | None:
-    """:func:`_nix_line` for a huggorm record."""
+    """The line ``SimpleLogger`` prints for *record*, or ``None`` for no line.
+
+    A message arrives already gated at the verbosity of the thread that raised
+    it, so a REPL evaluator at ``debug`` still shows its debug messages. An
+    activity arrives ungated.
+    """
     match record.action():
         case "msg":
             return record_message(record)
@@ -585,39 +436,6 @@ def _record_line(record: LogRecord, *, print_build_logs: bool, gate: LogGate) ->
             return texts[-1] if texts else None
         case _:
             return None
-
-
-class _LogActivity:
-    """Counts events seen on the log stream, so the drain can tell it apart
-    from a stream that has gone quiet."""
-
-    __slots__ = ("count",)
-
-    def __init__(self) -> None:
-        self.count = 0
-
-
-async def _drain_logs(activity: _LogActivity) -> None:
-    """Wait for trailing log events, stopping once the stream goes quiet.
-
-    Every log event the worker emits while serving a call has already been sent
-    by the time that call's reply arrives, so once the caller's block finishes
-    there is essentially nothing left to wait for: measured across eval,
-    instantiate, a 56-event build, store queries and a failing eval, exactly one
-    event (the request-finalized marker) arrived after the block exited, and
-    always within 0.4ms.
-
-    This used to be a flat ``sleep(_LOG_DRAIN_SECONDS)``, which charged every
-    pynix invocation the whole ceiling -- 0.49s of measured dead time per
-    command, paid once per CLI run and once per test that runs one. Waiting for
-    an idle window instead keeps the guarantee (a stream still producing events
-    keeps extending, up to the same ceiling) at ~50ms in the normal case.
-    """
-    deadline = time.monotonic() + _LOG_DRAIN_SECONDS
-    seen = -1
-    while seen != activity.count and time.monotonic() < deadline:
-        seen = activity.count
-        await anyio.sleep(_LOG_DRAIN_QUIET_SECONDS)
 
 
 def _start_monitor() -> Live:
@@ -640,84 +458,9 @@ async def _redraw(live: Live, state: MonitorState) -> None:
         await anyio.sleep(_MONITOR_REDRAW_SECONDS)
 
 
-async def _monitor_nix_logs(session: Any, live: Live, state: MonitorState, activity: _LogActivity) -> None:
-    async for event in session.log_stream():
-        activity.count += 1
-        if event.is_request_finalized or not event.is_nix_log:
-            continue
-        for line in state.apply(event, time.monotonic()):
-            # Unwrapped, as Nix prints it: a store path broken across lines
-            # cannot be copied.
-            live.console.print(line, soft_wrap=True)
-
-
-@no_runtime_type_check  # file is duck-typed against TextIO -- see configure_logging above.
-async def _forward_nix_logs(
-    session: Any,
-    *,
-    print_build_logs: bool,
-    activity: _LogActivity,
-    gate: LogGate,
-    file: TextIO | None = None,
-) -> None:
-    # Bound once, as structlog binds it: `quiet_terminal` swaps `sys.stderr`
-    # before a command that runs under it opens its session.
-    out = file if file is not None else sys.stderr
-    colour = _wants_colour(out)
-    async for event in session.log_stream():
-        # Counted before any filtering: a skipped event still proves the stream
-        # is live, which is all the drain needs to know.
-        activity.count += 1
-        if event.is_request_finalized or not event.is_nix_log:
-            continue
-        line = _nix_line(event, print_build_logs=print_build_logs, gate=gate)
-        if line is not None:
-            out.write(f"{line if colour else nanopynix.strip_ansi(line)}\n")
-
-
-def _nix_line(event: Any, *, print_build_logs: bool, gate: LogGate) -> str | None:
-    """The line ``SimpleLogger`` prints for *event*, or ``None`` for no line.
-
-    A message arrives already gated at the verbosity of the thread that raised
-    it, so a REPL evaluator at ``debug`` still shows its debug messages. An
-    activity arrives ungated; see :attr:`nanopynix.LogEvent.level`.
-    """
-    match event.action:
-        case "msg" | "warn" | "error":
-            return event.message
-        case "start":
-            text, level = event.message, event.level
-            if not text or level is None or level > gate.level:
-                return None
-            return f"{text}..."
-        case "result" if print_build_logs:
-            result_type, result_message = _result_event(event)
-            if result_type in _LOG_LINE_RESULTS:
-                return result_message
-            return None
-        case _:
-            return None
-
-
 def _wants_colour(out: Any) -> bool:
     """Nix's rule: escape sequences reach a terminal, and nothing else."""
     if "NO_COLOR" in os.environ:
         return False
     isatty = getattr(out, "isatty", None)
     return bool(isatty()) if callable(isatty) else False
-
-
-def _result_event(event: Any) -> tuple[int | None, str | None]:
-    if event.action != "result":
-        return None, None
-    args = event.args
-    if len(args) < _MIN_RESULT_EVENT_ARGS or not isinstance(args[1], int):
-        return None, None
-    result_type = args[1]
-    fields: list[Any] = cast("list[Any]", args[2]) if len(args) > _MIN_RESULT_EVENT_ARGS else []
-    message = None
-    for field in reversed(fields):
-        if isinstance(field, str):
-            message = field
-            break
-    return result_type, message

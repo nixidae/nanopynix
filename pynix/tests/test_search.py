@@ -694,7 +694,7 @@ async def test_the_command_writes_nothing_while_the_interface_is_drawn(
     """Nothing reaches the terminal between the first draw and the last.
 
     **The detail pane opens a Nix evaluator while the interface is up**, and
-    `pynix._util.forward_nix_logs` prints one structlog line for each log
+    `pynix._util.forward_state_logs` prints one structlog line for each log
     event that the evaluator sends. One such line lands in the middle of the
     drawing, and the screen stays wrong until the next full redraw.
 

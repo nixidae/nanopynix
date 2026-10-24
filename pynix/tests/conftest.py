@@ -590,7 +590,7 @@ def _pynix_configure_logging_noop() -> Generator[None]:
     # `pynix._impl.main.prepare()` after the parse instead, and the package no
     # longer binds the name. Issue #123.
     old_configure_logging = pynix_util.configure_logging
-    pynix_util.configure_logging = lambda *, file=None, verbosity=None: None  # noqa: ARG005 -- matching configure_logging's real signature so callers like forward_nix_logs(log_file=...) don't break
+    pynix_util.configure_logging = lambda *, file=None, verbosity=None: None  # noqa: ARG005 -- matching configure_logging's real signature so callers like forward_state_logs(log_file=...) don't break
     try:
         yield
     finally:
