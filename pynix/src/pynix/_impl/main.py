@@ -33,15 +33,12 @@ import huggorm.errors
 import rich.traceback
 from rich.text import Text
 
-from nanopynix import set_manager_title
-from nanopynix.exceptions import NixError
 from pynix._util import configure_logging, error_console
 
 
 def prepare() -> None:
-    """Install the traceback handler, name the process and configure logging."""
+    """Install the traceback handler and configure logging."""
     rich.traceback.install(show_locals=True)
-    set_manager_title("pynix")
     configure_logging()
 
 
@@ -70,24 +67,19 @@ def run(body: Callable[[], Coroutine[object, object, None]]) -> None:
     **The message of Nix, in the words of Nix, with no prefix of our own.**
     A reader saw three markers for one failure: `error_exit` wrote `Error:`,
     `NixError` wrote the class as `[EvalError]`, and Nix writes `error:`
-    inside the message. This function prints `exc.msg`, which is the line the
-    `nix` CLI prints for the same failure, so a reader who knows Nix reads it
-    unchanged. Issue #224 removed the second marker as well, at the source:
-    `str(exc)` is now `exc.msg`, for every consumer and not only this one.
+    inside the message. This function prints `exc.colored`, which is the line
+    the `nix` CLI prints for the same failure, so a reader who knows Nix reads
+    it unchanged.
 
     A failure of pynix itself still goes through `error_exit` and still says
     `Error:`, because that one is not a failure of Nix.
     """
     try:
         anyio.run(body)
-    except NixError as exc:
+    except huggorm.errors.NixError as exc:
         # `Text.from_ansi`, and not an interpolation: Nix colours its own
         # output, and `error_exit` holds the measurement of what an escape
-        # sequence does to the highlighter of rich.
-        error_console.print(Text.from_ansi(exc.msg))
-        raise SystemExit(1) from exc
-    except huggorm.errors.NixError as exc:
-        # The same failure from a command on huggorm: `colored` is the line
-        # Nix prints, escape sequences and all.
+        # sequence does to the highlighter of rich. `colored` is the line Nix
+        # prints, escape sequences and all.
         error_console.print(Text.from_ansi(exc.colored))
         raise SystemExit(1) from exc

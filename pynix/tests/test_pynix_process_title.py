@@ -1,4 +1,4 @@
-"""Process-title setup for the pynix CLI manager."""
+"""The set-up that `pynix.main` does around the parse."""
 
 from __future__ import annotations
 
@@ -16,15 +16,13 @@ if TYPE_CHECKING:
 def test_main_sets_up_after_it_parses(monkeypatch: pytest.MonkeyPatch) -> None:
     """The order is the point, and issue #123 is why.
 
-    ``main`` used to install a traceback handler, name the process and
-    configure logging before it parsed anything. ``--help`` and a shell
-    completion both end inside the parse, so a completion callback paid for
-    all three and used none of them. ``configure_logging`` alone pulled
+    ``--help`` and a shell completion both end inside the parse, so set-up
+    before it makes a completion callback pay for the traceback handler and
+    the logging and use neither. ``configure_logging`` alone pulled
     ``structlog``, which is 195 ms.
     """
     calls: list[tuple[str, str | None]] = []
     command = MagicMock()
-    monkeypatch.setattr(impl_main, "set_manager_title", lambda name: calls.append(("title", name)))  # type: ignore[reportUnknownLambdaType, reportUnknownArgumentType] -- lambda receives Any from setattr
     monkeypatch.setattr(impl_main, "configure_logging", lambda: calls.append(("logging", None)))
 
     def _record_traceback_install(**_kwargs: object) -> None:
@@ -43,4 +41,4 @@ def test_main_sets_up_after_it_parses(monkeypatch: pytest.MonkeyPatch) -> None:
     pynix.main()
 
     # The parse comes first, the set-up after it, and the body last.
-    assert calls == [("parse", None), ("traceback", None), ("title", "pynix"), ("logging", None), ("run", None)]
+    assert calls == [("parse", None), ("traceback", None), ("logging", None), ("run", None)]

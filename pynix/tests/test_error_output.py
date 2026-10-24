@@ -11,10 +11,10 @@ from __future__ import annotations
 import io
 
 import pytest
+from huggorm.errors import EvalError
 from rich.console import Console
 from rich.text import Text
 
-from nanopynix.exceptions import EvalError
 from pynix import _util
 from pynix._impl import main
 
@@ -112,15 +112,14 @@ def test_a_failure_of_nix_is_printed_in_the_words_of_nix(monkeypatch: pytest.Mon
 
     `str(exc)` read `[EvalError] error: ...`: the class came from
     `NixError`, `error:` comes from Nix, and `Error:` came from `error_exit`.
-    `pynix._impl.main.run` prints `exc.msg`, which is the line the `nix` CLI
-    prints for the same failure, and issue #224 took the class out of
-    `str(exc)` as well.
+    `pynix._impl.main.run` prints `exc.colored`, which is the line the `nix`
+    CLI prints for the same failure.
     """
     buffer = io.StringIO()
     monkeypatch.setattr(main, "error_console", Console(file=buffer, force_terminal=False, width=200))
 
     async def _fail() -> None:
-        raise EvalError("EvalError", NIX_MESSAGE)
+        raise EvalError(NIX_MESSAGE)
 
     with pytest.raises(SystemExit):
         main.run(_fail)
@@ -137,7 +136,7 @@ def test_a_failure_of_nix_keeps_its_colour_on_a_terminal(monkeypatch: pytest.Mon
     monkeypatch.setattr(main, "error_console", Console(file=buffer, force_terminal=True, width=200))
 
     async def _fail() -> None:
-        raise EvalError("EvalError", NIX_MESSAGE)
+        raise EvalError(NIX_MESSAGE)
 
     with pytest.raises(SystemExit):
         main.run(_fail)
