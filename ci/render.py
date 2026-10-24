@@ -5,7 +5,7 @@ Run with::
     direnv exec . python ci/render.py
 
 You do not have to remember that command.
-``nanopynix/tests/test_ci_workflows.py`` calls :func:`render_workflows` on
+``tests/test_ci_workflows.py`` calls :func:`render_workflows` on
 every pytest run, compares the result against the checked-in YAML, and writes
 the fresh render when the two differ -- so an edit under ``ci/workflows/`` that
 was never rendered fails the suite *and* arrives already corrected.
@@ -13,7 +13,7 @@ was never rendered fails the suite *and* arrives already corrected.
 That test is why this module separates rendering from writing.
 :func:`render_workflows` returns the text of each output file and touches no
 disk, because the packaged CI runner runs from a read-only store copy of this
-repository (``nanopynix/tests.nix``), where the comparison is still meaningful
+repository (``nix/tests.nix``), where the comparison is still meaningful
 and the write is not possible.
 """
 
@@ -87,7 +87,7 @@ def order_keys(value: Any) -> Any:
     ``runs-on`` and ``name`` and reaching no output, moved 150 lines across 32
     hunks of ``on_commit.yml`` and 58 lines across 14 hunks of
     ``on_schedule.yml``. The same probe against this function changes nothing.
-    ``nanopynix/tests/test_ci_workflows.py`` holds the invariant.
+    ``tests/test_ci_workflows.py`` holds the invariant.
 
     A Python dict does have an order, and this function is where the rendering
     picks one. ``builtins.toJSON`` sorts the names on the way out, so the input
@@ -176,7 +176,7 @@ def _allow_unsupported_system() -> Generator[None]:
 
     Set around the session, because the worker takes the environment when it
     starts. Restored after, because
-    ``nanopynix/tests/test_ci_workflows.py`` calls this from the pytest
+    ``tests/test_ci_workflows.py`` calls this from the pytest
     process, which other tests share.
     """
     previous = os.environ.get(_UNSUPPORTED_SYSTEM_ENV)
