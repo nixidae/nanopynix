@@ -11,25 +11,19 @@ import asyncio
 import contextlib
 import logging
 import threading
+from collections.abc import AsyncGenerator, AsyncIterator
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import huggorm
 import pytest
 import pytest_lsp
+from huggorm.testing.environment import NixTestEnvironment
 from lsprotocol import types
 from pygls.io_ import run_async
 from pygls.workspace import Workspace
 from pytest_lsp import client_capabilities
 
-from pynix_lsp._handlers import create_server
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator
-
-    from huggorm.testing.environment import NixTestEnvironment
-
-    from pynix_lsp._handlers import PynixLanguageServer
+from pynix_lsp._handlers import PynixLanguageServer, create_server
 
 # `parents[1]` is the suite root, `pynix/tests/`. Issue #130 moved this
 # module from `tests/support/`, where the same expression reached

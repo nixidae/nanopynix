@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import pytest
 from anyio import Path as AnyioPath
 from huggorm.errors import BuildError, EvalError
 from huggorm.fod import replace_fod_hash as _real_replace_fod_hash
-from huggorm.testing.environment import LINUX_CHROOT_BUILD, with_nixpkgs
+from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, with_nixpkgs
 
 from pynix import _util, parse
 from pynix._impl import build as build_impl
@@ -20,11 +21,6 @@ from pynix._impl.build import (  # pyright: ignore[reportPrivateUsage] -- test d
 from pynix.target import EvaluationTarget
 from support.ansi import strip_ansi
 from test_support.git_fixtures import init_flake_repo
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from huggorm.testing.environment import NixTestEnvironment
 
 
 @LINUX_CHROOT_BUILD

@@ -18,13 +18,10 @@ import json
 import re
 import subprocess
 import sys
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import conftest
 import pytest
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _HELPER = """
 import json

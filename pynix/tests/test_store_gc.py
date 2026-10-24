@@ -1,15 +1,10 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from huggorm.testing.environment import NixTestEnvironment
+from pathlib import Path
 
 import pytest
-from huggorm.testing.environment import LINUX_CHROOT_BUILD, with_nixpkgs
+from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, with_nixpkgs
 
 import pynix._util as util_module
 from pynix import parse

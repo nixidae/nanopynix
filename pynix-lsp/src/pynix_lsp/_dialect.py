@@ -15,15 +15,10 @@ registry from within one of its own entries would be a real import cycle
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from lsprotocol import types
 
-from nanopynix._typechecking import BEARTYPING
-
-if TYPE_CHECKING or BEARTYPING:
-    from lsprotocol import types
-
-    from pynix_lsp._context import FileContext
-    from pynix_lsp._value import LazyValue
+from pynix_lsp._context import FileContext
+from pynix_lsp._value import LazyValue
 
 
 class Dialect:

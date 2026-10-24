@@ -11,23 +11,30 @@ import difflib
 import functools
 import tempfile
 import time
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-
-# A real import, not a TYPE_CHECKING one: `libpynix` resolves the annotations
-# of a command to build its parser, so `Path` has to exist as an object and not
-# just as a lazy PEP 563 string.
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import anyio
 import anyio.to_thread
 import huggorm
 import structlog
 from anyio import Path as AnyioPath
-from huggorm import ServerOptions, worker
+from huggorm import (
+    AsyncEvalState,
+    AsyncRemoteSession,
+    AsyncSession,
+    AsyncStore,
+    AsyncValue,
+    CapturedLogs,
+    ServerOptions,
+    worker,
+)
 from huggorm.errors import NixError
 from huggorm.fod import (
+    FodHashMismatch,
     FodSourceUpdateError,
     derivation_name_from_path,
     extract_fod_hash_mismatch,
@@ -38,7 +45,6 @@ from huggorm.fod import (
 )
 from huggorm.namespace import remove_layers
 
-from nanopynix._typechecking import BEARTYPING
 from pynix import _evaluate
 from pynix._build_monitor import BuildPlan, MonitorState
 from pynix._impl.copy import StoreEnds, closure_of, copy_verified
@@ -54,12 +60,6 @@ from pynix._util import (
     report_and_exit,
 )
 from pynix.build import Build
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import AsyncGenerator, Mapping
-
-    from huggorm import AsyncEvalState, AsyncRemoteSession, AsyncSession, AsyncStore, AsyncValue, CapturedLogs
-    from huggorm.fod import FodHashMismatch
 from pynix.target import (
     EvaluationTarget,
     EvaluationTargetError,

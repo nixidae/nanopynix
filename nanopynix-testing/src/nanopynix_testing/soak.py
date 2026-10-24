@@ -32,14 +32,12 @@ import json
 import sys
 import time
 import traceback
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import anyio
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
 
 # The fixtures this driver can supply itself. A test that wants anything else
 # stays out of the roster: the driver is not a second pytest, and a fixture it

@@ -50,15 +50,10 @@ past the edge for each emoji on it.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from prompt_toolkit.utils import get_cwidth
-
-from nanopynix._typechecking import BEARTYPING
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Sequence
 
 #: How many columns separate one cell from the next on the same line.
 GUTTER = 2

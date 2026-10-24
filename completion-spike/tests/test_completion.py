@@ -12,14 +12,11 @@ already has.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 from completion_spike.demo import CANDIDATES, DEFAULT_ENGINE
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from test_support.shell_pty import ShellSession
+from test_support.shell_pty import ShellSession
 
 #: Every option of `demo build`, in both spellings of the flag that has two.
 #: `--no-print-build-logs` is the one that a hand-written fish renderer lost,

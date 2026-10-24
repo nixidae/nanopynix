@@ -5,33 +5,26 @@ import logging
 import os
 import sys
 import time
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager, nullcontext
-
-# A real import, and not a `TYPE_CHECKING` one: `huggorm_local_store_path`
-# builds a `Path` at run time.
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn, TextIO
+from typing import Any, NoReturn, TextIO
 
 import anyio
 import huggorm
 import structlog
+from huggorm import AsyncEvalState, LogRecord
 from rich.console import Console
 from rich.live import Live
 from rich.text import Text
+from structlog.typing import EventDict, WrappedLogger
 
-from nanopynix._typechecking import BEARTYPING, no_runtime_type_check
+from libpynix._typecheck import no_runtime_type_check
 from pynix._build_monitor import MonitorState, RecordEvent, render
 from pynix._impl.settings import SettingError, nix_settings
 from pynix._store_layout import StoreLayout
 from pynix._verbosity import VerbosityInput, verbosity_of
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import AsyncGenerator, Mapping
-
-    from huggorm import AsyncEvalState, LogRecord
-    from structlog.typing import EventDict, WrappedLogger
-
-    from pynix.target import EvaluationTargetError
+from pynix.target import EvaluationTargetError
 
 _LOG_LINE_RESULTS = frozenset({huggorm.ResultType.BUILD_LOG_LINE, huggorm.ResultType.POST_BUILD_LOG_LINE})
 # nom redraws on every event; four times a second shows the same thing.

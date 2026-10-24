@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import shutil
 from io import StringIO
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import Any, ClassVar
 
 from markdown_it.renderer import RendererHTML
+from markdown_it.token import Token
 from myst_parser.config.main import MdParserConfig
 from myst_parser.parsers.mdit import create_md_parser
 from prompt_toolkit.formatted_text import FormattedText
-from rich.color import ColorType
+from rich.color import Color, ColorType
 from rich.console import Console, ConsoleOptions, JustifyMethod, RenderResult
 from rich.containers import Renderables
 from rich.markdown import (
@@ -34,14 +35,8 @@ from rich.markdown import (
     TextElement,
 )
 from rich.segment import Segment
+from rich.style import Style
 from rich.syntax import Syntax
-
-from nanopynix._typechecking import BEARTYPING
-
-if TYPE_CHECKING or BEARTYPING:
-    from markdown_it.token import Token
-    from rich.color import Color
-    from rich.style import Style
 
 
 class _LeftHeading(Heading):

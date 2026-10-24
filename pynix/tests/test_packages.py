@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 from huggorm.attrpath import select_attr
+from huggorm.testing.environment import NixTestEnvironment
 
 import pynix._util as util_module
 from pynix._evaluate import evaluate_target
@@ -26,9 +26,6 @@ from pynix._packages import (
     save_cache,
 )
 from pynix.target import EvaluationTarget
-
-if TYPE_CHECKING:
-    from huggorm.testing.environment import NixTestEnvironment
 
 _PKGSET = Path(__file__).parent / "test_packages" / "pkgset.nix"
 

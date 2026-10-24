@@ -11,7 +11,8 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from typing import TYPE_CHECKING, cast
+from collections.abc import Iterator
+from typing import cast
 
 import pytest
 from argcomplete.lexers import (
@@ -21,9 +22,6 @@ from argcomplete.packages import _shlex
 
 from libpynix import Command, build_parser, complete, opt
 from libpynix.command import _let_a_hash_stay_in_the_line
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 #: Imports the package and completes nothing, then reports what it loaded.
 _PROBE = """

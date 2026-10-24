@@ -21,15 +21,12 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 
 from test_support.shell_pty import SHELLS, ShellSession
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 #: The store path of the built `pynix`, when a build runs this suite.
 #: `checks.completions` in nix/checks.nix sets it.

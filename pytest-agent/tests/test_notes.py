@@ -11,14 +11,12 @@ assert on the *terminal* output as much as on what lands on disk.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import conftest
 import pytest
 from pytest_agent._capture import MAX_NOTE_CHARS
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def _run(pytester: pytest.Pytester, *extra: str) -> pytest.RunResult:

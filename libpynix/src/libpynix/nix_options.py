@@ -25,13 +25,8 @@ before, which is to let the shell offer file names.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from libpynix._typecheck import no_runtime_type_check
-from libpynix.command import opt
-
-if TYPE_CHECKING:
-    from libpynix.command import Completer
+from libpynix.command import Completer, opt
 
 
 @no_runtime_type_check  # a declaration returns a Spec, not the annotated type; beartype would otherwise flag every call as a type violation

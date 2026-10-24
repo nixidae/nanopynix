@@ -5,16 +5,14 @@ from __future__ import annotations
 import os
 import re
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import pytest
 
 import nanopynix
 from nanopynix._engine import set_setting
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
 
 
 @dataclass(frozen=True)

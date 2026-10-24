@@ -29,19 +29,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import anyio
+import huggorm
 
-from nanopynix._typechecking import BEARTYPING
 from pynix._store_layout import StoreLayout
 from pynix._util import build_derivation
-from pynix_lsp._value import EVAL_FAILURES, LazyValue
-
-if TYPE_CHECKING or BEARTYPING:
-    import huggorm
-
-    from pynix_lsp._value import EvalFailure
+from pynix_lsp._value import EVAL_FAILURES, EvalFailure, LazyValue
 
 _HEADER_LINE_RE = re.compile(
     r"^\s*#\s*pynix-lsp:\s*(?P<name>[A-Za-z_][A-Za-z0-9_'-]*)\s*=\s*(?P<expr>.+?)\s*$",

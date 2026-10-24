@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
+import pytest
 from pytest_agent._capture import (
     MAX_NAME_BYTES,
     MAX_NODEID_DISPLAY_CHARS,
@@ -13,11 +15,6 @@ from pytest_agent._capture import (
     nodeid_to_relpath,
     safe_component,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    import pytest
 
 
 def _report(  # noqa: PLR0913 -- tracked complexity/arg-count debt, see TODO.md

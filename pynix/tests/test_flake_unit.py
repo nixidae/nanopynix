@@ -8,8 +8,7 @@ small expression for each branch instead of contriving a flake to expose it.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
+from huggorm.testing.environment import NixTestEnvironment
 from rich.tree import Tree
 
 import pynix._util as util_module
@@ -18,9 +17,6 @@ from pynix._impl.flake import (  # pyright: ignore[reportPrivateUsage] -- test u
     _format_attr,
     _TreeBudget,
 )
-
-if TYPE_CHECKING:
-    from huggorm.testing.environment import NixTestEnvironment
 
 
 async def _labels(environment: NixTestEnvironment, expr: str, budget: _TreeBudget | None = None) -> list[str]:

@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
+import pytest
 from pytest_agent.cli import _misspelled_subcommand
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    import pytest
 
 
 def test_a_near_miss_of_a_subcommand_is_recognized() -> None:

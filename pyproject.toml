@@ -99,4 +99,3 @@ pynix_lsp = ["pynix-lsp/src/pynix_lsp", "*/site-packages/pynix_lsp"]
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
-exclude_also = ["if TYPE_CHECKING:"]

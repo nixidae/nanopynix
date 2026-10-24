@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
+
+import pytest
 
 import pynix
 from pynix._impl import main as impl_main
-
-if TYPE_CHECKING:
-    import pytest
 
 
 def test_main_sets_up_after_it_parses(monkeypatch: pytest.MonkeyPatch) -> None:

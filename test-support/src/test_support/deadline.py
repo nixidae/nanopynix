@@ -35,14 +35,11 @@ from __future__ import annotations
 import contextlib
 import functools
 import os
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
 
 import anyio
 
 from test_support.hang_report import hang_report
-
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
 
 #: Seconds an async test may run before the wrapper fails it.
 ASYNC_TEST_TIMEOUT = float(os.environ.get("NANOPYNIX_TEST_TIMEOUT", "120"))

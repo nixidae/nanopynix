@@ -22,12 +22,6 @@ is what the test is about.
 
 from __future__ import annotations
 
-# `AsyncIterator` is a real (non-TYPE_CHECKING) import here, unlike this
-# repo's usual convention: pytest_lsp's fixture wrapper calls
-# `typing.get_type_hints()` on `client` below *at runtime* to find the
-# parameter that needs the injected client, which requires every name in its
-# signature to actually resolve at import time despite `from __future__
-# import annotations` making the annotations themselves lazy strings.
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import cast

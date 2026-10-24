@@ -9,13 +9,11 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
 
 import pytest
 from huggorm.testing.environment import LINUX_CHROOT_BUILD
 
-if TYPE_CHECKING:
-    from conftest import PynixStoreScenario
+from support.store_scenario import PynixStoreScenario
 
 pytestmark = pytest.mark.dependency(scope="module")
 

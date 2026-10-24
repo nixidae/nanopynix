@@ -29,23 +29,20 @@ watcher does not care how the run was started or where its terminal went.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
 import time
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, TextIO, cast
 
 from pytest_agent._capture import stuck_dump_path
 from pytest_agent._history import existing_run_numbers, run_is_locked, run_label
 from pytest_agent._paths import display_path
 from pytest_agent._records import FAILING_OUTCOMES, QueryError, crash_of, one_line, resolve_agent_dir
-
-if TYPE_CHECKING:
-    import argparse
-    from collections.abc import Iterable, Iterator
-    from typing import TextIO
 
 WATCH_COMMAND = "watch"
 

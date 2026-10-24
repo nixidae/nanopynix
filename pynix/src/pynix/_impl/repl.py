@@ -15,19 +15,21 @@ import shlex
 import signal
 import sys
 import textwrap
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, override
+from typing import Any, override
 
 import anyio
 import anyio.abc
 import huggorm
-from huggorm import AsyncValue
+from huggorm import AsyncEvalState, AsyncRepl, AsyncSession, AsyncStore, AsyncValue
 from huggorm.errors import NixError
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
+from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import ANSI, StyleAndTextTuples
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.lexers import Lexer
@@ -38,7 +40,7 @@ from rich.console import Console
 from rich.table import Table
 from tree_sitter import Query, QueryCursor
 
-from nanopynix._typechecking import BEARTYPING, no_runtime_type_check
+from libpynix._typecheck import no_runtime_type_check
 from pynix import _evaluate
 from pynix._completion import completion_prefix_at
 from pynix._markdown import render_markdown
@@ -48,12 +50,6 @@ from pynix._value_render import format_json
 from pynix._verbosity import VerbosityInput, verbosity_of
 from pynix.repl import Repl
 from pynix.target import EvaluationTarget, EvaluationTargetError
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Iterable
-
-    from huggorm import AsyncEvalState, AsyncRepl, AsyncSession, AsyncStore
-    from prompt_toolkit.document import Document
 
 _PROMPT = "pynix> "
 # Nix's `editorFor` passes `+LINE` to these, and to no other editor.

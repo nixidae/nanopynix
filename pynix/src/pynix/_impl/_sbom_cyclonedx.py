@@ -7,16 +7,10 @@ field for field. bombon writes 1.5 and converts; this module writes 1.7, so
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Mapping
 
-from nanopynix._typechecking import BEARTYPING
-from pynix._impl._sbom_model import sri_digest
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Mapping
-
-    from pynix._evaluate import JsonValue
-    from pynix._impl._sbom_model import Inventory, License, Record
+from pynix._evaluate import JsonValue
+from pynix._impl._sbom_model import Inventory, License, Record, sri_digest
 
 SPEC_VERSION = "1.7"
 

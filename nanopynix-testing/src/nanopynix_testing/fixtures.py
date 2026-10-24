@@ -33,8 +33,9 @@ is a fixture that fails in a new rootdir for a reason nobody can read.
 from __future__ import annotations
 
 import os
+from collections.abc import Generator, Iterable, Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 
@@ -42,14 +43,10 @@ import nanopynix
 from nanopynix._core._objects import CoreEvalState, CoreRuntime, CoreStore
 from nanopynix._engine import set_setting
 from nanopynix.inproc import _impl as inproc_impl
+from nanopynix.models import StorePath
 from nanopynix.settings import DEFAULT_EXPERIMENTAL_FEATURES
+from nanopynix_testing.nix_environment import NixTestEnvironment
 from test_support.subprocess_output import run_process
-
-if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable, Iterator
-
-    from nanopynix.models import StorePath
-    from nanopynix_testing.nix_environment import NixTestEnvironment
 
 #: The file that marks the top of the checkout. `repo_root` walks up for it.
 _REPO_MARKER = "flake.nix"

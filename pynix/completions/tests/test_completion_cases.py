@@ -19,14 +19,11 @@ one, and all of them are things a caller can type.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from test_support.shell_pty import ShellSession
+from test_support.shell_pty import ShellSession
 
 #: The shells this table runs against. Every row runs in all three: a row that
 #: is right in two of them and wrong in the third is the fish fallback below,

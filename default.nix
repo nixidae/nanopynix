@@ -88,6 +88,8 @@ let
 
       kr8s = pySelf.callPackage ./nix/kr8s.nix { src = sources.kr8s; };
 
+      deferimport = pySelf.callPackage "${sources.deferimport}/nix/python-package.nix" { };
+
       tree-sitter-nix = pySelf.callPackage "${sources.huggorm}/nix/tree-sitter-nix.nix" {
         # This set, and not `python.pkgs`, which is the set from before
         # these overrides ran. huggorm's nix/tree-sitter-nix.nix gives

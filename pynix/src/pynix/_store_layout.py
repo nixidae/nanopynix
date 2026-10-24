@@ -10,12 +10,9 @@ from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
-from nanopynix._typechecking import BEARTYPING
-
-if TYPE_CHECKING or BEARTYPING:
-    from huggorm import AsyncStore
+from huggorm import AsyncStore
 
 #: The helper, on ``PATH``. ``storeExecTool`` in ``default.nix`` builds it.
 STORE_EXEC_TOOL: Final = "nanopynix-store-exec"

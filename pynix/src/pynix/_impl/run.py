@@ -10,20 +10,16 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from anyio import Path as AnyioPath
+from huggorm import AsyncEvalState, AsyncValue
 
-from nanopynix._typechecking import BEARTYPING
 from pynix import _evaluate
 from pynix._store_layout import StoreLayout
 from pynix._util import error_exit, huggorm_build_session, report_and_exit
+from pynix.run import Run
 from pynix.target import EvaluationTarget, EvaluationTargetError
-
-if TYPE_CHECKING or BEARTYPING:
-    from huggorm import AsyncEvalState, AsyncValue
-
-    from pynix.run import Run
 
 #: ``DrvName`` ends the name at the first dash that a non-letter follows.
 _VERSION_DASH = re.compile(r"-(?![A-Za-z])")

@@ -14,15 +14,11 @@ from __future__ import annotations
 import json
 import signal
 import time
-from typing import TYPE_CHECKING
+from pathlib import Path
 
+import pytest
 from conftest import WAIT_TIMEOUT, running_pytest, wait_until
 from pytest_agent._runtime import MAX_STUCK_DUMPS
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    import pytest
 
 HANGING_TEST = """
 import time

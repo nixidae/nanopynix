@@ -3,14 +3,11 @@ from __future__ import annotations
 import json
 import os
 import sys
-from typing import TYPE_CHECKING
 
+import pytest
 from anyio import run_process
 
 from pynix import parse
-
-if TYPE_CHECKING:
-    import pytest
 
 
 async def test_config_show(capsys: pytest.CaptureFixture[str]) -> None:

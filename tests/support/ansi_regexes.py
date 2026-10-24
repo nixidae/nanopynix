@@ -40,14 +40,11 @@ this rule forbids.
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from tests.support.suppressions import iter_python_files
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
 
 # The functions of the `re` module that take a pattern as their first argument.
 # `re.escape` and `re.purge` take no pattern, so they are not here.

@@ -14,11 +14,13 @@ Two backends, same ``Scenario``/``Action`` list:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
 from lsprotocol import types
+from pytest_lsp import LanguageClient
 
 from pynix_lsp._handlers import (
+    PynixLanguageServer,
     _completion,
     _definition,
     _document_highlight,
@@ -28,13 +30,6 @@ from pynix_lsp._handlers import (
     _rename,
     _sync_document,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from pytest_lsp import LanguageClient
-
-    from pynix_lsp._handlers import PynixLanguageServer
 
 
 class InProcessDriver:

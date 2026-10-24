@@ -217,47 +217,30 @@ def test_the_lazy_table_and_the_type_checking_block_agree() -> None:
     )
 
 
-def test_the_impl_table_names_every_module_that_is_there() -> None:
-    """``pynix._impl`` is written three times, and two of them are lists.
+def test_the_impl_package_imports_every_module_that_is_there() -> None:
+    """A subcommand reads its implementation off ``pynix._impl``, so a module
+    the package does not import raises ``AttributeError`` the first time that
+    command runs, and no import-time check sees it. Leaving ``main`` out cost
+    every ``pynix-lsp`` end-to-end test a ``Server process exited with return
+    code: 1``, and every other suite stayed green.
 
-    The package holds ``_SUBMODULES``, an ``if TYPE_CHECKING:`` import block,
-    and the files themselves. A module missing from the frozenset raises
-    ``AttributeError`` the first time the command that needs it runs, and no
-    import-time check sees that: leaving ``main`` out cost every ``pynix-lsp``
-    end-to-end test a ``Server process exited with return code: 1``, and every
-    other suite stayed green.
-
-    The files on disk are the truth here, so this derives from them.
-
-    **A module whose name starts with an underscore is not in the table, and
-    must not be.** The table answers an attribute read of ``pynix._impl``, and
-    a subcommand is what reads one: ``pynix.search`` reaches
-    ``_impl.search``, so the name of the module is the name of the subcommand
-    and never carries an underscore. ``_impl._search_tui`` is a library that
-    another module of ``_impl`` imports directly, by its own name, at the top
-    of the file. Nothing reads it off the package, so the table would defer an
-    import that no attribute read ever triggers.
-
-    The rule still catches what it exists to catch. A subcommand module is
-    named after its subcommand, so it has no underscore and stays in the set.
+    A module whose name starts with an underscore is a library that another
+    module of ``_impl`` imports by its own name, so the package leaves it out.
     """
     package = importlib.import_module("pynix._impl")
-    directory = Path(str(package.__file__)).parent
+    path = Path(str(package.__file__))
     on_disk = {
-        path.stem for path in directory.glob("*.py") if path.stem != "__init__" and not path.stem.startswith("_")
+        file.stem for file in path.parent.glob("*.py") if file.stem != "__init__" and not file.stem.startswith("_")
     }
-
     assert on_disk, "no implementation modules found; the glob is wrong"
 
-    declared: frozenset[str] = package._SUBMODULES
-    assert declared == on_disk, (
-        "pynix/_impl/_SUBMODULES and the files in that directory disagree. "
-        f"only on disk: {sorted(on_disk - declared)}; only in the table: {sorted(declared - on_disk)}"
-    )
-
-    typed = set(_type_checking_imports(package))
-    assert typed == on_disk, (
-        "the TYPE_CHECKING block of pynix/_impl and the files in that directory disagree, so "
-        f"pyright cannot type one of them. only on disk: {sorted(on_disk - typed)}; "
-        f"only in the block: {sorted(typed - on_disk)}"
+    imported = {
+        alias.asname or alias.name
+        for node in ast.parse(path.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.ImportFrom) and node.module == "pynix._impl"
+        for alias in node.names
+    }
+    assert imported == on_disk, (
+        "pynix/_impl/__init__.py and the files in that directory disagree. "
+        f"only on disk: {sorted(on_disk - imported)}; only imported: {sorted(imported - on_disk)}"
     )

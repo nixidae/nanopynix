@@ -25,18 +25,14 @@ than the behaviour. #44 asks for the test back, ungated, with the cause found.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
+import pytest_lsp
 from lsprotocol import types
 
 from lsp_support.lsp_client import complete_at, definition_at, hover_at, open_document
 from lsp_support.lsp_cursor import cursor_after
-
-if TYPE_CHECKING:
-    import pytest_lsp
-
-    from pynix_lsp._handlers import PynixLanguageServer
+from pynix_lsp._handlers import PynixLanguageServer
 
 _MODULE_SYSTEM = (Path(__file__).parent / "test_lsp" / "module_system").resolve()
 

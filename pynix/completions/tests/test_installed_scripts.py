@@ -16,12 +16,9 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 #: The escape character. A help screen carries colour; a completion script
 #: carries none. Read as a plain character and not as a pattern, because

@@ -20,12 +20,9 @@ syntax and is translated here: ``"string"``/``"number"``/``"bool"``
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
-from nanopynix._typechecking import BEARTYPING
-
-if TYPE_CHECKING or BEARTYPING:
-    from pynix_lsp._terranix_schema import SchemaAttribute, SchemaBlock
+from pynix_lsp._terranix_schema import SchemaAttribute, SchemaBlock
 
 # Every compound cty type is encoded as a 2-element [kind, arg] JSON array.
 _CTY_COMPOUND_TYPE_ARITY = 2

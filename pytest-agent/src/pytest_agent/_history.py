@@ -7,10 +7,8 @@ import re
 import shutil
 import subprocess
 import time
-from typing import TYPE_CHECKING, Any, cast
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
+from typing import Any, cast
 
 _RUN_DIR_RE = re.compile(r"^runs-(\d+)$")
 

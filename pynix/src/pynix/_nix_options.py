@@ -26,14 +26,9 @@ this module exists to keep off a start that evaluates nothing.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from libpynix import attr_option as _attr_option, file_option as _file_option, flake_option as _flake_option
-from nanopynix._typechecking import no_runtime_type_check
-from pynix._attr_completion import complete_attr, complete_file, flake_completer
-
-if TYPE_CHECKING:
-    from pynix._attr_completion import FlakeSearch
+from libpynix._typecheck import no_runtime_type_check
+from pynix._attr_completion import FlakeSearch, complete_attr, complete_file, flake_completer
 
 
 @no_runtime_type_check  # a declaration returns a Spec, not the annotated type; see libpynix.nix_options

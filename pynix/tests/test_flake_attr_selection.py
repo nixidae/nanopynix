@@ -14,18 +14,14 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import huggorm
 import pytest
+from huggorm.testing.environment import NixTestEnvironment
 
 from pynix import parse
 from support.ansi import strip_ansi
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from huggorm.testing.environment import NixTestEnvironment
 
 _STRUCTLOG = re.compile(r"^\d{4}-\d{2}-\d{2}\s")
 

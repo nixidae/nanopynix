@@ -37,16 +37,11 @@ from __future__ import annotations
 
 import os
 import tomllib
+from collections.abc import Collection
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import Any, Final, cast
 
-from nanopynix._typechecking import BEARTYPING
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Collection
-
-    from libpynix import Command
-
+from libpynix import Command
 
 #: What every ``--store`` defaults to.
 DEFAULT_STORE = "auto"

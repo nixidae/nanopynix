@@ -52,20 +52,13 @@ import contextlib
 import functools
 import io
 import os
-from typing import TYPE_CHECKING, Any, Literal
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
+from typing import Any, Literal
 
-from nanopynix._typechecking import BEARTYPING
+from huggorm import AsyncEvalState, AsyncSession, AsyncStore
+from huggorm.attrpath import AttrPathSearch
 
-# `or BEARTYPING`: beartype resolves an annotation at call time, and a name
-# that only a type checker imported is not there to resolve. Without it, each
-# call fails with `BeartypeCallHintForwardRefException`.
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
-
-    from huggorm import AsyncEvalState, AsyncSession, AsyncStore
-    from huggorm.attrpath import AttrPathSearch
-
-    from libpynix.command import Completer
+from libpynix.command import Completer
 
 #: Which attribute-path search a command applies to the fragment of ``--flake``.
 #:

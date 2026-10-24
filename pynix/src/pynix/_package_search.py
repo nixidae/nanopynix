@@ -24,17 +24,11 @@ than drawing a screen pays for none of it.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-from nanopynix._typechecking import BEARTYPING
-from pynix._ranking import RESULTS, Texts, make_ranker, make_tiered_ranker
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Callable, Mapping, Sequence
-
-    from pynix._packages import PackageRecord
-    from pynix._ranking import RankKey
+from pynix._packages import PackageRecord
+from pynix._ranking import RESULTS, RankKey, Texts, make_ranker, make_tiered_ranker
 
 
 @dataclass(frozen=True)

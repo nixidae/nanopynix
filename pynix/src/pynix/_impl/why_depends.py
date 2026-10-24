@@ -12,24 +12,17 @@ import functools
 import itertools
 import os
 from collections import deque
-
-# A real import, and not a `TYPE_CHECKING` one: `_scan_for_hash` builds a
-# `Path` at run time.
+from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
 import anyio.to_thread
 import structlog
+from huggorm import AsyncStore
 
-from nanopynix._typechecking import BEARTYPING
 from pynix._util import error_exit, huggorm_local_store_path, huggorm_store_session, print_json
 from pynix.why_depends import WhyDepends
 
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Iterator
-    from typing import Any
-
-    from huggorm import AsyncStore
 logger = structlog.get_logger("pynix.why_depends")
 
 #: Bytes of context on each side of a hit. The number `nix why-depends

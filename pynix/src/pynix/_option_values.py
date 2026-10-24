@@ -29,22 +29,16 @@ answers it.
 
 from __future__ import annotations
 
-from contextlib import AsyncExitStack
+from collections.abc import Callable, Sequence
+from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
 
 import anyio
+from huggorm import AsyncEvalState, AsyncValue
 from huggorm.errors import NixError
 
-from nanopynix._typechecking import BEARTYPING
 from pynix._evaluate import call, to_python
 from pynix._option_paths import join_path
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Callable, Sequence
-    from contextlib import AbstractAsyncContextManager
-
-    from huggorm import AsyncEvalState, AsyncValue
 
 
 class EvaluatorUnavailableError(RuntimeError):

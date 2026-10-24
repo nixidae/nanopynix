@@ -19,18 +19,12 @@ the merge and not the screen, so the screen reads this and never the reverse.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Sequence
 
-from nanopynix._typechecking import BEARTYPING
 from pynix._option_search import tiered as tiered_options
 from pynix._options import OptionRecord
 from pynix._package_search import SearchablePackage, tiered as tiered_packages
-from pynix._ranking import RESULTS
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Callable, Sequence
-
-    from pynix._ranking import RankKey
+from pynix._ranking import RESULTS, RankKey
 
 #: One row of a search that reads both indexes.
 #:

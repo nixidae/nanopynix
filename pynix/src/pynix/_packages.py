@@ -35,17 +35,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
-from nanopynix._typechecking import BEARTYPING
+from huggorm import AsyncEvalState, AsyncValue
+
 from pynix._evaluate import call, to_python
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Mapping, Sequence
-
-    from huggorm import AsyncEvalState, AsyncValue
 
 #: The walk, as one Nix function of `lib` and `pkgs`.
 #:

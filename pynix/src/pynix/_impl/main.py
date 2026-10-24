@@ -20,12 +20,6 @@ reached through ``pynix._impl``, which imports it when a command runs.
 
 from __future__ import annotations
 
-# A real import, and not a `TYPE_CHECKING` one. `NANOPYNIX_BEARTYPING=1` makes
-# beartype resolve every annotation at run time, and a name the type checker
-# alone can see becomes a forward reference it cannot import: measured as
-# `Forward reference "Callable" unimportable from module "pynix._impl.main"`,
-# raised inside `pynix develop` in a subprocess. `collections.abc` is already
-# loaded by the interpreter, so this costs nothing.
 from collections.abc import Callable, Coroutine
 
 import anyio

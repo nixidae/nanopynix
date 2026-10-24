@@ -24,6 +24,8 @@ ignorelist = ["eval"]
 "**/tests/**" = [
   "SLF001",
 ] # tests intentionally inspect private implementation state
+# deferimport installs before the first-party imports, so they load lazily.
+"pynix/src/pynix/__init__.py" = ["E402"]
 
 [lint.isort]
 combine-as-imports = true

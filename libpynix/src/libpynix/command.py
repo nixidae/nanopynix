@@ -45,12 +45,6 @@ import inspect
 import os
 import types
 import typing
-
-# A real import, and not a `TYPE_CHECKING` one. `NANOPYNIX_BEARTYPING=1` makes
-# beartype resolve every annotation at run time, and a name that only the type
-# checker can see becomes a forward reference that resolves to itself:
-# "Forward reference proxy <forwardref Sequence> circularly references itself".
-# `collections.abc` is already loaded by the interpreter, so this costs nothing.
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path

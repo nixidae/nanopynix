@@ -7,12 +7,11 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+import pytest
 
 from pytest_agent._crash import crash_from_report, frames_from_report
-
-if TYPE_CHECKING:
-    import pytest
 
 _UNSAFE_PATH_CHARS = re.compile(r"[\\/]")
 

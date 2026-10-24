@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import Protocol, cast
 
 import tree_sitter_nix  # type: ignore[reportMissingTypeStubs] -- tree-sitter-nix does not ship type stubs
-from tree_sitter import Language, Parser
-
-from nanopynix._typechecking import BEARTYPING
-
-if TYPE_CHECKING or BEARTYPING:
-    from tree_sitter import Tree
+from tree_sitter import Language, Parser, Tree
 
 
 class _Grammar(Protocol):

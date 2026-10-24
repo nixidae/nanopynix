@@ -5,13 +5,16 @@ import json
 import re
 import sqlite3
 import sys
+from collections.abc import AsyncGenerator, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple, cast
+from typing import NamedTuple, cast
 
 import anyio
 import pytest
+from huggorm.testing.environment import NixTestEnvironment
 from prompt_toolkit.application import create_app_session
-from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.formatted_text import StyleAndTextTuples
+from prompt_toolkit.input import PipeInput, create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
 import pynix._impl.search as search_module
@@ -23,13 +26,6 @@ from pynix._options import OptionRecord
 from pynix._programs import ProgramIndex
 from pynix.search import Search
 from pynix.target import EvaluationTarget
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Sequence
-
-    from huggorm.testing.environment import NixTestEnvironment
-    from prompt_toolkit.formatted_text import StyleAndTextTuples
-    from prompt_toolkit.input import PipeInput
 
 _FIXTURE_DIR = Path(__file__).parent / "test_search"
 _SYSTEM_NIX = _FIXTURE_DIR / "system.nix"

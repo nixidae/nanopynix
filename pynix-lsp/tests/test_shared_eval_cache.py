@@ -13,15 +13,10 @@ completion simply "didn't work" rather than "was slow."
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from lsprotocol import types
 
 from lsp_support.lsp_environment import asset
-from pynix_lsp._handlers import _completion, _sync_document
-
-if TYPE_CHECKING:
-    from pynix_lsp._handlers import PynixLanguageServer
+from pynix_lsp._handlers import PynixLanguageServer, _completion, _sync_document
 
 _DEMO_NIX = asset("easykubenix/modules/demo.nix")
 _CONFIG_NIX = asset("easykubenix/modules/config.nix")

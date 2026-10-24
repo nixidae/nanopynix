@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 from pytest_agent._history import (
@@ -23,9 +23,6 @@ from pytest_agent._history import (
     validate_run_label,
     write_run_meta,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 
 def test_next_run_dir_starts_at_one(tmp_path: Path) -> None:

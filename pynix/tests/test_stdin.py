@@ -9,18 +9,13 @@ from __future__ import annotations
 import io
 import json
 import sys
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 from anyio import Path as AnyioPath
-from huggorm.testing.environment import LINUX_CHROOT_BUILD
+from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment
 
 from pynix import parse
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from huggorm.testing.environment import NixTestEnvironment
 
 
 def _stdin(monkeypatch: pytest.MonkeyPatch, text: str) -> None:

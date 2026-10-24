@@ -7,9 +7,9 @@ module loads on every start, including ``pynix --help`` and every keypress of
 a shell completion.
 
 A subcommand module therefore holds the command class and its options, and
-nothing else. What ``run`` needs lives here, and the module ``__getattr__``
-below (PEP 562) imports it at the first attribute read -- which happens inside
-``run``, after the parser decided that this is the subcommand to run.
+nothing else. What ``run`` needs lives here. deferimport makes the imports
+below lazy, so a module loads at the first attribute read -- which happens
+inside ``run``, after the parser decided that this is the subcommand to run.
 
 Issue #123 measured what this saves, on the release build:
 
@@ -17,81 +17,34 @@ Issue #123 measured what this saves, on the release build:
 - ``pynix.build`` was 112.2 ms, nearly all of it ``tree_sitter_nix``, which
   pulls ``tree_sitter_config`` and through it ``email_validator``.
 
-One entry is not a subcommand. ``options_tui`` is the second mode of one
-subcommand, and the table defers it for the same reason: it costs 115
-``prompt_toolkit`` modules and 69 Markdown ones, and ``pynix search <query>``
-prints a list and needs none of them.
-
-``CLAUDE.md`` bans an import inside a function, and this is not one: the
-mechanism is a package-level ``__getattr__``, the same one that
-``nanopynix/__init__.py`` uses for its public names.
+``options_tui`` is not a subcommand. It is the second mode of one, and it
+costs 115 ``prompt_toolkit`` modules and 69 Markdown ones, which
+``pynix search <query>`` does not need.
 """
 
 from __future__ import annotations
 
-import importlib
-import types
-import typing
-
-if typing.TYPE_CHECKING:
-    from pynix._impl import (
-        build as build,
-        config as config,
-        copy as copy,
-        derivation as derivation,
-        develop as develop,
-        env as env,
-        eval as eval,
-        flake as flake,
-        log as log,
-        main as main,
-        merged_tui as merged_tui,
-        options_tui as options_tui,
-        package_tui as package_tui,
-        path_info as path_info,
-        registry as registry,
-        repl as repl,
-        run as run,
-        sbom as sbom,
-        search as search,
-        settings as settings,
-        store as store,
-        why_depends as why_depends,
-    )
-
-#: The implementation modules, one for each subcommand that has a heavy one.
-_SUBMODULES: typing.Final[frozenset[str]] = frozenset(
-    {
-        "build",
-        "config",
-        "copy",
-        "derivation",
-        "develop",
-        "env",
-        "eval",
-        "flake",
-        "log",
-        "main",
-        "merged_tui",
-        "options_tui",
-        "package_tui",
-        "path_info",
-        "registry",
-        "repl",
-        "run",
-        "sbom",
-        "search",
-        "settings",
-        "store",
-        "why_depends",
-    }
+from pynix._impl import (
+    build as build,
+    config as config,
+    copy as copy,
+    derivation as derivation,
+    develop as develop,
+    env as env,
+    eval as eval,
+    flake as flake,
+    log as log,
+    main as main,
+    merged_tui as merged_tui,
+    options_tui as options_tui,
+    package_tui as package_tui,
+    path_info as path_info,
+    registry as registry,
+    repl as repl,
+    run as run,
+    sbom as sbom,
+    search as search,
+    settings as settings,
+    store as store,
+    why_depends as why_depends,
 )
-
-
-def __getattr__(name: str) -> types.ModuleType:
-    """Import an implementation module, and cache it in this namespace."""
-    if name not in _SUBMODULES:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module = importlib.import_module(f"pynix._impl.{name}")
-    globals()[name] = module
-    return module

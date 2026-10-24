@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
+from huggorm.testing.environment import NixTestEnvironment
 
 from pynix import parse
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from huggorm.testing.environment import NixTestEnvironment
 
 
 async def test_pynix_store_add_file_imports_and_can_be_read(

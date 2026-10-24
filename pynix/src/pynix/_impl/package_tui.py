@@ -13,18 +13,12 @@ reads instead.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
-from nanopynix._typechecking import BEARTYPING
+from prompt_toolkit.formatted_text import StyleAndTextTuples
+
 from pynix._impl._search_tui import SearchSource
-from pynix._package_search import rank
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Sequence
-
-    from prompt_toolkit.formatted_text import StyleAndTextTuples
-
-    from pynix._package_search import SearchablePackage
+from pynix._package_search import SearchablePackage, rank
 
 #: The style classes that the detail pane uses, over the ones that
 #: `pynix._impl._search_tui` defines for the screen itself.

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import contextlib
 import io
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import AsyncGenerator, Callable
+from typing import Any, cast
 
 import huggorm
 import pytest
@@ -10,9 +11,6 @@ import structlog
 from huggorm import Verbosity
 
 from pynix._util import configure_logging, forward_state_logs
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable
 
 _CHATTY = int(Verbosity.CHATTY)
 _INFO = int(Verbosity.INFO)

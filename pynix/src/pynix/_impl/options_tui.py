@@ -16,20 +16,15 @@ it without importing the screen. Issue #257 moved it.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
-from nanopynix._typechecking import BEARTYPING
+from prompt_toolkit.formatted_text import StyleAndTextTuples
+
 from pynix._impl._search_tui import SearchSource, SearchTui
 from pynix._markdown import render_markdown
 from pynix._option_search import instance_of, rank
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Sequence
-
-    from prompt_toolkit.formatted_text import StyleAndTextTuples
-
-    from pynix._option_values import OptionValues, Value
-    from pynix._options import OptionRecord
+from pynix._option_values import OptionValues, Value
+from pynix._options import OptionRecord
 
 #: The style classes that the detail pane uses, over the ones that
 #: `pynix._impl._search_tui` defines for the screen itself.

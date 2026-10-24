@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import io
 import sys
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import huggorm
 import pytest
+from huggorm import AsyncEvalState, AsyncValue
 from huggorm.errors import ThrownError
 
 from pynix._evaluate import (
@@ -37,11 +38,6 @@ from pynix.target import (
     configuration_message,
     resolve_file_reference,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
-    from huggorm import AsyncEvalState, AsyncValue
 
 
 @pytest.fixture

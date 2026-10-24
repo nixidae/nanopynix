@@ -14,32 +14,25 @@ import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
-
-# A real import, not a TYPE_CHECKING one: `libpynix` resolves the annotations
-# of a command to build its parser, so `Path` has to exist as an object and not
-# just as a lazy PEP 563 string.
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import anyio.to_thread
 import huggorm
 import structlog
 from anyio import Path as AnyioPath
+from huggorm import AsyncEvalState, AsyncStore
 from huggorm.attrpath import flake_outputs, select_attr
 from huggorm.devshell import awrite_dev_shell_derivation
 from huggorm.errors import NixError
 from rich.text import Text
 
-from nanopynix._typechecking import BEARTYPING
 from pynix import _evaluate
 from pynix._dev_env import GET_ENV_SH, BuildEnvironment, DevEnvError, make_rc_script, quote
 from pynix._store_layout import StoreLayout
 from pynix._util import error_exit, huggorm_build_session, print_json, report_and_exit
 from pynix.develop import Develop, PrintDevEnv
 from pynix.target import EvaluationTarget, EvaluationTargetError
-
-if TYPE_CHECKING or BEARTYPING:
-    from huggorm import AsyncEvalState, AsyncStore
 
 logger = structlog.get_logger("pynix.develop")
 #: What Nix puts in front of an error message of its own.

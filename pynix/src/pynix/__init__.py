@@ -1,10 +1,16 @@
 from __future__ import annotations
 
-# A real import, and not a `TYPE_CHECKING` one. `NANOPYNIX_BEARTYPING=1` makes
-# beartype resolve every annotation at run time, and a name the type checker
-# alone can see becomes a forward reference it cannot import. `collections.abc`
-# is already loaded by the interpreter, so this costs nothing.
+import sys
 from collections.abc import Sequence
+
+import deferimport  # pyright: ignore[reportMissingTypeStubs] -- deferimport ships no py.typed
+
+# Every module that loads after this line imports lazily, so a plain import
+# at the top of a module costs nothing until a name is used. beartype.claw
+# rewrites each module as it loads too, and a runtime type checker needs real
+# objects, so under beartype the imports stay eager.
+if "beartype.claw" not in sys.modules:
+    deferimport.install()  # pyright: ignore[reportUnknownMemberType] -- see the import
 
 from libpynix import Command, build_parser, complete, dispatch, group, parse_args
 from pynix import _impl

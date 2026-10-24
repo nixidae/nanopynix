@@ -27,14 +27,12 @@ import asyncio
 import contextlib
 import json
 import os
+from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import huggorm
 import yaml
-
-if TYPE_CHECKING:
-    from collections.abc import Generator
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS_DIR = REPO_ROOT / "ci" / "workflows"

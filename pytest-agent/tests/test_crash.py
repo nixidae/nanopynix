@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
+import pytest
 from pytest_agent._crash import (
     MAX_FRAMES,
     crash_from_report,
@@ -10,11 +12,6 @@ from pytest_agent._crash import (
     normalize_message,
     split_exception_type,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    import pytest
 
 
 def _entry(path: str, lineno: int) -> SimpleNamespace:

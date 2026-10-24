@@ -8,10 +8,11 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
 
 import huggorm
 import structlog
+from huggorm import AsyncEvalState, AsyncLockedFlake, AsyncRepl, AsyncValue
 from huggorm.attrpath import (
     AttrPathError,
     AttrPathSearch,
@@ -22,21 +23,15 @@ from huggorm.attrpath import (
 )
 from huggorm.errors import ThrownError
 
-from nanopynix._typechecking import BEARTYPING
 from pynix.target import (
     CONFIGURATION_KINDS,
+    EvaluationTarget,
     EvaluationTargetError,
+    FileReference,
     configuration_message,
     names_stdin,
     resolve_file_reference,
 )
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Awaitable, Callable
-
-    from huggorm import AsyncEvalState, AsyncLockedFlake, AsyncRepl, AsyncValue
-
-    from pynix.target import EvaluationTarget, FileReference
 
 logger = structlog.get_logger("pynix.target")
 

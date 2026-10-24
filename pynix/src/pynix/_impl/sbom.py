@@ -9,29 +9,22 @@ from __future__ import annotations
 
 import importlib.metadata
 import os
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from anyio import Path as AnyioPath
+from huggorm import AsyncStore
 
-from nanopynix._typechecking import BEARTYPING
 from pynix import _evaluate
+from pynix._evaluate import JsonValue
 from pynix._impl import _sbom_cyclonedx, _sbom_spdx
-from pynix._impl._sbom_model import inventory, parse_walk, serial_uuid
+from pynix._impl._sbom_model import Inventory, inventory, parse_walk, serial_uuid
 from pynix._impl.env import output_paths
 from pynix._store_layout import StoreLayout
 from pynix._util import huggorm_build_session, print_json, report_and_exit
+from pynix.sbom import Sbom
 from pynix.target import EvaluationTarget, EvaluationTargetError
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Callable, Iterable, Mapping
-
-    from huggorm import AsyncStore
-
-    from pynix._evaluate import JsonValue
-    from pynix._impl._sbom_model import Inventory
-    from pynix.sbom import Sbom
 
 _WALK = Path(__file__).with_name("sbom_walk.nix")
 

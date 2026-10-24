@@ -25,9 +25,10 @@ import argparse
 import json
 import sys
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from pytest_agent._capture import nodeid_is_evident_from
 from pytest_agent._crash import normalize_message
@@ -41,9 +42,6 @@ from pytest_agent._records import (
     resolve_agent_dir,
 )
 from pytest_agent._watch import WATCH_COMMAND, WatchOptions, add_watch_arguments, watch
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 # argv[0] values that mean "query", not "run pytest". Everything else the
 # console script sees is forwarded to pytest untouched.

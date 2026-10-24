@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import TYPE_CHECKING
+from collections.abc import Generator
 
 import coverage
 import pytest
@@ -36,9 +36,6 @@ import pytest
 # here settles it. `nanopynix/tests/conftest.py` carries the same import and
 # the full account.
 from nanopynix_testing.nix_environment import anyio_backend as anyio_backend
-
-if TYPE_CHECKING:
-    from collections.abc import Generator
 
 
 def _save_coverage_before_hard_exit() -> None:

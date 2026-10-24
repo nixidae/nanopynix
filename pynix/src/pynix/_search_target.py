@@ -32,19 +32,14 @@ raise, because a person who names a path asked for that path.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
+from huggorm import AsyncEvalState, AsyncValue
 from huggorm.attrpath import AttrPathError, AttrPathNotFoundError, select_attr
 from huggorm.errors import NixTypeError
 
-from nanopynix._typechecking import BEARTYPING
 from pynix.target import EvaluationTargetError
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Sequence
-
-    from huggorm import AsyncEvalState, AsyncValue
 
 #: The attribute path that the automatic search tries for the options tree.
 OPTIONS_CHAIN: tuple[str, ...] = ("options",)

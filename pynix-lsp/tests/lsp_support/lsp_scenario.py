@@ -26,15 +26,13 @@ table entirely.
 from __future__ import annotations
 
 import io
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
 from lsprotocol import types
 
 from lsp_support.lsp_markers import Marker, parse_markers
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 
 @dataclass(frozen=True)

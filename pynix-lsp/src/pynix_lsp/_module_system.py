@@ -22,22 +22,18 @@ this module derives from that one root:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from lsprotocol import types
 from pygls.uris import from_fs_path
 
-from nanopynix._typechecking import BEARTYPING
 from pynix._evaluate import call, to_python
 from pynix._value_render import format_json
+from pynix_lsp._context import FileContext
 from pynix_lsp._dialect import Dialect
 from pynix_lsp._render import render_value
 from pynix_lsp._syntax import completion_target_at, identifier_path_at, top_level_lambda_formals
-from pynix_lsp._value import EVAL_FAILURES
-
-if TYPE_CHECKING or BEARTYPING:
-    from pynix_lsp._context import FileContext
-    from pynix_lsp._value import LazyValue
+from pynix_lsp._value import EVAL_FAILURES, LazyValue
 
 MODULE_ENTRY_NAME = "moduleEntry"
 CONFIG_NAME = "config"

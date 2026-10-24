@@ -30,13 +30,10 @@ rather than answer.
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 from _completion_probe import argcomplete_candidates, nix_candidates
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 #: The Nix file both programs complete against.
 #:

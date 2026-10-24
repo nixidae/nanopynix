@@ -8,12 +8,13 @@ from __future__ import annotations
 import signal
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import anyio
 import pytest
 from huggorm import AsyncValue, Verbosity
 from huggorm.errors import NixError
+from huggorm.testing.environment import NixTestEnvironment
 from prompt_toolkit.completion import CompleteEvent, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import ANSI, FormattedText
@@ -46,9 +47,6 @@ from pynix._impl.repl import (  # type: ignore[reportPrivateUsage] -- tests inte
 from pynix._verbosity import VerbosityInput, verbosity_of
 from pynix.repl import Repl
 from pynix.target import EvaluationTarget
-
-if TYPE_CHECKING:
-    from huggorm.testing.environment import NixTestEnvironment
 
 
 class _Prompt:

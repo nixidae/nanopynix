@@ -32,20 +32,16 @@ import contextlib
 import pathlib
 import sys
 import urllib.parse
-from typing import TYPE_CHECKING, Any
+from collections.abc import AsyncGenerator, Mapping
+from typing import Any
 
 import anyio
 import huggorm
+import pytest
 
 import pynix._util as pynix_util
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Mapping
-
-    import pytest
-
-    from pynix._build_monitor import MonitorState
-    from pynix._verbosity import VerbosityInput
+from pynix._build_monitor import MonitorState
+from pynix._verbosity import VerbosityInput
 
 #: Set by CI to run the faithful path -- every command opens its own worker,
 #: store and evaluator, exactly as the real CLI does. Unset (the local default)

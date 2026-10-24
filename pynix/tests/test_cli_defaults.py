@@ -17,7 +17,8 @@ import json
 import os
 import re
 import sys
-from typing import TYPE_CHECKING
+from pathlib import Path
+from subprocess import CompletedProcess
 
 import anyio
 import huggorm
@@ -39,10 +40,6 @@ from pynix._impl.settings import (
     pynix_defaults,
 )
 from pynix.build import Build
-
-if TYPE_CHECKING:
-    from pathlib import Path
-    from subprocess import CompletedProcess
 
 
 def write_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str) -> Path:

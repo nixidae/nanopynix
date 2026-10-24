@@ -9,20 +9,15 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
-from huggorm.testing.environment import LINUX_CHROOT_BUILD, with_nixpkgs
+from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, with_nixpkgs
 
 from pynix import parse
 from support.ansi import strip_ansi
 from support.nix_oracle import require_matching_nix_cli
 from test_support.subprocess_output import run_process
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from huggorm.testing.environment import NixTestEnvironment
 
 # Each output holds the store path of the one below it, and nothing else. A
 # `runCommand` with no build inputs keeps the closure to these three paths, so

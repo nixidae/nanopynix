@@ -14,12 +14,14 @@ its tests use a stub tree.
 from __future__ import annotations
 
 import contextlib
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import anyio
 import anyio.lowlevel
 import pytest
+from huggorm.testing.environment import NixTestEnvironment
 
 import pynix._util as util_module
 from pynix._evaluate import evaluate_target
@@ -37,12 +39,6 @@ from pynix._option_values import (
 from pynix._options import fetch_option_values, fetch_value_renderer
 from pynix._search_target import resolve
 from pynix.target import EvaluationTarget
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
-    from contextlib import AbstractAsyncContextManager
-
-    from huggorm.testing.environment import NixTestEnvironment
 
 _MODULE = Path(__file__).parent / "test_search" / "system.nix"
 _OPTION = "services.example-daemon"

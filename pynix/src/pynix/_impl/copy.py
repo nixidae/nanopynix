@@ -16,21 +16,18 @@ one. Add it with the test that proves it.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 import structlog
+from huggorm import AsyncEvalState, AsyncStore, StorePath
 
-from nanopynix._typechecking import BEARTYPING
 from pynix import _evaluate
 from pynix._util import error_exit, huggorm_eval_session, print_json, report_and_exit
 from pynix.copy import Copy
 from pynix.target import EvaluationTarget, EvaluationTargetError
 
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Iterable
-
-    from huggorm import AsyncEvalState, AsyncStore, StorePath
 logger = structlog.get_logger("pynix.copy")
 
 #: How many stranded paths the failure message names before it says "...".

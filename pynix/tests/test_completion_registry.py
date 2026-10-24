@@ -31,14 +31,11 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from test_support.subprocess_output import run_process
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 #: The identifier this file puts in a user registry of its own.
 PROBE_ENTRY = "aprobeflake"

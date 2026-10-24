@@ -12,20 +12,16 @@ from __future__ import annotations
 import json
 import re
 import sys
-from typing import TYPE_CHECKING, Any
+from collections.abc import AsyncIterator
+from pathlib import Path
+from typing import Any
 
 import pytest
 from huggorm.errors import NixError
-from huggorm.testing.environment import LINUX_CHROOT_BUILD, force_rmtree, with_nixpkgs
+from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, force_rmtree, with_nixpkgs
 
 from pynix import parse
 from test_support.subprocess_output import run_process
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-    from pathlib import Path
-
-    from huggorm.testing.environment import NixTestEnvironment
 
 # `runCommand` with no build inputs, so each output holds the store path below
 # it and nothing else. The closure of `top` is `{top, leaf}`.

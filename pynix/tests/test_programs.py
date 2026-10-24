@@ -10,14 +10,11 @@ index: `ssh-keygen` really does come from `openssh`, and `convert` from
 from __future__ import annotations
 
 import sqlite3
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from pynix._programs import ProgramIndex, index_at
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 #: `(binary, system, package)`, as the published index stores them.
 _ROWS = [

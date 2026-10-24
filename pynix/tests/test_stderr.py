@@ -11,18 +11,13 @@ import json
 import os
 import re
 import sys
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import anyio
 import pytest
-from huggorm.testing.environment import LINUX_CHROOT_BUILD
+from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment
 
 from pynix import parse
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from huggorm.testing.environment import NixTestEnvironment
 
 _CLI = "import sys, pynix; sys.argv[0] = 'pynix'; pynix.main()"
 

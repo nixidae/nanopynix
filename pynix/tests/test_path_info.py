@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
 
 import huggorm
 import pytest
+from huggorm.testing.environment import NixTestEnvironment
 
 from pynix import parse
 from pynix._util import init_nix
-
-if TYPE_CHECKING:
-    from huggorm.testing.environment import NixTestEnvironment
 
 
 @pytest.fixture

@@ -18,22 +18,16 @@ up.
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
-from nanopynix._typechecking import BEARTYPING
+from prompt_toolkit.formatted_text import StyleAndTextTuples
+
 from pynix._impl import options_tui, package_tui
 from pynix._impl._search_tui import SearchSource, SearchTui
+from pynix._option_values import OptionValues
 from pynix._options import OptionRecord
-from pynix._search_merge import make_merged_ranker, name as hit_name
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Sequence
-
-    from prompt_toolkit.formatted_text import StyleAndTextTuples
-
-    from pynix._option_values import OptionValues
-    from pynix._package_search import SearchablePackage
-    from pynix._search_merge import SearchHit
+from pynix._package_search import SearchablePackage
+from pynix._search_merge import SearchHit, make_merged_ranker, name as hit_name
 
 #: The style classes of both detail panes. Neither namespace is one that
 #: `prompt_toolkit` already owns, and

@@ -40,16 +40,12 @@ from __future__ import annotations
 
 import json
 import subprocess
-from typing import TYPE_CHECKING
+from collections.abc import Mapping, Sequence
 
 import anyio
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from nanopynix._typechecking import BEARTYPING
 from pynix_lsp._terranix_schema import SchemaBlock
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Mapping, Sequence
 
 
 class CoreBlockSchema(BaseModel):

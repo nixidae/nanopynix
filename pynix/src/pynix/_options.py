@@ -59,16 +59,13 @@ costs its own detail pane a line, and costs no other option anything.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
-from nanopynix._typechecking import BEARTYPING
+from huggorm import AsyncEvalState, AsyncValue
+
 from pynix._evaluate import call, to_python
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Mapping
-
-    from huggorm import AsyncEvalState, AsyncValue
 
 #: How deep the walk follows a sub-option, before it stops.
 #:

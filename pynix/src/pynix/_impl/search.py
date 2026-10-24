@@ -34,19 +34,19 @@ import json
 import os
 import platform
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import anyio
 import structlog
+from huggorm import AsyncEvalState
 from huggorm.errors import NixError
 from rich.console import Console
 
 from libpynix import human_at_terminal
-from nanopynix._typechecking import BEARTYPING
 from pynix import _impl
 from pynix._evaluate import evaluate_target
 from pynix._impl._quiet import quiet_terminal
@@ -69,11 +69,6 @@ from pynix.target import (
     EvaluationTarget,
     EvaluationTargetError,
 )
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import AsyncGenerator
-
-    from huggorm import AsyncEvalState
 
 logger = structlog.get_logger("pynix.search")
 console = Console()

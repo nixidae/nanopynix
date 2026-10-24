@@ -9,14 +9,13 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import structlog
-from huggorm import ContentAddressMethod, GCAction, GCOptions, HashAlgorithm
+from huggorm import AsyncStore, ContentAddressMethod, DerivedPathBuilt, GCAction, GCOptions, HashAlgorithm, StorePath
 from huggorm.errors import BadStorePath
 
-from nanopynix._typechecking import BEARTYPING
 from pynix._util import huggorm_local_store_path, huggorm_store_session, print_json
 from pynix.store import (
     Add,
@@ -48,10 +47,6 @@ from pynix.store import (
     Verify,
 )
 
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Iterable
-
-    from huggorm import AsyncStore, DerivedPathBuilt, StorePath
 logger = structlog.get_logger("pynix.store")
 
 

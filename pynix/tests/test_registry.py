@@ -30,20 +30,17 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import anyio
 import pytest
+from huggorm.testing.environment import NixTestEnvironment
 
 from pynix import parse
 from support.ansi import strip_ansi
 from support.nix_oracle import require_matching_nix_cli
 from test_support.subprocess_output import run_process
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from huggorm.testing.environment import NixTestEnvironment
 
 #: A flake with no inputs and one attribute, so a resolution through the
 #: registry can be observed without a fetch of anything remote.

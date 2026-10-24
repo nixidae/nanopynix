@@ -10,17 +10,12 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
-from huggorm.testing.environment import with_nixpkgs
+from huggorm.testing.environment import NixTestEnvironment, with_nixpkgs
 
 from pynix._impl.env import bin_directories, default_outputs
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from huggorm.testing.environment import NixTestEnvironment
 
 
 @pytest.mark.parametrize(

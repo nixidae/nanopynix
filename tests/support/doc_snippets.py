@@ -34,12 +34,9 @@ from __future__ import annotations
 
 import re
 import textwrap
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 # A fence that opens a Python block. Only these are checked -- a `console`,
 # `nix` or `text` block is prose, and running it is not a thing that means

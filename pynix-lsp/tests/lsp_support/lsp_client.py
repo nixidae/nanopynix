@@ -9,14 +9,10 @@ complete/hover at this position".
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
 from lsprotocol import types
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from pytest_lsp import LanguageClient
+from pytest_lsp import LanguageClient
 
 
 def open_document(client: LanguageClient, uri: str, text: str, *, language_id: str = "nix", version: int = 1) -> None:

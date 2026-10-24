@@ -1,19 +1,14 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import huggorm
 import pytest
-from huggorm.testing.environment import with_nixpkgs
+from huggorm.testing.environment import NixTestEnvironment, with_nixpkgs
 
 from pynix import parse
 from support.ansi import strip_ansi
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from huggorm.testing.environment import NixTestEnvironment
 
 
 async def test_show_file(

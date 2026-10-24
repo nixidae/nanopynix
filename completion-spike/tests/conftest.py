@@ -6,8 +6,9 @@ import os
 import shutil
 import stat
 import sys
+from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import completion_spike
 import pytest
@@ -15,9 +16,6 @@ from completion_spike._layer import Shell, render_script
 from completion_spike.demo import CALL_LOG_VARIABLE, DYNAMIC_VALUES, app
 
 from test_support.shell_pty import SHELLS, ShellSession
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 #: The name each generated script gets. zsh is the reason there is a table and
 #: not one suffix: nothing here autoloads it, so the name is free, and a plain

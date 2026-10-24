@@ -14,7 +14,7 @@ import json
 import shutil
 import sys
 import uuid
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import anyio
 import anyio.to_thread
@@ -24,9 +24,6 @@ from huggorm.errors import BuildError
 from huggorm.namespace import remove_layers
 
 from pynix import parse
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 PROBE = """
 import sys

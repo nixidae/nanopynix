@@ -361,7 +361,12 @@ Follow these rules:
 - Use `from __future__ import annotations` in each Python module that defines
   or uses a type annotation.
 - Do not use a string type hint such as `"Store"`. Use future annotations and
-  an import in an `if TYPE_CHECKING:` block.
+  a plain import.
+- Do not write an `if TYPE_CHECKING:` block. Import at the top of the module.
+  `pynix` installs deferimport, which makes each import lazy, and a runtime
+  type checker needs every name an annotation uses to be real. Under beartype,
+  `pynix` leaves deferimport off, so the imports are eager. The strict ruff
+  configuration bans `typing.TYPE_CHECKING`.
 - Keep the imports at the top of the file. Do not write a lazy import in a
   function or in a method. A lazy import is permitted only when it is necessary
   to break a circular import cycle. To break such a cycle, first try to move
@@ -371,9 +376,8 @@ Follow these rules:
   2. imports of the standard library
   3. imports of third-party packages
   4. local `nanopynix` imports
-  5. an `if TYPE_CHECKING:` block that contains only type-only imports
-  6. module constants
-  7. code
+  5. module constants
+  6. code
 - To re-export a name from another module, use the explicit pattern
   `from module import Name as Name`. Put the related re-exports in one import
   block of multiple lines.

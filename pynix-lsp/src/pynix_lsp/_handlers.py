@@ -6,7 +6,6 @@ import asyncio
 import logging
 import sys
 import threading
-from typing import TYPE_CHECKING
 
 import anyio
 import huggorm
@@ -24,13 +23,13 @@ from pygls.lsp.server import LanguageServer
 from pygls.uris import from_fs_path, to_fs_path
 from pygls.workspace import TextDocument
 
-from nanopynix._typechecking import BEARTYPING
 from pynix._util import apply_nix_settings
-from pynix_lsp._context import FileContext, SharedEvalCache, parse_directives, resolve_root_path
+from pynix_lsp._context import ContextDirective, FileContext, SharedEvalCache, parse_directives, resolve_root_path
 from pynix_lsp._dialects import DIALECTS
 from pynix_lsp._module_system import resolve_module_arg
 from pynix_lsp._render import render_value
 from pynix_lsp._syntax import (
+    ParseErrorRange,
     completion_target_at,
     identifier_path_at,
     local_scope_at,
@@ -39,12 +38,7 @@ from pynix_lsp._syntax import (
     top_level_lambda_formals,
     top_level_symbols,
 )
-from pynix_lsp._value import EVAL_FAILURES
-
-if TYPE_CHECKING or BEARTYPING:
-    from pynix_lsp._context import ContextDirective
-    from pynix_lsp._syntax import ParseErrorRange
-    from pynix_lsp._value import EvalFailure
+from pynix_lsp._value import EVAL_FAILURES, EvalFailure
 
 _SERVER_NAME = "pynix-lsp"
 _SERVER_VERSION = "0.1.0"

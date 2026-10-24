@@ -43,7 +43,7 @@ from __future__ import annotations
 from typing import Any
 
 from libpynix import Command, opt
-from nanopynix._typechecking import no_runtime_type_check
+from libpynix._typecheck import no_runtime_type_check
 from pynix import _impl
 
 

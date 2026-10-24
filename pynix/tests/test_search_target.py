@@ -7,22 +7,18 @@ and a double cannot show that `specialArgs` never reaches the result.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
+from huggorm import AsyncEvalState, AsyncValue
 from huggorm.attrpath import AttrPathNotFoundError, select_attr
+from huggorm.testing.environment import NixTestEnvironment
 
 import pynix._util as util_module
 from pynix._evaluate import evaluate_target
 from pynix._search_target import TARGET_PATH, SearchTarget, _is_package_set, resolve
 from pynix.target import EvaluationTarget, EvaluationTargetError
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
-    from huggorm import AsyncEvalState, AsyncValue
-    from huggorm.testing.environment import NixTestEnvironment
 
 _FIXTURES = Path(__file__).parent / "test_search_target"
 _NIXOS_SHAPE = Path(__file__).parent / "test_search" / "system.nix"

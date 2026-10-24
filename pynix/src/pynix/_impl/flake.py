@@ -10,15 +10,14 @@ from __future__ import annotations
 import contextlib
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import huggorm
 import structlog
+from huggorm import AsyncEvalState, AsyncValue
 from huggorm.attrpath import AttrPathError, flake_outputs, select_attr
 from rich.console import Console
 from rich.tree import Tree
 
-from nanopynix._typechecking import BEARTYPING
 from pynix._util import (
     configured_nix_settings,
     huggorm_build_session,
@@ -29,8 +28,6 @@ from pynix._util import (
 from pynix.flake import Info, Lock, Metadata, Show, Update
 from pynix.target import EvaluationTargetError
 
-if TYPE_CHECKING or BEARTYPING:
-    from huggorm import AsyncEvalState, AsyncValue
 logger = structlog.get_logger("pynix.flake")
 console = Console()
 _MAX_TREE_NODES = 200

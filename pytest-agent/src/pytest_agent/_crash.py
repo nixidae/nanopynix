@@ -16,10 +16,9 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    import pytest
+import pytest
 
 # How many innermost traceback frames to keep per failure. Deep recursion
 # (or a deeply nested fixture chain) can produce hundreds; the frames close

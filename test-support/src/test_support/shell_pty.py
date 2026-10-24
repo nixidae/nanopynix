@@ -45,11 +45,6 @@ here for a reason that a person met before:
 from __future__ import annotations
 
 import re
-
-# **Imported for real, and not under `TYPE_CHECKING`.** beartype resolves an
-# annotation at run time when `NANOPYNIX_BEARTYPING` is set, and a name that
-# only a type checker can see is an unresolvable forward reference then. The
-# module is already loaded by the interpreter, so the import costs nothing.
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import TracebackType

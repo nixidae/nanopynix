@@ -14,11 +14,12 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from anyio import Path as AnyioPath, run_process
-from huggorm.testing.environment import LINUX_CHROOT_BUILD, with_nixpkgs
+from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, with_nixpkgs
 
 from pynix import parse
 from pynix._dev_env import BuildEnvironment, make_rc_script, quote
@@ -29,11 +30,6 @@ from pynix._impl.develop import (  # pyright: ignore[reportPrivateUsage] -- the 
 )
 from pynix.develop import Develop
 from support.nix_oracle import require_matching_nix_cli
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from huggorm.testing.environment import NixTestEnvironment
 
 #: A store path, with the hash reduced to a placeholder. The ``-env``
 #: derivation is content-addressed over ``get-env.sh``, so any difference in

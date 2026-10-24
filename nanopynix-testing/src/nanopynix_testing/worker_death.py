@@ -11,10 +11,9 @@ wrong, and this module is how such a test says so.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    import nanopynix.rpc
+import nanopynix.rpc
 
 
 def expect_the_worker_to_die(session: nanopynix.rpc.Session) -> None:

@@ -24,13 +24,8 @@ concrete path: `<name>` bound to `asdf` says the value to read is
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-from nanopynix._typechecking import BEARTYPING
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Sequence
 
 #: What separates one segment of an attribute path from the next.
 SEPARATOR = "."

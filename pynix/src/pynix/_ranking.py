@@ -67,15 +67,11 @@ both and neither source needs to know about the other.
 from __future__ import annotations
 
 import bisect
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeVar
+from typing import TypeVar
 
 from rapidfuzz import fuzz, process
-
-from nanopynix._typechecking import BEARTYPING
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Callable, Mapping, Sequence
 
 #: The record that a search ranks.
 #:

@@ -11,19 +11,15 @@ without a profiler" install worth supporting.
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import pytest
 from pyinstrument import Profiler
 
 from pytest_agent._capture import nodeid_to_relpath
-from pytest_agent._runtime import RUNTIME_PLUGIN_NAME
-
-if TYPE_CHECKING:
-    from collections.abc import Generator
-
-    from pytest_agent._runtime import AgentRuntime
+from pytest_agent._runtime import RUNTIME_PLUGIN_NAME, AgentRuntime
 
 
 def _report_dir(request: pytest.FixtureRequest) -> Path:

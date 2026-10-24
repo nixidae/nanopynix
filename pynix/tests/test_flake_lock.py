@@ -8,20 +8,17 @@ node moved, and which node stayed.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import pygit2
 import pytest
+from huggorm.testing.environment import NixTestEnvironment
 
 from pynix import parse
 from support.nix_oracle import require_matching_nix_cli
 from test_support.git_fixtures import LinkedFlakes, commit_files, init_linked_flakes
 from test_support.subprocess_output import run_process
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from huggorm.testing.environment import NixTestEnvironment
 
 
 async def _pynix(environment: NixTestEnvironment, *argv: str) -> None:

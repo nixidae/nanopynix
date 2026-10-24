@@ -23,8 +23,8 @@ lives under `pynix._impl` and no subcommand module may import it. Read
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 
 import anyio
 from prompt_toolkit.application import Application
@@ -32,24 +32,18 @@ from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
-from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.formatted_text import StyleAndTextTuples
+from prompt_toolkit.input import Input
+from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import HSplit, ScrollOffsets, VSplit, Window
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.output import Output
 from prompt_toolkit.styles import Style, merge_styles
 from prompt_toolkit.widgets import HorizontalLine
 
-from nanopynix._typechecking import BEARTYPING
 from pynix._impl._columns import GUTTER, Flow, lay_out
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Awaitable, Callable, Mapping, Sequence
-
-    from prompt_toolkit.formatted_text import StyleAndTextTuples
-    from prompt_toolkit.input import Input
-    from prompt_toolkit.key_binding import KeyPressEvent
-    from prompt_toolkit.output import Output
 
 #: How tall the list is, against the detail pane. The list is the half a
 #: person scans, so it takes the larger share. Measured over the 24 941

@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import json
 import os
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import pytest
 from pytest_agent._history import create_run_lock, write_run_meta
 from pytest_agent._query import run
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def _record(nodeid: str, outcome: str, **extra: Any) -> dict[str, Any]:

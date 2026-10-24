@@ -18,10 +18,9 @@ shouldn't try to match).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import huggorm
 import pytest
+import pytest_lsp
 from huggorm.testing.environment import LINUX_CHROOT_BUILD
 
 from lsp_support.lsp_drivers import InProcessDriver, WireDriver
@@ -40,11 +39,13 @@ from lsp_support.lsp_scenario import (
     ExpectText,
     GoTo,
     InsertAfterCursor,
+    LspDriver,
     Rename,
     Scenario,
     Select,
     Type,
 )
+from pynix_lsp._handlers import PynixLanguageServer
 
 #: What `pkgs.stdenv.hostPlatform.system` renders to on the host that runs
 #: these tests.
@@ -55,12 +56,6 @@ from lsp_support.lsp_scenario import (
 #: which is one host and not every host, so each of them failed on macOS with
 #: `aarch64-darwin` in the hover. Ask Nix, as the other pynix tests do.
 _HOST_SYSTEM = huggorm.current_system()
-
-if TYPE_CHECKING:
-    import pytest_lsp
-
-    from lsp_support.lsp_scenario import LspDriver
-    from pynix_lsp._handlers import PynixLanguageServer
 
 _LOCAL_NIX = asset("terranix/modules/local.nix")
 _NULL_NIX = asset("terranix/modules/null.nix")

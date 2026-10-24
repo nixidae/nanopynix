@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TextIO, cast
 
 import pytest
 from _pytest.config import (
@@ -25,9 +25,6 @@ from pytest_agent._runtime import (
     AgentRuntime,
 )
 from pytest_agent._terminal import RealTerminal
-
-if TYPE_CHECKING:
-    from typing import TextIO
 
 # Set by pytest_addoption, read by pytest_configure: which harness env var (if
 # any) caused --agent's default to turn on by itself, so the startup banner

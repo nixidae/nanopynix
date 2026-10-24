@@ -30,15 +30,12 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable, Generator, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 from pytest_agent._entry_points import plugin_registered_via_entry_points
 from pytest_agent._harness_detect import HARNESS_ENV_VARS
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Sequence
 
 pytest_plugins = ["pytester"]
 

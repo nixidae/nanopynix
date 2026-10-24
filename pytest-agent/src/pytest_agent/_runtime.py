@@ -9,8 +9,11 @@ import re
 import signal
 import threading
 import time
+from collections.abc import Callable, Generator
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from pathlib import Path
+from types import FrameType
+from typing import TextIO
 
 import pytest
 
@@ -28,14 +31,7 @@ from pytest_agent._history import (
     write_run_meta,
 )
 from pytest_agent._paths import display_path
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Generator
-    from pathlib import Path
-    from types import FrameType
-    from typing import TextIO
-
-    from pytest_agent._terminal import RealTerminal
+from pytest_agent._terminal import RealTerminal
 
 RUNTIME_PLUGIN_NAME = "pytest-agent-runtime"
 

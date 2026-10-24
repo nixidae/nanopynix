@@ -48,11 +48,12 @@ description/type) that no Nix value carries.
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING, cast
+from collections.abc import Mapping
+from typing import cast
 
 from lsprotocol import types
 
-from nanopynix._typechecking import BEARTYPING
+from pynix_lsp._context import FileContext
 from pynix_lsp._dialect import Dialect
 from pynix_lsp._jsonschema import FindingKind, list_properties, render, validate
 from pynix_lsp._module_system import MODULE_ENTRY_NAME, derive_module_roots
@@ -67,6 +68,7 @@ from pynix_lsp._syntax import (
 )
 from pynix_lsp._terranix_jsonschema import block_to_json_schema
 from pynix_lsp._terranix_schema import (
+    ProviderSchemas,
     SchemaBlock,
     find_resource_block,
     get_provider_schemas,
@@ -75,16 +77,8 @@ from pynix_lsp._terranix_schema import (
     render_schema_attribute,
     walk_schema_block,
 )
-from pynix_lsp._tofu_core_schema import detect_tofu_version, get_core_schema, merge_schema_blocks
-from pynix_lsp._value import EVAL_FAILURES
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Mapping
-
-    from pynix_lsp._context import FileContext
-    from pynix_lsp._terranix_schema import ProviderSchemas
-    from pynix_lsp._tofu_core_schema import CoreBlockSchema
-    from pynix_lsp._value import LazyValue
+from pynix_lsp._tofu_core_schema import CoreBlockSchema, detect_tofu_version, get_core_schema, merge_schema_blocks
+from pynix_lsp._value import EVAL_FAILURES, LazyValue
 
 TERRANIX_ENTRY_NAME = "terranixEntry"
 _BLOCK_KINDS = ("resource", "data")

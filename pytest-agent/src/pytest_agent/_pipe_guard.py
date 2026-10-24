@@ -4,10 +4,9 @@ import contextlib
 import os
 import stat
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, NamedTuple
+from typing import NamedTuple
 
-if TYPE_CHECKING:
-    import pytest
+import pytest
 
 # Options that make pytest print a listing and exit without running any test
 # body. The guard's whole rationale -- "truncating hides the real failure" --

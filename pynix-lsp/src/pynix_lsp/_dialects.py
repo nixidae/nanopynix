@@ -14,14 +14,9 @@ fully static and greppable.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from nanopynix._typechecking import BEARTYPING
+from pynix_lsp._dialect import Dialect
 from pynix_lsp._easykubenix import EasykubenixDialect
 from pynix_lsp._module_system import ModuleSystemDialect
 from pynix_lsp._terranix import TerranixDialect
-
-if TYPE_CHECKING or BEARTYPING:
-    from pynix_lsp._dialect import Dialect
 
 DIALECTS: list[Dialect] = [ModuleSystemDialect(), TerranixDialect(), EasykubenixDialect()]

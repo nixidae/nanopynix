@@ -7,18 +7,12 @@ failure where a hover or a completion awaits it, as one of `EVAL_FAILURES`.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
+from huggorm import AsyncEvalState, AsyncValue
 from huggorm.attrpath import AttrPathError, select_attr_path
 from huggorm.errors import NixError
 
-from nanopynix._typechecking import BEARTYPING
-from pynix._evaluate import to_python
-
-if TYPE_CHECKING or BEARTYPING:
-    from huggorm import AsyncEvalState, AsyncValue
-
-    from pynix._evaluate import JsonValue
+from pynix._evaluate import JsonValue, to_python
 
 EVAL_FAILURES = (NixError, AttrPathError)
 

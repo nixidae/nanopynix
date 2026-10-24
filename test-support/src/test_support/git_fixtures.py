@@ -4,13 +4,9 @@ from __future__ import annotations
 
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pygit2
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
 
 _SIGNATURE = pygit2.Signature("test", "test@example.com")
 

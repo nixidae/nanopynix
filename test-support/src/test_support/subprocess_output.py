@@ -22,15 +22,12 @@ be read concurrently, which is what the task group below is for.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple
+import os
+from collections.abc import Sequence
+from typing import NamedTuple
 
 import anyio
-
-if TYPE_CHECKING:
-    import os
-    from collections.abc import Sequence
-
-    from anyio.abc import ByteReceiveStream, ByteSendStream
+from anyio.abc import ByteReceiveStream, ByteSendStream
 
 
 class CompletedProcess(NamedTuple):

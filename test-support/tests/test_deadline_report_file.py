@@ -12,15 +12,12 @@ the one moment a reader needs it.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import anyio
 import pytest
 
 from test_support.deadline import HANG_REPORT_FILE_VAR, with_test_timeout
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 async def _hangs() -> None:

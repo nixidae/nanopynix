@@ -8,14 +8,11 @@ expanded path, and the expansion still reaches the evaluator. Issue #279.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from pynix._attr_completion import complete_file
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def test_a_path_prefix_offers_the_file_and_the_directory(tmp_path: Path) -> None:

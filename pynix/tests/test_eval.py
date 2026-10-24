@@ -3,17 +3,13 @@ from __future__ import annotations
 import io
 import json
 import re
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
+from huggorm.testing.environment import NixTestEnvironment
 
 from pynix import parse
 from support.ansi import strip_ansi
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from huggorm.testing.environment import NixTestEnvironment
 
 
 def _parse_json_output(out: str) -> object:

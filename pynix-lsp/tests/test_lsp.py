@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NoReturn
+from typing import NoReturn
 
 import pytest
 from huggorm.testing.environment import LINUX_CHROOT_BUILD
@@ -9,7 +9,7 @@ from lsprotocol import types
 from lsp_support.lsp_cursor import cursor_after
 from lsp_support.lsp_environment import asset
 from pynix_lsp._context import parse_directives
-from pynix_lsp._handlers import _completion, _document_symbols, _hover, _sync_document
+from pynix_lsp._handlers import PynixLanguageServer, _completion, _document_symbols, _hover, _sync_document
 from pynix_lsp._syntax import (
     completion_target_at,
     identifier_path_at,
@@ -18,10 +18,6 @@ from pynix_lsp._syntax import (
     top_level_lambda_formals,
     top_level_symbols,
 )
-
-if TYPE_CHECKING:
-    from pynix_lsp._handlers import PynixLanguageServer
-
 
 # ── parse_directives ─────────────────────────────────────────────────
 

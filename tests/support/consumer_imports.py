@@ -47,14 +47,11 @@ library are scanned.
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from tests.support.suppressions import iter_python_files as iter_python_files
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
 
 # The packages that consume nanopynix as a library, relative to the repository
 # root. `tests/` is absent on purpose -- see the module docstring.

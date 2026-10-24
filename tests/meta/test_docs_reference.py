@@ -16,12 +16,9 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from types import ModuleType
 
 import pytest
-
-if TYPE_CHECKING:
-    from types import ModuleType
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _GENERATOR = _REPO_ROOT / "docs" / "_generate_pynix_reference.py"

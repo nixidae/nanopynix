@@ -28,16 +28,13 @@ import socket
 import sys
 import threading
 import time
-from typing import TYPE_CHECKING
+from collections.abc import Iterator
+from pathlib import Path
 
 import anyio
 import pytest
 
 from test_support.subprocess_output import run_process
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-    from pathlib import Path
 
 #: How long the completion may take before this file calls it unbounded.
 #:

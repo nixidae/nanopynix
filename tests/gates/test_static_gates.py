@@ -25,15 +25,12 @@ the job slower.
 from __future__ import annotations
 
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 
 from test_support.subprocess_output import run_process
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 

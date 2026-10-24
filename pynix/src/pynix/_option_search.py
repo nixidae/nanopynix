@@ -22,17 +22,11 @@ option answers to its own name and nothing else.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Sequence
 
-from nanopynix._typechecking import BEARTYPING
 from pynix._option_paths import SEPARATOR, Instance, bind, join_path, split_path
-from pynix._ranking import ALIAS, PREFIX, RESULTS, Texts, make_tiered_ranker
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Callable, Sequence
-
-    from pynix._options import OptionRecord
-    from pynix._ranking import RankKey
+from pynix._options import OptionRecord
+from pynix._ranking import ALIAS, PREFIX, RESULTS, RankKey, Texts, make_tiered_ranker
 
 
 def option_keys(record: OptionRecord) -> Sequence[str]:

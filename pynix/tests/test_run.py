@@ -12,19 +12,15 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import huggorm
 import pytest
+from huggorm.testing.environment import NixTestEnvironment
 
 from pynix._impl.run import choose_bin, expected_type, main_program
 from pynix.target import EvaluationTargetError
 from test_support.git_fixtures import commit_files, init_repo
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from huggorm.testing.environment import NixTestEnvironment
 
 
 @pytest.mark.parametrize(

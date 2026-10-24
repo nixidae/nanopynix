@@ -12,12 +12,12 @@ import os
 import subprocess
 import sys
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 from cyclonedx.schema import SchemaVersion
 from cyclonedx.validation.json import JsonStrictValidator
-from huggorm.testing.environment import with_nixpkgs
+from huggorm.testing.environment import NixTestEnvironment, with_nixpkgs
 from spdx_tools.spdx.parser.json.json_parser import parse_from_file
 from spdx_tools.spdx.validation.document_validator import validate_full_spdx_document
 
@@ -34,11 +34,6 @@ from pynix._impl._sbom_model import (
 )
 from pynix._impl._sbom_spdx import package, spdx_id
 from pynix._impl.sbom import created_at
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from huggorm.testing.environment import NixTestEnvironment
 
 
 @pytest.mark.parametrize(

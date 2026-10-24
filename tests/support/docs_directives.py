@@ -21,12 +21,9 @@ from __future__ import annotations
 
 import importlib
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 # The directives that render an object. `autodata` and `autoattribute` are
 # included because a module constant is a public name like any other, and

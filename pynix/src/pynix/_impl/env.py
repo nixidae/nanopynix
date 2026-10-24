@@ -8,24 +8,19 @@ from __future__ import annotations
 
 import os
 from collections import deque
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 from anyio import Path as AnyioPath
+from huggorm import AsyncEvalState, AsyncValue
 
-from nanopynix._typechecking import BEARTYPING
 from pynix import _evaluate
 from pynix._store_layout import StoreLayout
 from pynix._util import error_exit, huggorm_build_session, report_and_exit
+from pynix.env import Shell
 from pynix.target import EvaluationTarget, EvaluationTargetError
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Awaitable, Callable
-
-    from huggorm import AsyncEvalState, AsyncValue
-
-    from pynix.env import Shell
 
 #: The file whose store paths ``nix shell`` also puts on ``PATH``.
 _PROPAGATED = "nix-support/propagated-user-env-packages"

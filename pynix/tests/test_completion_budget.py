@@ -15,14 +15,11 @@ and this module is what keeps that page true.
 from __future__ import annotations
 
 import importlib
-from typing import TYPE_CHECKING
+from collections.abc import Iterator
 
 import pytest
 
 import pynix._attr_completion as attr_completion
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 #: What a caller gets when the variable is unset.
 #:

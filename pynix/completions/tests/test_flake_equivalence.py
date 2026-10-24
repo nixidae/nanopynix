@@ -20,14 +20,11 @@ from __future__ import annotations
 
 import json
 import subprocess
-from typing import TYPE_CHECKING
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from _completion_probe import argcomplete_candidates, nix_candidates, nix_environment
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-    from pathlib import Path
 
 #: Where the flake reference sits in `nix build F#frag`.
 #: `nix` counts the arguments after the program name, and this line is

@@ -20,12 +20,9 @@ that ran the same tests passed. That is what this file is here to stop.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
 
 from lsp_support.lsp_drivers import InProcessDriver
-
-if TYPE_CHECKING:
-    from pynix_lsp._handlers import PynixLanguageServer
+from pynix_lsp._handlers import PynixLanguageServer
 
 
 async def test_settle_waits_for_a_pending_warm_task(lsp_server: PynixLanguageServer) -> None:

@@ -70,19 +70,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # Add an entry only after you decide. CLAUDE.md permits a narrow private
 # dependency when a redesign is not justified; this is where that judgement is
 # recorded, rather than at each import site.
-CONSUMER_PRIVATE_IMPORTS: dict[tuple[str, str], str] = {
-    ("nanopynix._typechecking", "BEARTYPING"): (
-        "Shared test instrumentation, not library API. The module docstring "
-        "waives the public-API rule explicitly and gives the reason: a public "
-        "re-export would be surface with no caller outside this repository, "
-        "and the flag must be readable before nanopynix/__init__.py finishes "
-        "running. Promotion is tracked by #15."
-    ),
-    ("nanopynix._typechecking", "no_runtime_type_check"): (
-        "The decorator half of the same instrumentation switch, and it travels "
-        "with BEARTYPING. Same waiver, same module docstring."
-    ),
-}
+CONSUMER_PRIVATE_IMPORTS: dict[tuple[str, str], str] = {}
 
 
 # Each place a consumer names an rpc engine class in an annotation, keyed by

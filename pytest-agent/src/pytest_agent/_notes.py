@@ -34,15 +34,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import pytest
 
 from pytest_agent._capture import ATTACHMENT_DIR_SUFFIX, Note, nodeid_to_relpath
-from pytest_agent._runtime import RUNTIME_PLUGIN_NAME
-
-if TYPE_CHECKING:
-    from pytest_agent._runtime import AgentRuntime
+from pytest_agent._runtime import RUNTIME_PLUGIN_NAME, AgentRuntime
 
 # Sessions whose runtime is currently active, innermost last. A list rather
 # than one slot because pytest-agent's own tests run inner pytest sessions

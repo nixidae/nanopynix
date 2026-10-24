@@ -2,15 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from nanopynix._typechecking import BEARTYPING
 from pynix._value_render import format_json
-from pynix_lsp._value import EVAL_FAILURES
-
-if TYPE_CHECKING or BEARTYPING:
-    from pynix_lsp._dialect import Dialect
-    from pynix_lsp._value import LazyValue
+from pynix_lsp._dialect import Dialect
+from pynix_lsp._value import EVAL_FAILURES, LazyValue
 
 
 async def render_value(value: LazyValue, dialects: list[Dialect]) -> str:  # noqa: C901 -- tracked complexity/arg-count debt, see TODO.md

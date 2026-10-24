@@ -7,14 +7,9 @@ inventory that the CycloneDX document renders.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
 
-from nanopynix._typechecking import BEARTYPING
-from pynix._impl._sbom_model import sri_digest
-
-if TYPE_CHECKING or BEARTYPING:
-    from pynix._evaluate import JsonValue
-    from pynix._impl._sbom_model import Inventory, Record
+from pynix._evaluate import JsonValue
+from pynix._impl._sbom_model import Inventory, Record, sri_digest
 
 SPEC_VERSION = "SPDX-2.3"
 

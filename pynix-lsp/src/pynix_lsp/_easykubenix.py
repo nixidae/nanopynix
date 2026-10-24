@@ -43,21 +43,17 @@ not implemented yet -- see the project's own planning notes for why.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from lsprotocol import types
 
-from nanopynix._typechecking import BEARTYPING
+from pynix_lsp._context import FileContext
 from pynix_lsp._dialect import Dialect
 from pynix_lsp._easykubenix_schema import find_definition_key, load_schema, split_api_version
 from pynix_lsp._jsonschema import list_properties, render, walk
 from pynix_lsp._module_system import CONFIG_NAME, MODULE_ENTRY_NAME, derive_module_roots
 from pynix_lsp._syntax import completion_target_at, enclosing_binding_path_at, identifier_path_at
-from pynix_lsp._value import EVAL_FAILURES
-
-if TYPE_CHECKING or BEARTYPING:
-    from pynix_lsp._context import FileContext
-    from pynix_lsp._value import LazyValue
+from pynix_lsp._value import EVAL_FAILURES, LazyValue
 
 EASYKUBENIX_ENTRY_NAME = "easykubenixEntry"
 _OBJECT_ROOT_NAMES = ("objects", "resources")

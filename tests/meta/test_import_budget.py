@@ -108,17 +108,11 @@ def _probe() -> dict[str, object]:
 def _probe_pynix() -> dict[str, object]:
     """Import ``pynix`` in a clean interpreter and report what it loaded.
 
-    **``NANOPYNIX_BEARTYPING`` has to go, and not only ``PYTHONPATH``.**
-    ``nanopynix._typechecking.BEARTYPING`` reads that variable, and this
-    repository writes ``if TYPE_CHECKING or BEARTYPING:`` wherever beartype
-    needs a type-only import to be a real object. So under the suite every one
-    of those blocks *is* an import, and a child that inherits the variable
-    loads 825 modules where a real ``pynix`` loads 647. Measured both ways.
-
-    That is correct for the suite and wrong for this probe, which asks what a
-    user's process loads.
+    ``PYTHONPATH`` carries beartype's ``sitecustomize``, and under beartype
+    pynix leaves deferimport off, so every import would be eager. This probe
+    asks what a user's process loads.
     """
-    stripped = ("PYTHONPATH", "NANOPYNIX_BEARTYPING")
+    stripped = ("PYTHONPATH",)
     env = {key: value for key, value in os.environ.items() if key not in stripped}
     completed = subprocess.run(  # noqa: S603 -- sys.executable and a literal script, no shell
         [sys.executable, "-c", _PYNIX_PROBE],
@@ -249,7 +243,12 @@ FORBIDDEN_IN_PYNIX = (
 #: The dev shell reads the same tree as the release build, because ``pynix`` no
 #: longer mounts the language server. See ``MODULE_BUDGET`` for why a count
 #: carries headroom and a name does not.
-PYNIX_MODULE_BUDGET = 130
+#:
+#: deferimport takes it to **135**: its rewriter needs ``ast``, ``inspect``,
+#: ``dis``, ``tokenize``, ``symtable`` and ``hashlib``, 22 modules that pynix
+#: did not load. Every import after it is lazy, so ``pynix --help`` takes
+#: 0.08 s where eager imports take 0.65 s.
+PYNIX_MODULE_BUDGET = 150
 
 #: What the ``pynix`` probe prints, as one JSON line.
 _PYNIX_PROBE = f"""

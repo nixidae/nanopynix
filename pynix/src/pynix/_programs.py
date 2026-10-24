@@ -26,17 +26,13 @@ known", and never a wrong answer.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-from nanopynix._typechecking import BEARTYPING
+from huggorm import AsyncEvalState
+
 from pynix._evaluate import to_python
-
-if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import Iterable, Mapping
-
-    from huggorm import AsyncEvalState
 
 #: Where Hydra publishes the channel artifacts.
 CHANNEL_URL = "https://channels.nixos.org"

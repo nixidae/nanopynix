@@ -19,13 +19,10 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "last-green.sh"
 

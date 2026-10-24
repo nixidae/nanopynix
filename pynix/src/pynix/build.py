@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-# A real import, not a TYPE_CHECKING one: `libpynix` resolves the annotations
-# of a command to build its parser, so `Path` has to exist as an object and not
-# just as a lazy PEP 563 string.
 from pathlib import Path
 from typing import override
 

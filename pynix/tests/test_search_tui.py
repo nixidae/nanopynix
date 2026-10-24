@@ -9,8 +9,8 @@ different key, is exactly the defect that these tests must catch.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import anyio
 import pytest
@@ -22,9 +22,6 @@ from prompt_toolkit.styles.defaults import PROMPT_TOOLKIT_STYLE, WIDGETS_STYLE
 
 from pynix._impl import options_tui, package_tui
 from pynix._impl._search_tui import _CUT, _IN, _KEYS_SHORT, _MIN_TAIL, STYLE_RULES, SearchSource, SearchTui
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 #: The escape sequences that a terminal sends for the keys under test. Each one
 #: goes through the real key parser of `prompt_toolkit`.
