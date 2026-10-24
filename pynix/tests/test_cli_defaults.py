@@ -22,11 +22,12 @@ from typing import TYPE_CHECKING
 import anyio
 import huggorm
 import pytest
+from huggorm import ServerOptions
 
 from pynix import parse
 from pynix._impl.build import (
     _resolve_namespaced,  # pyright: ignore[reportPrivateUsage] -- the refusal under test is inside this function
-    _server_arguments,  # pyright: ignore[reportPrivateUsage] -- the argument list under test is private
+    _server_options,  # pyright: ignore[reportPrivateUsage] -- the worker setup under test is private
 )
 from pynix._impl.settings import (
     DEFAULT_STORE,
@@ -176,19 +177,13 @@ def test_a_sandbox_path_adds_to_what_nix_conf_set() -> None:
     """Replacing the list took ``/bin/sh`` out of every such build, so a
     sandbox path goes to the ``extra-`` setting, after nix.conf and the
     configured settings."""
-    arguments = _server_arguments("/r", {"cores": "2"}, ["/ccache=/home/me/cc", "/run/binfmt"])
+    options = _server_options("/r", {"cores": "2"}, ["/ccache=/home/me/cc", "/run/binfmt"])
 
-    assert arguments == [
-        "--overlay",
-        "/r",
-        "--load-config",
-        "--option",
-        "cores",
-        "2",
-        "--option",
-        "extra-sandbox-paths",
-        "/ccache=/home/me/cc /run/binfmt",
-    ]
+    assert options == ServerOptions(
+        settings={"cores": "2", "extra-sandbox-paths": "/ccache=/home/me/cc /run/binfmt"},
+        load_config=True,
+        overlay="/r",
+    )
 
 
 def test_a_configured_store_does_not_refuse_a_namespaced_build(

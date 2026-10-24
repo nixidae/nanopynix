@@ -25,6 +25,7 @@ import anyio.to_thread
 import huggorm
 import structlog
 from anyio import Path as AnyioPath
+from huggorm import ServerOptions, worker
 from huggorm.errors import NixError
 from huggorm.fod import (
     FodSourceUpdateError,
@@ -35,8 +36,7 @@ from huggorm.fod import (
     mismatch_is_target_fod,
     replace_fod_hash,
 )
-from huggorm.namespace import OverlayNamespace, remove_layers
-from huggorm.spawn import spawned
+from huggorm.namespace import remove_layers
 
 from nanopynix._typechecking import BEARTYPING
 from pynix import _evaluate
@@ -91,8 +91,8 @@ async def _overlay_root(overlay_dir: Path | None) -> AsyncGenerator[str]:
         await anyio.to_thread.run_sync(remove_layers, root)
 
 
-def _server_arguments(root: str, settings: Mapping[str, str], sandbox_paths: list[str]) -> list[str]:
-    """``huggorm.server``'s arguments for a build in an overlay under *root*.
+def _server_options(root: str, settings: Mapping[str, str], sandbox_paths: list[str]) -> ServerOptions:
+    """The huggorm worker's setup for a build in an overlay under *root*.
 
     The server reads nix.conf, then *settings*. A sandbox path goes to
     ``extra-sandbox-paths``, which appends: nix.conf carries
@@ -100,12 +100,11 @@ def _server_arguments(root: str, settings: Mapping[str, str], sandbox_paths: lis
     ``--sandbox-path`` had no ``/bin/sh`` when the list was replaced.
     Measured: a kernel's Kconfig runs ``sh`` for every ``$(shell)``.
     """
-    arguments = ["--overlay", root, "--load-config"]
-    for name, value in settings.items():
-        arguments += ["--option", name, value]
+    options = dict(settings)
     if sandbox_paths:
-        arguments += ["--option", "extra-sandbox-paths", " ".join(sandbox_paths)]
-    return arguments
+        given = [options["extra-sandbox-paths"]] if "extra-sandbox-paths" in options else []
+        options["extra-sandbox-paths"] = " ".join([*given, *sandbox_paths])
+    return ServerOptions(settings=options, load_config=True, overlay=root)
 
 
 async def _copy_outputs(
@@ -403,11 +402,11 @@ async def _build_namespaced(
     monitor = MonitorState(started=time.monotonic(), print_build_logs=command.print_build_logs) if command.nom else None
     copied: dict[str, Any] | None = None
     async with _overlay_root(command.overlay_dir) as root:
-        layout = OverlayNamespace.under(root)
-        async with (
-            spawned(*_server_arguments(root, settings, command.sandbox_path or [])) as socket,
-            huggorm.AsyncRemoteSession.connect(socket) as session,
-        ):
+        options = _server_options(root, settings, command.sandbox_path or [])
+        layout = options.overlay_namespace()
+        if layout is None:
+            raise RuntimeError("a namespaced build's worker has no overlay")
+        async with worker(options) as session:
             build_store = await session.store(layout.store_uri())
             if command.eval_store is None:
                 eval_store = build_store
