@@ -52,7 +52,6 @@ from _shared_sessions import FAITHFUL_SESSIONS_ENV_VAR, SharedSessions
 # here settles it. `nanopynix/tests/conftest.py` carries the same import and
 # the full account.
 from nanopynix_testing.nix_environment import anyio_backend as anyio_backend
-from nanopynix_testing.nix_runtime import configuration_settled
 from pynix import parse
 
 if TYPE_CHECKING:
@@ -420,7 +419,8 @@ def _host_nix_conf_stays_out() -> Iterator[None]:  # type: ignore[reportUnusedFu
     builders into every test after it. Module scope, so a module-scoped
     fixture that runs a command is covered as well.
     """
-    with configuration_settled():
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(pynix_util, "_config_loaded", True)
         yield
 
 
