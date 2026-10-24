@@ -1,9 +1,8 @@
 """Evaluate a command-line target on a huggorm evaluator.
 
-The huggorm half of :mod:`pynix.target`. That module keeps what reads no
-evaluator -- :class:`~pynix.target.FileReference`, its resolution and
-:class:`~pynix.target.EvaluationTarget` -- and this one does the evaluation.
-Issue #1051 moves each command here, one at a time.
+:mod:`pynix.target` keeps what reads no evaluator --
+:class:`~pynix.target.FileReference`, its resolution and
+:class:`~pynix.target.EvaluationTarget` -- and this module does the evaluation.
 """
 
 from __future__ import annotations

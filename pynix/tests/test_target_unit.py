@@ -1,107 +1,70 @@
-"""Direct unit tests for pynix.target's evaluation-target helpers.
+"""Direct unit tests for pynix.target and the evaluation in pynix._evaluate.
 
 Real CLI integration tests (test_build.py, test_eval.py, test_flake_show.py)
-only ever exercise evaluate_target/select_attr on their respective happy
-paths. These dumb coverage tests pin down the auto_call_file=False branch,
-the attrpath-with-empty-component guard, and evaluate_target's
-already-validate()-guarded "no target" branch (kept as defense in depth, so
-still worth pinning even though it's unreachable through the public
-validate()-first call path).
+only ever exercise evaluate_target on their respective happy paths. These
+tests pin down the auto_call_file=False branch, the fragment and --attr
+together, and evaluate_target's already-validate()-guarded "no target" branch
+(kept as defense in depth, so still worth pinning even though it's unreachable
+through the public validate()-first call path).
 """
-
-# ruff: noqa: ASYNC109
-# The doubles below subclass real ValueProxy/EvalSession/ReplSession
-# classes, whose async methods take a `timeout` keyword; an override has
-# to keep it. Same exemption, same reason as
-# nanopynix/rpc/client/_session.py, where the real signatures live.
 
 from __future__ import annotations
 
 import io
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
+import huggorm
 import pytest
+from huggorm.errors import ThrownError
 
-import nanopynix
-from nanopynix.exceptions import ThrownError
-from nanopynix.rpc import EvalSession, ValueProxy
-from nanopynix.settings import NixFlakeSettings
-from pynix.target import (
-    CONFIGURATION_KINDS,
-    EvaluationTarget,
-    EvaluationTargetError,
-    FileReference,
+from pynix._evaluate import (
     app_attr_search,
     base_attr_search,
-    configuration_message,
     dev_shell_attr_search,
     evaluate_target,
     formatter_attr_search,
     open_file_reference,
     repl_attr_search,
+    to_python,
+)
+from pynix.target import (
+    CONFIGURATION_KINDS,
+    EvaluationTarget,
+    EvaluationTargetError,
+    FileReference,
+    configuration_message,
     resolve_file_reference,
-    select_attr,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
-# These doubles subclass the real classes rather than duck-typing them, so
-# that beartype's `isinstance` checks on annotated parameters accept them.
-# Subclassing means their signatures have to *match*, hence the `timeout`
-# keyword each one accepts and ignores: a double that quietly dropped an
-# argument its caller passes would not be standing in for anything.
-class _FakeValue(ValueProxy):
-    def __init__(self, attrs: dict[str, _FakeValue] | None = None, *, auto_called: bool = False) -> None:
-        self._attrs = attrs or {}
-        self.auto_called = auto_called
-
-    async def has_attr(self, name: str, *, timeout: float | None = None) -> bool:
-        return name in self._attrs
-
-    async def attr_names(self, *, timeout: float | None = None) -> list[str]:
-        return list(self._attrs)
-
-    def attr(self, name: str, *, timeout: float | None = None) -> _FakeValue:
-        return self._attrs[name]
-
-    async def auto_call(self, *, timeout: float | None = None) -> _FakeValue:
-        return _FakeValue(self._attrs, auto_called=True)
+    from huggorm import AsyncEvalState, AsyncValue
 
 
-class _FakeSession(EvalSession):
-    def __init__(self, file_value: _FakeValue | None = None) -> None:
-        self._file_value = file_value
-
-    async def file(self, path: str, *, timeout: float | None = None) -> _FakeValue:
-        if self._file_value is None:
-            raise AssertionError("file() not expected")
-        return self._file_value
-
-    async def eval_flake(
-        self,
-        ref: str,
-        *,
-        write_lock_file: bool = True,
-        flake_settings: NixFlakeSettings | None = None,
-        timeout: float | None = None,
-    ) -> _FakeValue:
-        raise AssertionError("eval_flake() not expected")
+@pytest.fixture
+async def state() -> AsyncGenerator[AsyncEvalState]:
+    """An evaluator over `dummy://`: these tests read local files and copy nothing."""
+    async with huggorm.AsyncSession("dummy://") as session:
+        yield session.eval(session.store())
 
 
-async def test_evaluate_target_with_a_file_skips_auto_call_by_default() -> None:
-    target = EvaluationTarget(file="x.nix", attr=None, flake=None)
-    value = _FakeValue()
-    session = _FakeSession(file_value=value)
+async def test_evaluate_target_with_a_file_skips_auto_call_by_default(
+    state: AsyncEvalState, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "x.nix").write_text("{ x ? 1 }: { a = x; }")
+    target = EvaluationTarget(file="./x.nix", attr=None, flake=None)
 
-    result = await evaluate_target(target, session)
+    result = await evaluate_target(target, state)
 
-    assert result is value
-    assert not value.auto_called
+    assert await result.is_lambda()
 
 
 async def test_evaluate_target_raises_if_flake_is_missing_after_bypassing_validate(
-    monkeypatch: pytest.MonkeyPatch,
+    state: AsyncEvalState, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """validate(required=True) always runs first in practice and would
     already raise "either --file or --flake is required" before this branch;
@@ -115,14 +78,7 @@ async def test_evaluate_target_raises_if_flake_is_missing_after_bypassing_valida
     monkeypatch.setattr(EvaluationTarget, "validate", _no_op_validate)
 
     with pytest.raises(EvaluationTargetError, match="either --file or --flake is required"):
-        await evaluate_target(target, _FakeSession())
-
-
-async def test_select_attr_rejects_an_empty_attrpath_component() -> None:
-    value: Any = _FakeValue({"a": _FakeValue()})
-
-    with pytest.raises(EvaluationTargetError, match="empty component"):
-        await select_attr(value, "a..b")
+        await evaluate_target(target, state)
 
 
 # --- resolve_file_reference -------------------------------------------------
@@ -317,17 +273,17 @@ async def test_the_target_resolves_its_own_file(tmp_path: Path, monkeypatch: pyt
     assert await EvaluationTarget(file=None, attr=None, flake="x").file_reference() is None
 
 
-async def test_a_fragment_selects_after_the_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The fragment reaches select_attr, and --attr still applies on top."""
+async def test_a_fragment_selects_after_the_file(
+    state: AsyncEvalState, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fragment selects first, and --attr still applies on top."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "default.nix").write_text("{ }")
-    leaf = _FakeValue()
-    root = _FakeValue({"a": _FakeValue({"b": leaf})})
+    (tmp_path / "default.nix").write_text("{ a.b = 42; }")
 
     target = EvaluationTarget(file="default.nix#a", attr="b", flake=None)
-    result = await evaluate_target(target, _FakeSession(file_value=root))
+    result = await evaluate_target(target, state)
 
-    assert result is leaf
+    assert await to_python(result) == 42
 
 
 # --- the attribute-path search of each command ------------------------------
@@ -339,7 +295,7 @@ async def test_a_fragment_selects_after_the_file(tmp_path: Path, monkeypatch: py
 
 
 def test_the_base_search_matches_source_expr_command() -> None:
-    system = nanopynix.current_system()
+    system = huggorm.current_system()
     search = base_attr_search()
 
     assert search.prefixes == (f"packages.{system}.", f"legacyPackages.{system}.")
@@ -347,7 +303,7 @@ def test_the_base_search_matches_source_expr_command() -> None:
 
 
 def test_the_dev_shell_search_puts_dev_shells_in_front() -> None:
-    system = nanopynix.current_system()
+    system = huggorm.current_system()
     search = dev_shell_attr_search()
 
     assert search.prefixes == (
@@ -364,7 +320,7 @@ def test_the_dev_shell_search_puts_dev_shells_in_front() -> None:
 
 
 def test_the_app_search_puts_apps_in_front() -> None:
-    system = nanopynix.current_system()
+    system = huggorm.current_system()
     search = app_attr_search()
 
     assert search.prefixes[0] == f"apps.{system}."
@@ -374,7 +330,7 @@ def test_the_app_search_puts_apps_in_front() -> None:
 
 
 def test_the_formatter_search_has_no_prefix() -> None:
-    system = nanopynix.current_system()
+    system = huggorm.current_system()
     search = formatter_attr_search()
 
     assert search.prefixes == ()
@@ -405,20 +361,17 @@ def test_the_repl_search_defaults_to_the_root() -> None:
 
 def _search_path_miss(name: str) -> ThrownError:
     """The error `EvalState::findFile` raises when the lookup path has no *name*."""
-    return ThrownError(
-        "ThrownError",
-        f"error: file '{name}' was not found in the Nix search path (add it using $NIX_PATH or -I)",
-    )
+    return ThrownError(f"error: file '{name}' was not found in the Nix search path (add it using $NIX_PATH or -I)")
 
 
 class _RecordingOpener:
     """An opener that answers from a table, and remembers what it was asked."""
 
-    def __init__(self, answers: dict[str, _FakeValue | Exception]) -> None:
+    def __init__(self, answers: dict[str, AsyncValue | Exception]) -> None:
         self.answers = answers
         self.asked: list[str] = []
 
-    async def __call__(self, candidate: str) -> _FakeValue:
+    async def __call__(self, candidate: str) -> AsyncValue:
         self.asked.append(candidate)
         answer = self.answers.get(candidate)
         if answer is None:
@@ -428,21 +381,22 @@ class _RecordingOpener:
         return answer
 
 
-async def test_the_lookup_path_answers_before_the_registry() -> None:
-    value = _FakeValue()
-    opener = _RecordingOpener({"<nixpkgs>": value})
-    reference = FileReference(arguments=("<nixpkgs>", "flake:nixpkgs"), fragment=None, local_path=None)
+_BARE_NAME = FileReference(arguments=("<nixpkgs>", "flake:nixpkgs"), fragment=None, local_path=None)
 
-    assert await open_file_reference(reference, opener) is value
+
+async def test_the_lookup_path_answers_before_the_registry(state: AsyncEvalState) -> None:
+    value = await state.eval_expr("1")
+    opener = _RecordingOpener({"<nixpkgs>": value})
+
+    assert await open_file_reference(_BARE_NAME, opener) is value
     assert opener.asked == ["<nixpkgs>"]
 
 
-async def test_the_registry_answers_when_the_lookup_path_has_no_such_name() -> None:
-    value = _FakeValue()
+async def test_the_registry_answers_when_the_lookup_path_has_no_such_name(state: AsyncEvalState) -> None:
+    value = await state.eval_expr("1")
     opener = _RecordingOpener({"flake:nixpkgs": value})
-    reference = FileReference(arguments=("<nixpkgs>", "flake:nixpkgs"), fragment=None, local_path=None)
 
-    assert await open_file_reference(reference, opener) is value
+    assert await open_file_reference(_BARE_NAME, opener) is value
     assert opener.asked == ["<nixpkgs>", "flake:nixpkgs"]
 
 
@@ -453,21 +407,19 @@ async def test_a_found_name_that_fails_to_evaluate_keeps_its_own_error() -> None
     path holds and whose file then rejects its arguments must report that, and
     not a message about a flake.
     """
-    opener = _RecordingOpener({"<nixpkgs>": ThrownError("ThrownError", "error: this expression refuses to evaluate")})
-    reference = FileReference(arguments=("<nixpkgs>", "flake:nixpkgs"), fragment=None, local_path=None)
+    opener = _RecordingOpener({"<nixpkgs>": ThrownError("error: this expression refuses to evaluate")})
 
     with pytest.raises(ThrownError, match="refuses to evaluate"):
-        await open_file_reference(reference, opener)
+        await open_file_reference(_BARE_NAME, opener)
 
     assert opener.asked == ["<nixpkgs>"]
 
 
 async def test_the_last_error_survives_when_no_candidate_answers() -> None:
     opener = _RecordingOpener({})
-    reference = FileReference(arguments=("<nixpkgs>", "flake:nixpkgs"), fragment=None, local_path=None)
 
     with pytest.raises(ThrownError, match="Nix search path"):
-        await open_file_reference(reference, opener)
+        await open_file_reference(_BARE_NAME, opener)
 
     assert opener.asked == ["<nixpkgs>", "flake:nixpkgs"]
 

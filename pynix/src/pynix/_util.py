@@ -29,8 +29,9 @@ if TYPE_CHECKING or BEARTYPING:
     from collections.abc import AsyncGenerator, Mapping
 
     from huggorm import AsyncEvalState, LogRecord
-    from nanopynix_helpers import EvaluationTargetError
     from structlog.typing import EventDict, WrappedLogger
+
+    from pynix.target import EvaluationTargetError
 
 _LOG_LINE_RESULTS = frozenset({huggorm.ResultType.BUILD_LOG_LINE, huggorm.ResultType.POST_BUILD_LOG_LINE})
 # nom redraws on every event; four times a second shows the same thing.

@@ -56,9 +56,9 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from nanopynix._typechecking import BEARTYPING
 
-# `or BEARTYPING`, for the reason `nanopynix_helpers.attr_completion` gives:
-# beartype resolves an annotation at call time, and a name that only a type
-# checker imported is not there to resolve.
+# `or BEARTYPING`: beartype resolves an annotation at call time, and a name
+# that only a type checker imported is not there to resolve. Without it, each
+# call fails with `BeartypeCallHintForwardRefException`.
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 
@@ -393,7 +393,7 @@ def _flake_search(name: FlakeSearch) -> AttrPathSearch:
 
     ``"exact"`` is the empty search, which reads the fragment as one path and
     applies no prefix. ``pynix search`` passes no search to
-    :func:`~pynix.target.evaluate_target`, and that is what no search means.
+    :func:`~pynix._evaluate.evaluate_target`, and that is what no search means.
     """
     # Imported here for the reason `_names` gives.
     from huggorm.attrpath import AttrPathSearch  # noqa: PLC0415 -- see `_names`

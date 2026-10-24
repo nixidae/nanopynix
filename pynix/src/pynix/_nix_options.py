@@ -19,8 +19,8 @@ keeps that true.
 build F#<TAB>`` does not, because the two commands override
 `getDefaultFlakeAttrPathPrefixes` differently. So :func:`flake_option` takes
 the name of the search, and a command module passes the one it already passes
-to :func:`~pynix.target.evaluate_target` at run time. A name and not the search
-itself: building one means importing ``pynix.target``, which is the 101 ms that
+to :func:`~pynix._evaluate.evaluate_target` at run time. A name and not the search
+itself: building one means importing ``pynix._evaluate``, which is the 101 ms that
 this module exists to keep off a start that evaluates nothing.
 """
 
