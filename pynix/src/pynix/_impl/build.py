@@ -7,13 +7,11 @@ on every start, and none of these imports is needed to list an option.
 
 from __future__ import annotations
 
-import contextlib
 import difflib
 import functools
-import shutil
 import tempfile
 import time
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 # A real import, not a TYPE_CHECKING one: `libpynix` resolves the annotations
@@ -37,7 +35,8 @@ from huggorm.fod import (
     mismatch_is_target_fod,
     replace_fod_hash,
 )
-from nanopynix_helpers.build import FodBuildError, build_with_fod_update
+from huggorm.namespace import OverlayNamespace, remove_layers
+from huggorm.spawn import spawned
 
 import nanopynix
 from nanopynix._typechecking import BEARTYPING
@@ -49,8 +48,8 @@ from pynix._util import (
     configured_nix_settings,
     error_console,
     error_exit,
+    forward_state_logs,
     huggorm_build_session,
-    nix_session,
     print_json,
     record_message,
     report_and_exit,
@@ -58,25 +57,17 @@ from pynix._util import (
 from pynix.build import Build
 
 if TYPE_CHECKING or BEARTYPING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Mapping
 
-    from huggorm import AsyncEvalState, AsyncSession, AsyncStore, AsyncValue, CapturedLogs
+    from huggorm import AsyncEvalState, AsyncRemoteSession, AsyncSession, AsyncStore, AsyncValue, CapturedLogs
     from huggorm.fod import FodHashMismatch
-
-    # The protocol, and not one engine's class, for the reason
-    # `nanopynix_helpers.build` gives. Issue #232.
-    from nanopynix.protocols import AsyncValue as ValueProxy
 from pynix.target import (
     EvaluationTarget,
     EvaluationTargetError,
-    base_attr_search,
-    configuration_kind,
     configuration_message,
-    evaluate_target,
 )
 
 logger = structlog.get_logger("pynix.build")
-#: Explicitly the daemon, never "auto" -- see _promote_to_host_store.
 _HOST_STORE_URI = "daemon"
 _MAX_FOD_UPDATES = 10
 #: Nix logs the cause of a failed dependency, such as a hash mismatch, as an error.
@@ -84,98 +75,55 @@ _CAUSE_LEVEL = int(huggorm.Verbosity.WARN)
 
 
 @asynccontextmanager
-async def _overlay_namespace(
-    enabled: bool,
-    overlay_dir: Path | None,
-) -> AsyncGenerator[nanopynix.OverlayNamespace | None]:
-    """Yield the overlay layout for this build, and clean it up if it is ours.
+async def _overlay_root(overlay_dir: Path | None) -> AsyncGenerator[str]:
+    """The directory this build's overlay layers live under.
 
     A directory the user named survives, which is the point of naming one. An
     unnamed one is temporary and goes away with the build.
     """
-    if not enabled:
-        yield None
-        return
-
     if overlay_dir is not None:
         await AnyioPath(overlay_dir).mkdir(parents=True, exist_ok=True)
-        yield nanopynix.OverlayNamespace.under(overlay_dir)
+        yield str(overlay_dir)
         return
-
     root = await anyio.to_thread.run_sync(functools.partial(tempfile.mkdtemp, prefix="pynix-overlay-"))
     try:
-        yield nanopynix.OverlayNamespace.under(root)
+        yield root
     finally:
-        await anyio.to_thread.run_sync(_force_rmtree, root)
+        await anyio.to_thread.run_sync(remove_layers, root)
 
 
-def _force_rmtree(root: str) -> None:
-    """Remove *root*, including the read-only directories a store leaves.
+def _server_arguments(root: str, settings: Mapping[str, str], sandbox_paths: list[str]) -> list[str]:
+    """``huggorm.server``'s arguments for a build in an overlay under *root*.
 
-    Store directories are ``r-xr-xr-x``, and removing what is inside one needs
-    the write bit on the directory itself. This process owns them, because the
-    namespace mapped it to root, so it can put the bit back.
+    The server reads nix.conf, then *settings*. A sandbox path goes to
+    ``extra-sandbox-paths``, which appends: nix.conf carries
+    ``/bin/sh=<busybox>`` in ``sandbox-paths``, and a build with any
+    ``--sandbox-path`` had no ``/bin/sh`` when the list was replaced.
+    Measured: a kernel's Kconfig runs ``sh`` for every ``$(shell)``.
     """
-    for dirpath, dirnames, _ in Path(root).walk():
-        for name in dirnames:
-            with contextlib.suppress(OSError):
-                (dirpath / name).chmod(0o700)
-    shutil.rmtree(root, ignore_errors=True)
+    arguments = ["--overlay", root, "--load-config"]
+    for name, value in settings.items():
+        arguments += ["--option", name, value]
+    if sandbox_paths:
+        arguments += ["--option", "extra-sandbox-paths", " ".join(sandbox_paths)]
+    return arguments
 
 
-async def _promote_to_host_store(nix: Any, store: Any, outputs: dict[str, str]) -> None:
-    """Copy the outputs of a namespaced build into the host store.
+async def _copy_outputs(
+    store: AsyncStore, destination: AsyncStore, outputs: dict[str, str], uri: str
+) -> dict[str, Any]:
+    """Copy the closure of *outputs* from *store* to *destination*, which *uri* names, and report what arrived.
 
-    ``daemon`` by name rather than ``auto``. The worker is root inside its own
-    user namespace, so ``auto`` would resolve to a *local* store at
-    ``/nix/store`` -- which is the overlay mount, not the host store.
-
-    Signature checking is off because these paths were built here a moment ago
-    and nothing has signed them. The daemon still decides: it accepts unsigned
-    paths from a trusted user and refuses them otherwise.
-    """
-    paths = sorted(set(outputs.values()))
-    if not paths:
-        return
-    async with nix.store(_HOST_STORE_URI) as host:
-        logger.info("pynix build promoting outputs to the host store", paths=len(paths))
-        await store.copy_closure(paths, host, check_sigs=False)
-
-
-async def _copy_outputs(session: AsyncSession, store: AsyncStore, outputs: dict[str, str], uri: str) -> dict[str, Any]:
-    """Copy the closure of *outputs* from *store* to *uri*, and report what arrived.
-
-    Signature checking is off for the reason ``_promote_to_host_store`` gives,
-    and the destination still decides. A path that it refuses quietly is
-    caught by :func:`pynix._impl.copy.copy_verified`.
+    Signature checking is off because these paths were built here a moment
+    ago and nothing has signed them. The destination still decides: a daemon
+    accepts unsigned paths from a trusted user and refuses them otherwise. A
+    path that it refuses quietly is caught by
+    :func:`pynix._impl.copy.copy_verified`.
     """
     requested = sorted(set(outputs.values()))
     closure = await closure_of(store, requested)
-    ends = StoreEnds(store, session.store(uri), check_sigs=False)
+    ends = StoreEnds(store, destination, check_sigs=False)
     present, arrived = await copy_verified(ends, requested, closure, uri)
-    return {"to": uri, "copied": arrived, "alreadyPresent": present}
-
-
-@dataclass(frozen=True, slots=True)
-class _NanopynixEnds:
-    """:class:`pynix._impl.copy.StoreEnds` on nanopynix's stores, for ``--namespaced``."""
-
-    source: Any
-    destination: Any
-
-    async def present(self, paths: list[str]) -> list[str]:
-        return sorted([path for path in paths if await self.destination.is_valid_path(path)])
-
-    async def copy(self, paths: list[str]) -> None:
-        await self.source.copy_closure(paths, self.destination, check_sigs=False)
-
-
-async def _copy_outputs_on_nanopynix(nix: Any, store: Any, outputs: dict[str, str], uri: str) -> dict[str, Any]:
-    """:func:`_copy_outputs` on nanopynix's stores."""
-    requested = sorted(set(outputs.values()))
-    closure = sorted({str(member) for path in requested for member in await store.compute_fs_closure(path)})
-    async with nix.store(uri) as destination:
-        present, arrived = await copy_verified(_NanopynixEnds(store, destination), requested, closure, uri)
     return {"to": uri, "copied": arrived, "alreadyPresent": present}
 
 
@@ -193,22 +141,6 @@ async def _require_a_local_file(target: EvaluationTarget) -> None:
         error_exit("--update-fod requires --file to name a local file")
 
 
-async def _evaluate_build_target_on_nanopynix(target: EvaluationTarget, session: Any) -> ValueProxy:
-    try:
-        root = await evaluate_target(target, session, auto_call_file=True, attr_search=base_attr_search())
-    except EvaluationTargetError as exc:
-        raise BuildTargetError(str(exc)) from exc
-    # **Before the build, and not after it.** Nix answers a configuration with
-    # `selected value is not a derivation`, which is true and is the end of the
-    # road: it says neither what the value is nor which path would work. The
-    # test costs two attribute reads, and only a value that is an attribute set
-    # reaches even the first one.
-    kind = await configuration_kind(root)
-    if kind is not None:
-        raise BuildTargetError(configuration_message(kind, target.selected_attr()))
-    return root
-
-
 class BuildTargetError(EvaluationTargetError):
     pass
 
@@ -217,7 +149,7 @@ class BuildTargetError(EvaluationTargetError):
 class BuildSession:
     """A huggorm evaluator, and the two stores that a build reads and writes."""
 
-    session: AsyncSession
+    session: AsyncSession | AsyncRemoteSession
     build_store: AsyncStore
     evaluation_store: AsyncStore
     state: AsyncEvalState
@@ -230,7 +162,11 @@ async def _evaluate_build_target(target: EvaluationTarget, state: AsyncEvalState
         )
     except EvaluationTargetError as exc:
         raise BuildTargetError(str(exc)) from exc
-    # Before the build, for the reason `_evaluate_build_target_on_nanopynix` gives.
+    # **Before the build, and not after it.** Nix answers a configuration with
+    # `selected value is not a derivation`, which is true and is the end of the
+    # road: it says neither what the value is nor which path would work. The
+    # test costs two attribute reads, and only a value that is an attribute set
+    # reaches even the first one.
     kind = await _evaluate.configuration_kind(state, root)
     if kind is not None:
         raise BuildTargetError(configuration_message(kind, target.selected_attr()))
@@ -382,106 +318,16 @@ async def _build_on_huggorm(
         logger.info("pynix build finished")
         copied = None
         if command.copy is not None and outputs:
-            copied = await _copy_outputs(session, build_store, outputs, command.copy)
+            copied = await _copy_outputs(build_store, session.store(command.copy), outputs, command.copy)
     return outputs, updates, copied
 
 
-async def _build_target_on_nanopynix(  # noqa: PLR0913 -- tracked complexity/arg-count debt, see TODO.md
-    target: EvaluationTarget,
-    session: Any,
-    *,
-    nix: Any,
-    evaluation_store: Any,
-    build_store: Any = None,
-    update_fod: bool,
-    dry_run: bool,
-    monitor: MonitorState | None = None,
-) -> tuple[dict[str, str], int]:
-    """Build a target, applying only unambiguous plain-string FOD updates."""
-
-    async def _evaluate() -> ValueProxy:
-        root = await _evaluate_build_target_on_nanopynix(target, session)
-        logger.info("pynix build target evaluated")
-        if monitor is not None:
-            monitor.plan = await _plan_or_none_on_nanopynix(evaluation_store, build_store or evaluation_store, root)
-        return root
-
-    # The local file, and not the raw argument. --update-fod rewrites the hash
-    # in the source, so a fetched tree in the store and a lookup path have no
-    # file to rewrite. `run()` refuses both before it reaches this point.
-    reference = await target.file_reference()
-    source_file = reference.local_path if reference is not None else None
-
-    try:
-        return await build_with_fod_update(
-            _evaluate,
-            nix=nix,
-            eval_session=session,
-            evaluation_store=evaluation_store,
-            build_store=build_store,
-            update_fod=update_fod,
-            source_file=source_file,
-            dry_run=dry_run,
-            on_hash_update=_print_diff,
-        )
-    except FodBuildError as exc:
-        raise BuildTargetError(str(exc)) from exc
-
-
-async def plan_build(evaluation_store: Any, build_store: Any, drv_path: str) -> BuildPlan:
-    """What building ``drv_path`` will do, as the tree nom draws.
-
-    A node is a derivation to build, or one whose outputs will be downloaded.
-    Its children are its inputs that are nodes too. This reads the ``.drv`` of
-    each build, and of each input a build does not build, which is how a
-    download is tied to the derivation that produced it. nom reads the same
-    files as the builds start; reading them first also gives the totals.
-    """
-    missing = await build_store.query_missing([f"{drv_path}^*"])
-    builds = frozenset(str(p) for p in missing.will_build)
-    downloads = frozenset(str(p) for p in missing.will_substitute)
-    derivations: dict[str, Any] = {}
-
-    async def read(path: str) -> Any:
-        if path not in derivations:
-            derivations[path] = await evaluation_store.read_derivation(path)
-        return derivations[path]
-
-    def output_paths(derivation: Any) -> frozenset[str]:
-        return frozenset(o.path for o in derivation.outputs.values() if o.path)
-
-    children: dict[str, tuple[str, ...]] = {}
-    outputs: dict[str, frozenset[str]] = {}
-    for node in (drv_path, *sorted(builds - {drv_path})):
-        derivation = await read(node)
-        outputs[node] = output_paths(derivation)
-        kids: list[str] = []
-        for input_drv in derivation.input_drvs:
-            if input_drv in builds:
-                kids.append(input_drv)
-            elif downloads and (input_outputs := output_paths(await read(input_drv))) & downloads:
-                outputs[input_drv] = input_outputs
-                kids.append(input_drv)
-        children[node] = tuple(kids)
-    return BuildPlan(roots=(drv_path,), children=children, outputs=outputs, builds=builds, downloads=downloads)
-
-
-async def _plan_or_none_on_nanopynix(evaluation_store: Any, build_store: Any, root: ValueProxy) -> BuildPlan | None:
-    """The plan of ``root``, or None, which leaves the monitor a flat list.
+async def _plan_or_none(build: BuildSession, drv_path: str) -> BuildPlan | None:
+    """The plan of *drv_path*, or None, which leaves the monitor a flat list.
 
     A missing plan costs the tree and nothing else, so an error here must not
     stop the build.
     """
-    try:
-        drv_path = await root.attr("drvPath").as_string()
-        return await plan_build(evaluation_store, build_store, drv_path)
-    except nanopynix.NixError as exc:
-        logger.warning("pynix build could not plan the dependency graph", error=str(exc))
-        return None
-
-
-async def _plan_or_none(build: BuildSession, drv_path: str) -> BuildPlan | None:
-    """:func:`_plan_or_none_on_nanopynix` on huggorm."""
     try:
         return await _plan(build, drv_path)
     except NixError as exc:
@@ -502,20 +348,6 @@ def _print_diff(path: Path, before: str, after: str) -> None:
         markup=False,
         highlight=False,
         end="",
-    )
-
-
-async def _add_sandbox_paths(nix: Any, paths: list[str]) -> None:
-    """Add *paths* to the worker's ``sandbox-paths``, after what nix.conf set.
-
-    Added, never replacing: nix.conf carries ``/bin/sh=<busybox>`` there,
-    and a build with any ``--sandbox-path`` had no ``/bin/sh``. Measured: a
-    kernel's Kconfig runs ``sh`` for every ``$(shell)`` and failed on it.
-    Written before a store opens, because a store reads its settings once.
-    """
-    configured = (await nix.settings()).get("sandbox-paths", "").split()
-    await nix.set_settings(
-        nanopynix.NixGlobalSettings(sandbox_paths=[*configured, *(p for p in paths if p not in configured)])
     )
 
 
@@ -543,11 +375,8 @@ async def run_build(command: Build) -> None:
     # Outside the session, so the error passes through its log forwarding:
     # --nom counts it in the last frame, and the message prints after that.
     try:
-        # A namespaced build still runs on nanopynix: issue #1051.
         if namespaced:
-            outputs, updates, copied = await _build_in_session(
-                command, target, namespaced=namespaced, settings=settings
-            )
+            outputs, updates, copied = await _build_namespaced(command, target, settings)
         else:
             outputs, updates, copied = await _build_on_huggorm(command, target, settings)
     except BuildTargetError as exc:
@@ -559,81 +388,54 @@ async def run_build(command: Build) -> None:
     print_json(report)
 
 
-async def _build_in_session(
-    command: Build,
-    target: EvaluationTarget,
-    *,
-    namespaced: bool,
-    settings: dict[str, str],
+async def _build_namespaced(
+    command: Build, target: EvaluationTarget, settings: dict[str, str]
 ) -> tuple[dict[str, str], int, dict[str, Any] | None]:
+    """Build in a huggorm server in its own user namespace, over an overlay store.
+
+    The server is a process of its own because ``unshare`` needs a
+    single-threaded process, and this one has threads. Its stderr is this
+    command's, so the reason it fails to start reaches the user.
+    """
+    monitor = MonitorState(started=time.monotonic(), print_build_logs=command.print_build_logs) if command.nom else None
     copied: dict[str, Any] | None = None
-    async with AsyncExitStack() as stack:
-        namespace = await stack.enter_async_context(_overlay_namespace(namespaced, command.overlay_dir))
-        # Passed only when there is one, which is the convention
-        # nix_session documents: the test suite substitutes a double for
-        # it, and a keyword that is always present makes every such double
-        # wrong even for the ordinary build that never wanted a namespace.
-        session_kwargs: dict[str, Any] = {} if namespace is None else {"namespace": namespace}
-        monitor = (
-            MonitorState(started=time.monotonic(), print_build_logs=command.print_build_logs) if command.nom else None
-        )
-        if monitor is not None:
-            session_kwargs["monitor"] = monitor
-        nix = await stack.enter_async_context(
-            nix_session(
-                settings=nanopynix.NixSettings.model_validate(settings),
+    async with _overlay_root(command.overlay_dir) as root:
+        layout = OverlayNamespace.under(root)
+        async with (
+            spawned(*_server_arguments(root, settings, command.sandbox_path or [])) as socket,
+            huggorm.AsyncRemoteSession.connect(socket) as session,
+        ):
+            build_store = await session.store(layout.store_uri())
+            if command.eval_store is None:
+                eval_store = build_store
+                state = await session.eval(eval_store)
+            else:
+                eval_store = await session.store(command.eval_store)
+                state = await session.eval(eval_store, None, build_store)
+            async with forward_state_logs(
+                session,
+                state,
                 verbosity=command.verbosity,
                 print_build_logs=command.print_build_logs,
-                **session_kwargs,
-            )
-        )
-        if command.sandbox_path:
-            await _add_sandbox_paths(nix, command.sandbox_path)
-        # None, not "auto", when namespaced: the session already defaults
-        # to its overlay store, and naming "auto" here would open a
-        # different store instead.
-        store_uri = None if namespaced else command.store
-        promote = namespaced and command.copy_back
-        if command.eval_store is None:
-            async with nix.store(store_uri) as store:
-                async with nix.eval(store) as session:
-                    logger.info("pynix build evaluating target")
-                    outputs, updates = await _build_target_on_nanopynix(
-                        target,
-                        session,
-                        nix=nix,
-                        evaluation_store=store,
-                        update_fod=command.update_fod,
-                        dry_run=command.dry_run,
-                        monitor=monitor,
-                    )
-                logger.info("pynix build finished")
-                if promote:
-                    await _promote_to_host_store(nix, store, outputs)
-                if command.copy is not None and outputs:
-                    copied = await _copy_outputs_on_nanopynix(nix, store, outputs, command.copy)
-        else:
-            async with (
-                nix.store(command.eval_store) as eval_store,
-                nix.store(store_uri) as build_store,
+                monitor=monitor,
             ):
-                async with nix.eval(eval_store) as session:
-                    logger.info("pynix build evaluating target")
-                    outputs, updates = await _build_target_on_nanopynix(
-                        target,
-                        session,
-                        nix=nix,
-                        evaluation_store=eval_store,
-                        build_store=build_store,
-                        update_fod=command.update_fod,
-                        dry_run=command.dry_run,
-                        monitor=monitor,
-                    )
+                logger.info("pynix build evaluating target")
+                outputs, updates = await _build_target(
+                    target,
+                    BuildSession(session, build_store, eval_store, state),
+                    update_fod=command.update_fod,
+                    dry_run=command.dry_run,
+                    monitor=monitor,
+                )
                 logger.info("pynix build finished")
-                if promote:
-                    await _promote_to_host_store(nix, build_store, outputs)
+                # The host store by name: in the namespace the server is root,
+                # so "auto" would open the overlay at /nix/store instead.
+                if command.copy_back and outputs:
+                    host = await session.store(_HOST_STORE_URI)
+                    await _copy_outputs(build_store, host, outputs, _HOST_STORE_URI)
                 if command.copy is not None and outputs:
-                    copied = await _copy_outputs_on_nanopynix(nix, build_store, outputs, command.copy)
+                    destination = await session.store(command.copy)
+                    copied = await _copy_outputs(build_store, destination, outputs, command.copy)
     return outputs, updates, copied
 
 

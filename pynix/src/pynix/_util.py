@@ -449,7 +449,7 @@ async def build_derivation(
 @asynccontextmanager
 @no_runtime_type_check  # log_file is duck-typed against TextIO -- see configure_logging above.
 async def forward_state_logs(  # noqa: PLR0913 -- keyword-only, one per forwarding option, as forward_nix_logs
-    session: huggorm.AsyncSession,
+    session: huggorm.AsyncSession | huggorm.AsyncRemoteSession,
     state: AsyncEvalState | None,
     *,
     verbosity: VerbosityInput | None = None,
