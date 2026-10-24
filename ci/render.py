@@ -1,4 +1,4 @@
-"""Render ci/workflows/*.nix into .github/workflows/*.yml with nanopynix.
+"""Render ci/workflows/*.nix into .github/workflows/*.yml with huggorm.
 
 Run with::
 
@@ -30,8 +30,8 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from nanopynix import to_yaml
-from nanopynix.rpc import EvalSession, Session
+import huggorm
+import yaml
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -111,21 +111,34 @@ def order_keys(value: Any) -> Any:
     return value
 
 
-async def render_workflow(eval_: EvalSession, nix_file: Path) -> str:
-    """Render one workflow, through JSON rather than through ``toYAML``.
+class _BlockStyleDumper(yaml.CSafeDumper):
+    """Writes a string with a newline as a literal block (``|``), so a shell
+    script in a step stays readable."""
 
-    ``builtins.toYAML`` renders a Nix value in one call and would be the
-    shorter route. It is not used here, because the Nix value reaches the
-    primop in interning order and ``to_yaml`` passes ``sort_keys=False`` --
-    which is right for the primop, since a Kubernetes manifest wants
-    ``apiVersion`` and ``kind`` first, and wrong for a file a person reviews.
 
-    ``builtins.toJSON`` is one call as well, and it sorts. So this reads the
-    workflow as a Python value, orders it, and hands it to the same public
-    ``to_yaml`` that backs the primop, so the formatting is unchanged.
+def _represent_str(dumper: _BlockStyleDumper, data: str) -> yaml.Node:
+    return dumper.represent_scalar(  # type: ignore[reportUnknownMemberType] -- PyYAML's stubs leave `value` untyped
+        "tag:yaml.org,2002:str", data, style="|" if "\n" in data else None
+    )
+
+
+_BlockStyleDumper.add_representer(str, _represent_str)
+
+
+def to_yaml(document: Any) -> str:
+    """*document* as YAML, in the key order it already has."""
+    return yaml.dump(document, sort_keys=False, Dumper=_BlockStyleDumper)
+
+
+async def render_workflow(state: huggorm.AsyncEvalState, nix_file: Path) -> str:
+    """Render one workflow, through JSON.
+
+    ``builtins.toJSON`` sorts the names. This reads the workflow as a Python
+    value, orders it with :func:`order_keys`, and writes it as YAML.
     """
-    value = await eval_.string(f"builtins.toJSON (import {nix_file})")
-    document = json.loads(await value.as_string())
+    value = await state.eval_expr(f"builtins.toJSON (import {nix_file})")
+    await state.force(value)
+    document = json.loads(await value.string_value())
     return to_yaml(order_keys(document))
 
 
@@ -189,19 +202,14 @@ async def render_workflows() -> dict[Path, str]:
 
 
 async def _render_workflows() -> dict[Path, str]:
-    async with (
-        # No `primops=`. This used to register `yaml_primops()` and call
-        # `builtins.toYAML`, and issue #121 moved the render to `builtins.toJSON`
-        # plus the `to_yaml` of Python. A registered primop that no expression
-        # calls reads as a requirement of the render and is not one.
-        # `nanopynix/tests/rpc/client/test_eval_rpc.py` covers the primop.
-        Session(experimental_features=["nix-command", "flakes"]) as session,
-        session.store() as store,
-        session.eval(store) as eval_,
-    ):
+    # `nix/compat.nix` reads the lock through `builtins.fetchTree`.
+    for feature in ("nix-command", "flakes", "fetch-tree"):
+        huggorm.enable_experimental_feature(feature)
+    async with huggorm.AsyncSession() as session:
+        state = session.eval(session.store())
         rendered: dict[Path, str] = {}
         for nix_file in workflow_sources():
-            body = await render_workflow(eval_, nix_file)
+            body = await render_workflow(state, nix_file)
             rendered[output_path(nix_file)] = HEADER.format(name=nix_file.stem) + body
         return rendered
 
