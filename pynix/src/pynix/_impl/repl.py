@@ -38,7 +38,7 @@ from rich.console import Console
 from rich.table import Table
 from tree_sitter import Query, QueryCursor
 
-from nanopynix._typechecking import BEARTYPING
+from nanopynix._typechecking import BEARTYPING, no_runtime_type_check
 from pynix import _evaluate
 from pynix._completion import completion_prefix_at
 from pynix._markdown import render_markdown
@@ -375,6 +375,7 @@ class _LogForwarder:
         self._changed = anyio.Event()
         self._ready = anyio.Event()
 
+    @no_runtime_type_check  # anyio.abc.TaskStatus is a Protocol without runtime_checkable, and beartype refuses it
     async def run(self, *, task_status: anyio.abc.TaskStatus[None] = anyio.TASK_STATUS_IGNORED) -> None:
         started = False
         while True:

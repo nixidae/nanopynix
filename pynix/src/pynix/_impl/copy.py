@@ -17,7 +17,7 @@ one. Add it with the test that proves it.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import structlog
 
@@ -97,6 +97,7 @@ async def closure_of(source: AsyncStore, paths: Iterable[str]) -> list[str]:
     return sorted(await _printed(source, await source.compute_fs_closure(await _parsed(source, paths))))
 
 
+@runtime_checkable
 class CopyEnds(Protocol):
     """The two stores of a copy, for :func:`copy_verified`."""
 
