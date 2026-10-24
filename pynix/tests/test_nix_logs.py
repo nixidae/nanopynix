@@ -5,15 +5,16 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import structlog
+from huggorm import Verbosity
 
-from nanopynix import LogEvent, LogLevel
+from nanopynix import LogEvent
 from pynix._util import LogGate, _forward_nix_logs, _LogActivity, configure_logging
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-_CHATTY = int(LogLevel.CHATTY)
-_INFO = int(LogLevel.INFO)
+_CHATTY = int(Verbosity.CHATTY)
+_INFO = int(Verbosity.INFO)
 
 
 class _Session:
@@ -30,7 +31,7 @@ def _start(level: int, text: str) -> LogEvent:
     return LogEvent(action="start", args=[7, level, 0, text, [], 0])
 
 
-async def _forward(*events: LogEvent, level: LogLevel = LogLevel.INFO, print_build_logs: bool = False) -> str:
+async def _forward(*events: LogEvent, level: Verbosity = Verbosity.INFO, print_build_logs: bool = False) -> str:
     out = io.StringIO()
     await _forward_nix_logs(
         _Session(*events),
@@ -53,7 +54,7 @@ async def test_an_activity_prints_as_simple_logger_does_up_to_the_verbosity() ->
 
 
 async def test_a_chatty_activity_prints_at_chatty() -> None:
-    printed = await _forward(_start(_CHATTY, "copying 'x' to the store"), level=LogLevel.CHATTY)
+    printed = await _forward(_start(_CHATTY, "copying 'x' to the store"), level=Verbosity.CHATTY)
 
     assert printed == "copying 'x' to the store...\n"
 
@@ -66,7 +67,7 @@ async def test_a_message_prints_as_its_text_and_stop_and_result_print_nothing() 
         LogEvent(action="stop", args=[42]),
         LogEvent(action="result", args=[42, 1, [123]]),
         LogEvent(action="msg", args=[_CHATTY, "useful message"]),
-        level=LogLevel.ERROR,
+        level=Verbosity.ERROR,
     )
 
     assert printed == "useful message\n"
@@ -95,7 +96,7 @@ async def test_the_drain_counts_every_event_including_skipped_ones() -> None:
         _Session(LogEvent(action="stop", args=[42]), _start(_CHATTY, "x"), LogEvent(action="msg", args=[3, "m"])),
         print_build_logs=False,
         activity=activity,
-        gate=LogGate(LogLevel.INFO),
+        gate=LogGate(Verbosity.INFO),
         file=io.StringIO(),
     )
 
@@ -105,11 +106,11 @@ async def test_the_drain_counts_every_event_including_skipped_ones() -> None:
 @pytest.mark.parametrize(
     ("verbosity", "printed"),
     [
-        (LogLevel.INFO, "warning: the registry is unreachable layer='global'\n"),
-        (LogLevel.TALKATIVE, "pynix build finished\nwarning: the registry is unreachable layer='global'\n"),
+        (Verbosity.INFO, "warning: the registry is unreachable layer='global'\n"),
+        (Verbosity.TALKATIVE, "pynix build finished\nwarning: the registry is unreachable layer='global'\n"),
     ],
 )
-def test_pynix_events_show_at_a_higher_verbosity_and_warnings_always(verbosity: LogLevel, printed: str) -> None:
+def test_pynix_events_show_at_a_higher_verbosity_and_warnings_always(verbosity: Verbosity, printed: str) -> None:
     old = structlog.get_config()
     out = io.StringIO()
     try:

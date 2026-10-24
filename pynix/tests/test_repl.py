@@ -12,14 +12,12 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 import pytest
-from huggorm import AsyncValue
+from huggorm import AsyncValue, Verbosity
 from huggorm.errors import NixError
 from prompt_toolkit.completion import CompleteEvent, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import ANSI, FormattedText
 
-import nanopynix
-from nanopynix.verbosity import normalize_log_level
 from pynix import _util as util_module, parse
 from pynix._impl.repl import (  # type: ignore[reportPrivateUsage] -- tests intentionally access private symbols
     _HELP,
@@ -45,6 +43,7 @@ from pynix._impl.repl import (  # type: ignore[reportPrivateUsage] -- tests inte
     _shell,
     _ValueDoc,
 )
+from pynix._verbosity import VerbosityInput, verbosity_of
 from pynix.repl import Repl
 from pynix.target import EvaluationTarget
 
@@ -172,7 +171,7 @@ class _Repl(_ReplEngine):
         self.loaded_flakes: list[str] = []
         self.file_cache_resets = 0
         self.value: _AnyValue = _Value()
-        self.verbosity = nanopynix.LogLevel.NOTICE
+        self.verbosity = Verbosity.NOTICE
         self.raise_on_line: str | None = None
 
     async def line(self, text: str) -> _Value | None:
@@ -199,11 +198,11 @@ class _Repl(_ReplEngine):
     async def reset_file_cache(self) -> None:
         self.file_cache_resets += 1
 
-    async def get_verbosity(self) -> nanopynix.LogLevel:
+    async def get_verbosity(self) -> Verbosity:
         return self.verbosity
 
-    async def set_verbosity(self, level: nanopynix.LogLevelInput) -> nanopynix.LogLevel:
-        self.verbosity = normalize_log_level(level)
+    async def set_verbosity(self, level: VerbosityInput) -> Verbosity:
+        self.verbosity = verbosity_of(level)
         return self.verbosity
 
     async def repl_select(self, expr: str) -> tuple[str, AsyncValue] | None:

@@ -25,6 +25,7 @@ from nanopynix._typechecking import BEARTYPING, no_runtime_type_check
 from nanopynix.libstore import init_libexpr, load_config_once, load_plugins_once
 from pynix._build_monitor import MonitorState, RecordEvent, render
 from pynix._store_layout import StoreLayout
+from pynix._verbosity import VerbosityInput, verbosity_of
 
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import AsyncGenerator, Mapping, Sequence
@@ -35,8 +36,7 @@ if TYPE_CHECKING or BEARTYPING:
 
     from nanopynix import AsyncEvalSession, AsyncSession, AsyncStore
 
-_RESULT_BUILD_LOG_LINE = 101
-_RESULT_POST_BUILD_LOG_LINE = 107
+_LOG_LINE_RESULTS = frozenset({huggorm.ResultType.BUILD_LOG_LINE, huggorm.ResultType.POST_BUILD_LOG_LINE})
 # Ceiling on the exit drain, and the idle window that normally ends it well
 # before that -- see _drain_logs.
 _LOG_DRAIN_SECONDS = 0.5
@@ -47,7 +47,7 @@ _MIN_RESULT_EVENT_ARGS = 2
 # nom redraws on every event; four times a second shows the same thing.
 _MONITOR_REDRAW_SECONDS = 0.25
 #: What `nix` logs at when no flag names a level (`nix::verbosity`, lvlInfo).
-DEFAULT_VERBOSITY = nanopynix.LogLevel.INFO
+DEFAULT_VERBOSITY = huggorm.Verbosity.INFO
 
 # Build-progress/error messages go here, not stdout -- so a command's
 # print_json() output stays clean, machine-parseable JSON even when the same
@@ -104,19 +104,19 @@ class LogGate:
 
     __slots__ = ("level",)
 
-    def __init__(self, level: nanopynix.LogLevel) -> None:
+    def __init__(self, level: huggorm.Verbosity) -> None:
         self.level = level
 
 
-def _python_level(verbosity: nanopynix.LogLevel) -> int:
+def _python_level(verbosity: huggorm.Verbosity) -> int:
     """The level of pynix's own events that Nix's *verbosity* shows.
 
     At Nix's default, only a warning or an error: a progress event of pynix is
     not news. ``talkative`` shows them, and ``debug`` shows everything.
     """
-    if verbosity <= nanopynix.LogLevel.INFO:
+    if verbosity <= huggorm.Verbosity.INFO:
         return logging.WARNING
-    if verbosity <= nanopynix.LogLevel.CHATTY:
+    if verbosity <= huggorm.Verbosity.CHATTY:
         return logging.INFO
     return logging.DEBUG
 
@@ -132,7 +132,7 @@ def _render(_logger: WrappedLogger, method_name: str, event_dict: EventDict) -> 
 @no_runtime_type_check  # file is duck-typed against TextIO -- under prompt_toolkit's
 # patch_stdout(), sys.stdout is swapped for a StdoutProxy that implements the
 # file-like write interface without being a real TextIO instance.
-def configure_logging(*, file: TextIO | None = None, verbosity: nanopynix.LogLevel = DEFAULT_VERBOSITY) -> None:
+def configure_logging(*, file: TextIO | None = None, verbosity: huggorm.Verbosity = DEFAULT_VERBOSITY) -> None:
     structlog.configure(
         wrapper_class=structlog.make_filtering_bound_logger(_python_level(verbosity)),
         logger_factory=structlog.PrintLoggerFactory(file=file or sys.stderr),
@@ -145,7 +145,7 @@ def configure_logging(*, file: TextIO | None = None, verbosity: nanopynix.LogLev
 async def forward_nix_logs(
     session: Any,
     *,
-    verbosity: nanopynix.LogLevelInput | None = None,
+    verbosity: VerbosityInput | None = None,
     print_build_logs: bool = False,
     log_file: TextIO | None = None,
     monitor: MonitorState | None = None,
@@ -160,7 +160,7 @@ async def forward_nix_logs(
     of stderr instead, with the log above it. The caller keeps the state, so
     it can hand the monitor a plan. The session must have activity tracking on.
     """
-    gate = LogGate(DEFAULT_VERBOSITY if verbosity is None else nanopynix.normalize_log_level(verbosity))
+    gate = LogGate(DEFAULT_VERBOSITY if verbosity is None else verbosity_of(verbosity))
     old_config = structlog.get_config()
     live = _start_monitor() if monitor is not None else None
     # After the monitor starts: `Live` swaps `sys.stderr` for a proxy that
@@ -432,7 +432,7 @@ async def forward_state_logs(  # noqa: PLR0913 -- keyword-only, one per forwardi
     session: huggorm.AsyncSession,
     state: AsyncEvalState | None,
     *,
-    verbosity: nanopynix.LogLevelInput | None = None,
+    verbosity: VerbosityInput | None = None,
     print_build_logs: bool = False,
     log_file: TextIO | None = None,
     monitor: MonitorState | None = None,
@@ -447,7 +447,7 @@ async def forward_state_logs(  # noqa: PLR0913 -- keyword-only, one per forwardi
     With ``monitor``, fold the records into it and draw nom's status at the
     bottom of stderr instead, as :func:`forward_nix_logs` does.
     """
-    gate = LogGate(DEFAULT_VERBOSITY if verbosity is None else nanopynix.normalize_log_level(verbosity))
+    gate = LogGate(DEFAULT_VERBOSITY if verbosity is None else verbosity_of(verbosity))
     old_config = structlog.get_config()
     live = _start_monitor() if monitor is not None else None
     # After the monitor starts, for the reason `forward_nix_logs` gives.
@@ -560,7 +560,7 @@ def _record_line(record: LogRecord, *, print_build_logs: bool, gate: LogGate) ->
             if not text or record.level() > gate.level:
                 return None
             return f"{text}..."
-        case "result" if print_build_logs and record.type() in {_RESULT_BUILD_LOG_LINE, _RESULT_POST_BUILD_LOG_LINE}:
+        case "result" if print_build_logs and record.type() in _LOG_LINE_RESULTS:
             texts = [field.text() for field in record.fields() if not field.is_int()]
             return texts[-1] if texts else None
         case _:
@@ -672,7 +672,7 @@ def _nix_line(event: Any, *, print_build_logs: bool, gate: LogGate) -> str | Non
             return f"{text}..."
         case "result" if print_build_logs:
             result_type, result_message = _result_event(event)
-            if result_type in {_RESULT_BUILD_LOG_LINE, _RESULT_POST_BUILD_LOG_LINE}:
+            if result_type in _LOG_LINE_RESULTS:
                 return result_message
             return None
         case _:

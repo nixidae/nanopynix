@@ -19,9 +19,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Final, Protocol, runtime_checkable
 
+from huggorm import ActivityType, ResultType, Verbosity
 from rich.text import Text
-
-from nanopynix import ActivityType, LogLevel, ResultType
 
 VERTICAL: Final = "┃"
 LOWER_LEFT: Final = "┗"
@@ -355,7 +354,7 @@ class MonitorState:
             case _:
                 pass
         # nom prints the text of every activity at `info` or below, as Nix does.
-        return [Text.from_ansi(text)] if text and level <= LogLevel.INFO else []
+        return [Text.from_ansi(text)] if text and level <= Verbosity.INFO else []
 
     def _stop(self, activity_id: int, now: float) -> None:
         if (build := self.builds.get(activity_id)) is not None and build.end is None:

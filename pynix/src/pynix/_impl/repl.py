@@ -38,15 +38,14 @@ from rich.console import Console
 from rich.table import Table
 from tree_sitter import Query, QueryCursor
 
-import nanopynix
 from nanopynix._typechecking import BEARTYPING
-from nanopynix.verbosity import normalize_log_level
 from pynix import _evaluate
 from pynix._completion import completion_prefix_at
 from pynix._markdown import render_markdown
 from pynix._nix_syntax import NIX_GRAMMAR_PATH, NIX_LANGUAGE, parse_nix
 from pynix._util import DEFAULT_VERBOSITY, build_derivation, forward_state_logs, init_nix
 from pynix._value_render import format_json
+from pynix._verbosity import VerbosityInput, verbosity_of
 from pynix.repl import Repl
 from pynix.target import EvaluationTarget, EvaluationTargetError
 
@@ -387,7 +386,7 @@ class _LogForwarder:
                 await self._changed.wait()
             self._changed = anyio.Event()
 
-    async def set_level(self, level: nanopynix.LogLevel) -> None:
+    async def set_level(self, level: huggorm.Verbosity) -> None:
         self._ready = anyio.Event()
         self.level = level
         self._changed.set()
@@ -460,11 +459,11 @@ class _ReplEngine:
             return None
         return await selection.name(), await selection.attrs()
 
-    async def get_verbosity(self) -> nanopynix.LogLevel:
+    async def get_verbosity(self) -> huggorm.Verbosity:
         return self._logs.level
 
-    async def set_verbosity(self, level: nanopynix.LogLevelInput) -> nanopynix.LogLevel:
-        verbosity = normalize_log_level(level)
+    async def set_verbosity(self, level: VerbosityInput) -> huggorm.Verbosity:
+        verbosity = verbosity_of(level)
         await self._logs.set_level(verbosity)
         return verbosity
 

@@ -79,7 +79,7 @@ logger = structlog.get_logger("pynix.build")
 _HOST_STORE_URI = "daemon"
 _MAX_FOD_UPDATES = 10
 #: Nix logs the cause of a failed dependency, such as a hash mismatch, as an error.
-_CAUSE_LEVEL = int(nanopynix.LogLevel.WARN)
+_CAUSE_LEVEL = int(huggorm.Verbosity.WARN)
 
 
 @asynccontextmanager
