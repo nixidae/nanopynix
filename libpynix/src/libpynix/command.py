@@ -574,11 +574,10 @@ def complete(parser: argparse.ArgumentParser) -> None:
     """Answer a shell completion, when this start is one, and exit.
 
     **argcomplete is imported here and not at the top of the module.** It is 39
-    modules, and a run that is not a completion needs none of them -- which is
-    the whole subject of issue #123, and the reason
-    `tests/meta/test_import_budget.py` counts what `import pynix` loads. The
-    variable is set by the generated script and by nothing else, so the import
-    happens on a completion keypress and never on a real command.
+    modules, and a run that is not a completion needs none of them -- the
+    subject of issue #123. The variable is set by the generated script and by
+    nothing else, so the import happens on a completion keypress and never on a
+    real command.
     """
     if not os.environ.get("_ARGCOMPLETE"):
         return

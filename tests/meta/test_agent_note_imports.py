@@ -1,6 +1,6 @@
 """No test module may import ``pytest_agent`` directly.
 
-The packaged test runner (``nanopynix/tests.nix``) leaves pytest-agent out on
+The packaged test runner (``nix/tests.nix``) leaves pytest-agent out on
 purpose: it auto-activates on import, and that runner is what CI executes. So
 ``from pytest_agent import note`` at module level fails at *collection* there,
 on every Nix version and both backends, while every dev shell passes.

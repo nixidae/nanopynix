@@ -1,7 +1,7 @@
 # What the test suite needs on PATH, wherever it runs.
 #
 # **Two places run this suite, and they drifted apart twice.** The packaged
-# runner of `nanopynix/tests.nix` is what CI executes; the dev shell of
+# runner of `nix/tests.nix` is what CI executes; the dev shell of
 # `nix/shell.nix` is what a person executes. A tool that only one of them
 # carried made the same failure both times: the suite passed interactively and
 # failed in CI, and the difference read as a defect in the code under test

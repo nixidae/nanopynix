@@ -4,8 +4,8 @@
 declares each command as a class, and this library builds the `argparse`
 parser, answers a shell completion and dispatches.
 
-It knows nothing about Nix, and it depends on no part of `nanopynix`. A
-program that takes it therefore takes the parser without the evaluator.
+It knows nothing about Nix, and it depends on no part of huggorm. A program
+that takes it therefore takes the parser without the evaluator.
 `libpynix.nix_options` is the one module that names a Nix concept, and it
 declares `--file`, `--flake` and `--attr` without reading any of them.
 
@@ -154,5 +154,5 @@ there, and a program built on this library needs both:
   `libpynix.nix_options` declares the three options, and `pynix.target` reads
   them; that is 101 ms a start which evaluates nothing does not pay.
 
-Issue #123 measured both, and `tests/meta/test_import_budget.py` is what keeps
-them true.
+Issue #123 measured both. pynix installs deferimport, so its own imports are
+lazy as well.

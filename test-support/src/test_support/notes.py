@@ -1,6 +1,6 @@
 """``pytest_agent.note``, and a no-op stand-in when the plugin is absent.
 
-The packaged test runner (``nanopynix/tests.nix``) leaves pytest-agent out on
+The packaged test runner (``nix/tests.nix``) leaves pytest-agent out on
 purpose: it auto-activates on import, and that runner is what CI executes. So
 a module-level ``from pytest_agent import note`` fails at *collection* in CI,
 on every Nix version and both backends, while every dev shell passes. It did.

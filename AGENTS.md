@@ -4,14 +4,8 @@ A bare `pytest` runs every suite: `testpaths` in `pytest.ini` names each
 project's own. `pytest tests` now selects the self-checks and the static
 gates alone, because issue #130 moved each suite beside its project.
 
-A plain `pytest` invocation uses `--nix-test-backends local` only. This backend
-runs in-process and uses one store. CI tests the daemon backend separately, in
-the `test-daemon-*` matrix jobs and in the TSan workflows. Those jobs pass
-`--nix-test-backends local,daemon`. Pass `--nix-test-backends local,daemon`
-yourself to reproduce a daemon failure on your machine.
-
 - direnv exec . timeout 1200 pytest
-- direnv exec . timeout 1200 pytest --cov --cov-report=term-missing --cov-report= # coverage report. It includes the Nix worker subprocess that multiprocessing starts with the forkserver. See the `sitecustomize.py` of `nanopynix_testing`, which that project's `beartype_hook` puts on PYTHONPATH.
+- direnv exec . timeout 1200 pytest --cov --cov-report=term-missing --cov-report= # coverage report. A spawned interpreter takes part through the `sitecustomize.py` of `nanopynix_testing`, which that project's `beartype_hook` puts on PYTHONPATH.
 
 The coverage table has approximately 88 lines, so agent mode does not print the
 table to the terminal. The terminal shows `[pytest-agent] coverage: NN%` for
@@ -37,24 +31,21 @@ until:
 - direnv reload
 
 Measured: with the bindings of issue #234 committed and the shell stale,
-`nanopynix.list_settings()` held 83 names and no `pure-eval`, and five tests
-failed locally that CI passed. After the reload it held 113, and all five
-passed. The reload takes a minute or two, takes no argument, and works from a
+`list_settings()` held 83 names and no `pure-eval`, and five tests failed
+locally that CI passed. After the reload it held 113, and all five passed. The
+reload takes a minute or two, takes no argument, and works from a
 non-interactive shell.
 
 Suspect this whenever a test fails locally and passes in CI. The one-line
 question is whether the binding carries the name you expect:
 
-- direnv exec . python -c "import nanopynix; print('pure-eval' in nanopynix.list_settings())"
+- direnv exec . python -c "import huggorm; print('pure-eval' in huggorm.list_settings())"
 
 Reach for `nix develop --file . nanopynixVersions.<version>.shell` only when
 you need a *different* Nix version, and not merely a current one.
 
-Never run either ruff configuration with `--unsafe-fixes`. The strict
-configuration disables TC001-003, because these rules break type-checking at
-runtime. `ruff-strict.toml` gives the reason and the measurement behind it.
-`--unsafe-fixes` is the mechanism that applies the same damage in bulk to
-another rule.
+Never run either ruff configuration with `--unsafe-fixes`. It applies a
+change that the rule's own documentation calls unsafe, in bulk.
 
 CI runs those three commands, `ruff format --check`, `shellcheck` over
 `scripts/`, and the suite of each subproject that the repository run does not
@@ -62,7 +53,7 @@ reach, in the `static-checks` job. Each one is a derivation in
 `nix/checks.nix`, and each is a package. Build them to run a gate the way CI
 runs it, in a sandbox and not in the dev shell:
 
-- nix build --file . --no-link --keep-going checks.lint checks.lint-strict checks.format checks.types checks.shell checks.grpclib-transports checks.pytest-agent checks.test-support checks.libpynix checks.pynix-isolated checks.completions
+- nix build --file . --no-link --keep-going checks.lint checks.lint-strict checks.format checks.types checks.shell checks.pytest-agent checks.test-support checks.libpynix checks.pynix-isolated checks.completions
 
 **This repository does not build as a flake, so `--file .` is the only way
 in.** `nix/sources.nix` asks the nixidae umbrella where every dependency
@@ -99,7 +90,7 @@ Put the body in `ci/steps.nix`, which builds each one as a
 env:
   CI_STEP: ciSteps.nix_2_34-tsan
 run: nix build --file . "$CI_STEP" --out-link result --print-build-logs
-run: ./result/bin/nanopynix-ci soak-seeds
+run: ./result/bin/nanopynix-ci suite
 ```
 
 Three reasons apply, and each one names a thing that a body in a YAML file
@@ -111,7 +102,7 @@ cannot do:
 - **A script runs here, and against one Nix version.** This is the command
   that CI runs:
   - `nix build --file . ciSteps.nix_2_34 --out-link result`, and then
-    `BACKEND=local ./result/bin/nanopynix-ci soak`
+    `./result/bin/nanopynix-ci suite`
 - **`runtimeInputs` names each tool.** A step that declares `jq`, `git` and
   `unshare` does not depend on the tools of the runner image, so the step also
   runs on a different CI service.
@@ -119,8 +110,8 @@ cannot do:
 Give a value to a step through `env:`, at the step or at the job. GitHub puts
 an expression into the text before the shell reads the line, so a value in a
 command can become a part of that command. `env:` also keeps the body to one
-line: the backend, the Nix version and the workspace path were the values that
-made an expression necessary.
+line: the Nix version and the workspace path are the values that would make an
+expression necessary.
 
 # Version control
 
@@ -144,64 +135,12 @@ end and not at the start.
 Finish each task on an empty commit. Run `jj new` when the last commit of the
 task is complete, so the next task does not land inside it.
 
-`pynix` is the dogfooding consumer of nanopynix. `pynix` must depend on the
-public APIs of `nanopynix`. If `pynix` needs a library capability of general
-use, add that capability to nanopynix, and do not import a private
-implementation module. A narrow dependency on a private module is acceptable
-only when a redesign is not justified. Record each such dependency in the
-ledger in `tests/meta/test_consumer_surface.py`, with the reason. That test
-fails until you do.
+`pynix` runs on huggorm's public API. A convention that a machine can check
+belongs in `tests/meta/`, which is the home of the self-checks of this
+repository. Put the next one there, rather than in another paragraph of this
+file.
 
-This rule was prose only until then, and 30 import sites in three packages did
-not follow it. A convention that a machine can check belongs in `tests/meta/`,
-which is the home of the self-checks of this repository. Put the next one
-there, rather than in another paragraph of this file.
-
-# grpclib-transports
-
-`grpclib-transports/` is a subproject of this repository, and not a
-third-party dependency. It carries gRPC over four asyncio transports: stdio
-subprocess pipes, multiprocessing pipe pairs, Unix-domain sockets, and SSH
-sessions. The rpc engine of nanopynix uses the first two to speak to each
-worker process.
-
-**nanopynix is its only consumer. Change the library when nanopynix needs a
-different behavior.** It came from its own repository, and it arrived here so
-that a change to a transport and the change to nanopynix that needs it go in
-one commit. The rule above, which tells `pynix` to depend on the public API of
-nanopynix, does not apply in this direction: there is no public API of
-grpclib-transports to protect, and no other consumer to break.
-
-`greeter-proto/` is the generated fixture service that the tests of
-grpclib-transports call over each transport. protoc writes every module of it
-(`greeter-proto/generated.nix`), so there is no `src/` in the checkout. It is
-a test fixture, and no code that ships imports it.
-
-Run the tests, and the benchmarks:
-
-- direnv exec . timeout 60 pytest grpclib-transports # the tests only
-- direnv exec . timeout 300 pytest grpclib-transports/benchmarks # the measurement run
-
-The subproject has its own `pytest.ini`, so `rootdir` is
-`grpclib-transports/` and none of the nanopynix-specific configuration
-applies. The `benchmark` directory is not a correctness gate, and `testpaths`
-leaves it out.
-
-CI runs the tests as `check-grpclib-transports`, in the `static-checks` job.
-Build that gate the way CI builds it:
-
-- nix build --no-link .#check-grpclib-transports
-
-**That gate exists because the tests would otherwise run nowhere.** The
-project was a nixpkgs `buildPythonPackage` in its own repository, so
-`pytestCheckHook` ran the suite inside each build. It is a pyproject.nix
-builders package here, and those have no check phase.
-
-`ruff-strict.toml` gives this subproject its own per-file ignores, and the
-`TID251` entry gives the reason to read: the ban on the raw `asyncio`
-primitives is right for nanopynix, which is anyio-structured, and it does not
-reach a library whose subject is `asyncio.Protocol` callbacks. The `src/` of
-the library still meets the rule.
+# Tests
 
 **`tests/AGENTS.md` maps every directory under `tests/`.** Read it before you
 add a test module. It gives the rule that picks the directory, the shape a
@@ -261,19 +200,15 @@ reason it is a project beside `pynix` rather than a module of it. Two
 things follow. `nix/py-packages.nix` gives it no
 `nixLinked` suffix, so it is one package for every Nix version -- measured:
 `nanopynixVersions.stable.libpynix` and `nanopynixVersions.nix_2_35.libpynix`
-are the same store path. And `libpynix/src/libpynix/_typecheck.py` carries its
-own `no_runtime_type_check` rather than importing `nanopynix._typechecking`.
-The cost avoided there is the dependency and not the import: that module is
-cheap to import, at 55 modules against 34 for a bare interpreter, but naming
-`nanopynix` in `pyproject.toml` drags in `huggorm-bindings`, and a program
-that has not built the bindings could then not take this project at all.
+are the same store path. And `libpynix/src/libpynix/_typecheck.py` holds
+`no_runtime_type_check`, which `pynix` imports from there.
 
 **`libpynix.command` is generic, and `libpynix.nix_options` names Nix.** The
 second declares `--file`, `--flake` and `--attr` and reads none of them. Keep
 that split: reading a target means an evaluator, and a command module imports
 whatever declares its options. Issue #123 measured what that costs a start
-which evaluates nothing -- 101 ms, because `pynix.target` pulls `structlog`
-and the exception tree of nanopynix.
+which evaluates nothing -- 101 ms, because `pynix.target` pulled `structlog`
+and an exception tree.
 
 **`pynix._settings` keeps `configured=`.** `libpynix` records the mark and
 resolves nothing; a program puts its own base class between `Command` and its
@@ -376,7 +311,7 @@ Follow these rules:
   1. `from __future__ import annotations`
   2. imports of the standard library
   3. imports of third-party packages
-  4. local `nanopynix` imports
+  4. first-party imports
   5. module constants
   6. code
 - To re-export a name from another module, use the explicit pattern
@@ -401,18 +336,7 @@ Follow these rules:
   equivalents. These primitives include `anyio.Lock`, `anyio.Event`, the memory
   object streams, `anyio.fail_after`, `anyio.move_on_after`,
   `anyio.create_task_group`, `anyio.open_process`, `anyio.to_thread`, and
-  `anyio.from_thread.BlockingPortal`. Two exceptions are intentional, and this
-  file documents both:
-  1. `_core/_nix_executor.py` calls `asyncio.wrap_future`. This call operates
-     with a dedicated `concurrent.futures` thread that already runs. A route
-     through `anyio.to_thread` would use a slot in the shared capacity limiter
-     of anyio for no benefit.
-  2. `asyncio.create_task()` hosts a `CancelScope` or a `TaskGroup`, which is a
-     plain `anyio.create_task_group()` or an
-     `anyio.from_thread.BlockingPortal`, when different tasks call `start()`
-     and `close()`. Two separate gRPC handler calls do this in
-     `rpc/worker/_worker_primop.py`. The same task must enter and exit a
-     `CancelScope` or a `TaskGroup` of anyio.
+  `anyio.from_thread.BlockingPortal`.
 
 # Banned patterns
 
@@ -479,15 +403,14 @@ the text, and each project carries a copy, because `license-files` cannot name
 a path above the source root of a distribution.
 
 No project here links Nix. The engine is huggorm's bindings, which link
-libnixexpr and libnixstore and are built in huggorm; nanopynix imports them at
-run time, which section 6 of the LGPL exists for.
+libnixexpr and libnixstore and are built in huggorm; pynix imports them at run
+time, which section 6 of the LGPL exists for.
 
 **`huggorm-bindings` ships `get-env.sh`.** `src/nix/get-env.sh` is Nix's own
 script, and Nix compiles it into the `nix` binary as a file-static string. It
 lives in no library, so a consumer of the libraries must carry it. The build
 copies it from the Nix source of the version it links, so the bytes follow
-that Nix. `nanopynix` re-exports the path, so `pynix` reads it without
-importing the engine.
+that Nix.
 
 `tests/meta/test_licensing.py` holds what a machine can check: every project
 states Apache-2.0, and every `license-files` entry names a file that is really
@@ -497,13 +420,8 @@ there.
 
 **In Nix, the term "stderr" means logging. It does not mean the stderr of the
 operating system.** Nix uses the term "stderr" for the log events of
-`nix::Logger`. These events already flow through the RPC pipe between the
-worker and the master, as `action: "msg"` events and `action: "error"` events.
-The IPC of the worker uses stdin and stdout only, for the JSON-RPC protocol.
-The subprocess inherits file descriptor 2 from the parent.
-
-Do not add a separate stderr pipe. Such a pipe is redundant, and it confuses
-the logging abstraction of Nix with the stderr of the operating system.
+`nix::Logger`. These events reach pynix as huggorm log records, also from a
+huggorm worker in another process. Do not add a separate stderr pipe for them.
 
 **A command of `pynix` writes its result to stdout, and everything else to
 stderr.** A caller can then filter stderr. Keep stderr quiet too, or a caller
@@ -522,8 +440,7 @@ Two rules follow from it:
 
 - **Do not add a version branch to library code to keep an old Nix alive.**
   Gate the test instead, and give the gate the upstream defect and the issue
-  to read. `nanopynix_testing.nix_markers` holds the markers, and each one
-  names what it excludes and why.
+  to read. The marker names what it excludes and why.
 - **Do not write a gate that the floor already answers.** A marker such as
   `minimum="2.32"` can never skip a test when the floor is 2.34, so it reads
   as a live constraint and is not one. Issue #126 removed nine of those.

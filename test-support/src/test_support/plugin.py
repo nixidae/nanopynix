@@ -171,7 +171,7 @@ if not _pytest_agent_installed():
     def agent_notes() -> _NoopNotes:
         """``agent_notes`` when pytest-agent is not installed.
 
-        The packaged test runner (``nanopynix/tests.nix``) deliberately leaves
+        The packaged test runner (``nix/tests.nix``) deliberately leaves
         pytest-agent out -- it auto-activates on import, and that runner is what
         CI executes. Without this fallback, every test that records a note
         errors at *collection* with "fixture 'agent_notes' not found", so it

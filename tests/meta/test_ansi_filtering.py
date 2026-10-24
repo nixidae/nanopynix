@@ -1,15 +1,13 @@
 """No module writes its own regular expression for an ANSI escape sequence.
 
-Nix writes the escape sequences that reach this library, so Nix owns the answer
-to which bytes are an escape sequence. ``nanopynix.strip_ansi`` calls that
+Nix writes the escape sequences that reach pynix, so Nix owns the answer to
+which bytes are an escape sequence. ``huggorm.filter_ansi_escapes`` calls that
 answer, ``nix::filterANSIEscapes``. A pattern written here is a second answer,
 and every second answer this repository grew was a subset of Nix's.
 
 There were three of them, and the scanner docstring in
-``tests/support/ansi_regexes.py`` gives each one and what it missed. Prose said
-"do not do this" in one place only -- ``nanopynix/tests/test_hostile_inputs.py``
-asserts that no colour code reaches one exception -- and prose that covers one
-call site is how the other two appeared. CLAUDE.md gives the remedy: a
+``tests/support/ansi_regexes.py`` gives each one and what it missed. Prose that
+covers one call site is how the other two appeared. CLAUDE.md gives the remedy: a
 convention that a machine can check belongs here.
 
 The unit tests below are not decoration. A scanner that quietly matches nothing
@@ -54,7 +52,7 @@ def test_no_module_writes_its_own_ansi_pattern() -> None:
     violations = scan_tree(REPO_ROOT)
     assert not violations, (
         f"{len(violations)} regular expression(s) read an ANSI escape sequence.\n"
-        "Call `nanopynix.strip_ansi` instead. It calls nix::filterANSIEscapes, "
+        "Call `huggorm.filter_ansi_escapes` instead. It calls nix::filterANSIEscapes, "
         "which reads the same bytes as an escape sequence that Nix writes, "
         "including an OSC 8 hyperlink and a sequence that does not end in "
         "`m`.\n\n" + format_report(violations)
@@ -125,7 +123,7 @@ class TestScannerAllowsWhatTheRepositoryDoes:
         assert scan_source('text = "\x1b[31;1merror\x1b[0m"\n', HERE) == []
 
     def test_an_escape_in_a_docstring(self) -> None:
-        """`nanopynix/_ansi.py` documents each sequence that the old pattern missed."""
+        """A docstring may document each sequence that an old pattern missed."""
         assert scan_source(r'"""The pattern was \x1B\[\d+(;\d+){0,2}m."""' + "\n", HERE) == []
 
     def test_a_regex_that_is_not_about_escapes(self) -> None:

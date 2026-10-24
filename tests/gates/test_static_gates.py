@@ -16,7 +16,7 @@ is the signal, and the signal arrives first because
 front.
 
 **The packaged runner skips every one of them.** `ruff` and `pyright` are dev
-shell tools, and neither is in the closure of `nanopynix/tests.nix`. So the
+shell tools, and neither is in the closure of `nix/tests.nix`. So the
 runner that CI executes finds nothing on PATH and skips, which is correct: the
 gates in that job are the derivations, and running them twice would only make
 the job slower.

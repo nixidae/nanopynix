@@ -1,23 +1,11 @@
 """The one decorator this package needs from the beartype plumbing.
 
-``nanopynix._typechecking`` holds the same five lines, and this is a second
-copy on purpose.
+Here and not in a project that names Nix, so that a program can take this
+package without ``huggorm-bindings``, a compiled extension linked against one
+Nix version. See the note above ``dependencies`` in ``pyproject.toml``.
 
-**The cost avoided is the dependency, and not the import.** Measured:
-``import nanopynix._typechecking`` loads 55 modules against 34 for a bare
-interpreter, because ``nanopynix/__init__.py`` maps each public name to a
-module and resolves it on first read. So the import is cheap. What is not
-cheap is what naming ``nanopynix`` in ``pyproject.toml`` would drag in:
-``huggorm-bindings``, a compiled extension linked against one Nix version.
-This project would then be built once per version of the matrix, and a program
-that has not built the bindings could not take it at all -- for five lines that
-set one attribute.
-
-See the note above ``dependencies`` in ``pyproject.toml`` for the rest.
-
-``nanopynix/tests/test_beartype_instrumentation.py`` states what the attribute
-does, and that suite covers both copies: the attribute is beartype's, not this
-repository's, so a change of meaning would reach the other copy first.
+``pynix/tests/test_beartype_instrumentation.py`` shows that the suites run
+under beartype; the attribute this decorator sets is beartype's own.
 """
 
 from __future__ import annotations

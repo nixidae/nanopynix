@@ -78,7 +78,7 @@ def test_the_workflows_are_present() -> None:
     """The "can see it" guard.
 
     The packaged CI runner runs from a store copy of this repository rather
-    than from the checkout (``nanopynix/tests.nix``). A missing ``.github/``
+    than from the checkout (``nix/tests.nix``). A missing ``.github/``
     there would make every parametrised test below collect nothing and pass,
     which reads exactly like a policy that found no violation.
     """

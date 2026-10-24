@@ -13,9 +13,9 @@ parse prints a plain traceback rather than a rich one, and that is the whole
 of the cost.
 
 **The event loop starts here as well, and nowhere earlier.** Every ``run`` is a
-coroutine function, and ``anyio`` is 60 modules that ``import pynix`` must not
-load -- ``tests/meta/test_import_budget.py`` states that. This module is
-reached through ``pynix._impl``, which imports it when a command runs.
+coroutine function, and ``anyio`` is 60 modules that ``import pynix`` does not
+load. This module is reached through ``pynix._impl``, which imports it when a
+command runs.
 """
 
 from __future__ import annotations

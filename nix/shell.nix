@@ -41,7 +41,7 @@ mkShell {
     export TERMINFO_DIRS="''${TERMINFO_DIRS:+$TERMINFO_DIRS:}${ncurses}/share/terminfo"
   '';
 
-  # `suiteRuntime` is the list that `nanopynix/tests.nix` also takes, so a tool
+  # `suiteRuntime` is the list that `nix/tests.nix` also takes, so a tool
   # the suite needs cannot reach the dev shell without reaching the packaged
   # runner as well. That drift cost two debugging sessions -- see the file.
   #

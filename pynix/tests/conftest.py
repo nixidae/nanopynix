@@ -35,8 +35,7 @@ import structlog
 # global plugins now that `pytest.ini` registers ours with `-p`, and anyio
 # wins that tie -- every session-scoped fixture that requests it then fails
 # with `ScopeMismatch`. A conftest beats any plugin, so importing the fixture
-# here settles it. `nanopynix/tests/conftest.py` carries the same import and
-# the full account.
+# here settles it.
 from huggorm.testing.environment import NixTestEnvironment, anyio_backend as anyio_backend
 
 import pynix._util as pynix_util

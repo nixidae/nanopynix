@@ -11,8 +11,7 @@ imports the three from here rather than from ``libpynix``.
 ``_attr_completion`` imports the standard library alone at module level, and
 does every import that reaches the evaluator inside the function that a
 completion calls. So a command that lists an option pays for a function object
-and not for ``pynix.target``. ``tests/meta/test_import_budget.py`` is what
-keeps that true.
+and not for ``pynix.target``.
 
 **``--flake`` names its search, and each command names a different one.**
 ``nix develop F#<TAB>`` offers what is under ``devShells.<system>`` and ``nix

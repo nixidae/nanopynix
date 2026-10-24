@@ -1,8 +1,8 @@
 r"""Scan the tree for a regular expression that reads an ANSI escape sequence.
 
-Nix writes the escape sequences that reach this library, so Nix owns the answer
-to which bytes are an escape sequence. ``nix::filterANSIEscapes`` is that
-answer, and ``nanopynix.strip_ansi`` is the way to call it. A pattern written
+Nix writes the escape sequences that reach pynix, so Nix owns the answer to
+which bytes are an escape sequence. ``nix::filterANSIEscapes`` is that answer,
+and ``huggorm.filter_ansi_escapes`` is the way to call it. A pattern written
 here is a second answer, and a second answer is wrong as soon as Nix emits a
 sequence that it does not cover.
 
@@ -11,8 +11,8 @@ was still narrower than Nix's:
 
 - the ``strip-ansi`` package, ``\x1B\[\d+(;\d+){0,2}m``, an SGR sequence of at
   most three numeric parameters;
-- ``nanopynix/tests/primops/test_primop_error_parity.py``,
-  ``\x1b\[[0-9;]*m``, any SGR sequence;
+- a primop test of the nanopynix library, ``\x1b\[[0-9;]*m``, any SGR
+  sequence;
 - ``huggorm.fod``, ``\x1b\[[0-?]*[ -/]*[@-~]``, any CSI sequence.
 
 Measured against three sequences that Nix removes. None of the three patterns
@@ -21,9 +21,6 @@ an OSC sequence opens with ``\x1b]`` and each pattern reads ``\x1b[``. The
 first one leaves ``\x1b[38;2;255;0;0m`` in place, because a 24-bit colour
 carries five parameters and the pattern reads three. The first and the second
 one keep ``\x1b[2K``, which does not end in ``m``.
-
-``nanopynix/tests/bindings/test_util_bindings.py`` holds the same three
-sequences against the filter that this repository now uses.
 
 **The ban is on re-implementing the filter, not on the escape character.** A
 test that builds an escape sequence as a fixture is how the filter gets
@@ -57,10 +54,9 @@ RE_FUNCTIONS = frozenset({"compile", "findall", "finditer", "fullmatch", "match"
 ESCAPE_SPELLINGS = ("\x1b", "\\x1b", "\\x1B", "\\033", "\\u001b", "\\u001B", "\\e", "\\N{ESC")
 
 # The ledger of files that read an escape sequence themselves, and why each one
-# may. A path is here only when `nanopynix.strip_ansi` is the wrong answer, and
-# not when calling it is merely inconvenient. Same shape as the ledger in
-# `tests/meta/test_consumer_surface.py`, and for the same reason: an exemption
-# that a machine records is an exemption a reader can find.
+# may. A path is here only when `huggorm.filter_ansi_escapes` is the wrong
+# answer, and not when calling it is merely inconvenient: an exemption that a
+# machine records is an exemption a reader can find.
 # Empty, and that is the result of issue #216. The one entry it held was
 # `test-support/src/test_support/shell_pty.py`, which read what a shell draws
 # on a pty. `pyte` reads it now, so no file in this repository writes its own
