@@ -19,7 +19,13 @@ from rich.console import Console
 from rich.tree import Tree
 
 from nanopynix._typechecking import BEARTYPING
-from pynix._util import huggorm_build_session, huggorm_eval_session, print_json, report_and_exit
+from pynix._util import (
+    configured_nix_settings,
+    huggorm_build_session,
+    huggorm_eval_session,
+    print_json,
+    report_and_exit,
+)
 from pynix.flake import Info, Lock, Metadata, Show, Update
 from pynix.target import EvaluationTargetError
 
@@ -163,7 +169,12 @@ async def _lock(flake_ref: str, *, store_uri: str, update_inputs: bool | list[st
     ``tarball-ttl`` is 0, as both commands of Nix set it: a cached tarball
     of a moving reference would otherwise lock the old revision again.
     """
-    async with huggorm_build_session(store_uri, settings={"tarball-ttl": "0"}) as (_session, _store, _eval, state):
+    async with huggorm_build_session(store_uri, settings=configured_nix_settings(tarball_ttl="0")) as (
+        _session,
+        _store,
+        _eval,
+        state,
+    ):
         locked = await state.lock_flake(
             huggorm.parse_flake_ref(flake_ref),
             recreate=update_inputs is True,

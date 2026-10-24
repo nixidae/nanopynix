@@ -43,7 +43,7 @@ from pynix import _evaluate
 from pynix._completion import completion_prefix_at
 from pynix._markdown import render_markdown
 from pynix._nix_syntax import NIX_GRAMMAR_PATH, NIX_LANGUAGE, parse_nix
-from pynix._util import DEFAULT_VERBOSITY, build_derivation, forward_state_logs, init_nix
+from pynix._util import DEFAULT_VERBOSITY, apply_nix_settings, build_derivation, forward_state_logs
 from pynix._value_render import format_json
 from pynix._verbosity import VerbosityInput, verbosity_of
 from pynix.repl import Repl
@@ -932,7 +932,7 @@ async def run_repl(command: Repl) -> None:
         print_formatted_text(f"error: {exc}")
         raise SystemExit(1) from exc
 
-    init_nix()
+    apply_nix_settings()
     for feature in _FEATURES:
         huggorm.enable_experimental_feature(feature)
     async with huggorm.AsyncSession(command.store) as session:

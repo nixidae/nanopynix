@@ -13,10 +13,14 @@ by that.
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import sys
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
+import anyio
 import huggorm
 import pytest
 
@@ -41,6 +45,7 @@ from pynix.build import Build
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from pathlib import Path
+    from subprocess import CompletedProcess
 
 
 def write_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str) -> Path:
@@ -406,6 +411,44 @@ def test_an_unknown_nix_setting_is_refused_and_names_its_source(
 
     with pytest.raises(SettingError, match=rf"max-jobz \({re.escape(source)}"):
         nix_settings(**flags)
+
+
+async def _pynix(tmp_path: Path, *arguments: str, **environment: str) -> CompletedProcess[bytes]:
+    script = f"import sys; from pynix import main; sys.argv = ['pynix', *{list(arguments)!r}]; main()"
+    env = {**os.environ, "PYNIX_CONFIG": str(tmp_path / "absent.toml"), **environment}
+    return await anyio.run_process([sys.executable, "-c", script], env=env, cwd=tmp_path, check=False)
+
+
+async def test_a_nix_setting_from_the_environment_reaches_an_evaluation(tmp_path: Path) -> None:
+    """``PYNIX_NIX_*`` reached ``pynix build`` only (nixidae/nixidae#1055)."""
+    result = await _pynix(tmp_path, "eval", "--expr", "builtins.currentSystem", PYNIX_NIX_SYSTEM="riscv64-linux")
+
+    assert result.returncode == 0, result.stderr.decode()
+    assert json.loads(result.stdout) == "riscv64-linux"
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ("eval", "--expr", "1"),
+        ("path-info", "/nix/store/00000000000000000000000000000000-absent"),
+        ("run", "--file", "./x.nix"),
+        ("develop", "--file", "./x.nix", "--", "true"),
+        ("print-dev-env", "--file", "./x.nix"),
+        ("sbom", "--file", "./x.nix"),
+        ("config", "show"),
+        ("flake", "metadata", "./flake"),
+    ],
+    ids=lambda arguments: arguments[0],
+)
+async def test_every_command_refuses_an_unknown_nix_setting(tmp_path: Path, arguments: tuple[str, ...]) -> None:
+    """Each command reads the configured Nix settings, so each one refuses a typo."""
+    await anyio.Path(tmp_path / "x.nix").write_text("1\n")
+
+    result = await _pynix(tmp_path, *arguments, PYNIX_NIX_MAX_JOBZ="8")
+
+    assert result.returncode != 0
+    assert "no such Nix setting: max-jobz (PYNIX_NIX_MAX_JOBZ)" in result.stderr.decode()
 
 
 # ── what the file may say, and what it may not ───────────────────────

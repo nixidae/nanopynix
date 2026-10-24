@@ -24,6 +24,7 @@ import nanopynix
 from nanopynix._typechecking import BEARTYPING, no_runtime_type_check
 from nanopynix.libstore import init_libexpr, load_config_once, load_plugins_once
 from pynix._build_monitor import MonitorState, RecordEvent, render
+from pynix._impl.settings import SettingError, nix_settings
 from pynix._store_layout import StoreLayout
 from pynix._verbosity import VerbosityInput, verbosity_of
 
@@ -341,6 +342,27 @@ def init_nix(*, load_config: bool = True) -> None:
     init_libexpr()
 
 
+def configured_nix_settings(**flags: str | None) -> dict[str, str]:
+    """The Nix settings that *flags*, ``PYNIX_NIX_*`` and ``[nix]`` name.
+
+    Exits with the error when a layer names a setting Nix does not have.
+    """
+    try:
+        return nix_settings(huggorm.list_settings(), **flags)
+    except SettingError as exc:
+        error_exit(str(exc))
+
+
+def apply_nix_settings(settings: Mapping[str, str] | None = None) -> None:
+    """Set up Nix, then apply *settings*, or the configured ones when None.
+
+    Before the first store opens, because a store reads the globals once.
+    """
+    init_nix()
+    for name, value in (configured_nix_settings() if settings is None else settings).items():
+        huggorm.set_setting(name, value)
+
+
 @asynccontextmanager
 async def huggorm_eval_session(
     store_uri: str,
@@ -348,7 +370,7 @@ async def huggorm_eval_session(
     print_build_logs: bool = False,
 ) -> AsyncGenerator[tuple[huggorm.AsyncSession, huggorm.AsyncStore, AsyncEvalState]]:
     """Open a huggorm session, store and evaluator, forwarding logs for the duration of the block."""
-    init_nix()
+    apply_nix_settings()
     async with huggorm.AsyncSession(store_uri) as session:
         store = session.store()
         state = session.eval(store)
@@ -363,7 +385,7 @@ async def huggorm_store_session(
     verbosity: nanopynix.LogLevelInput | None = None,
 ) -> AsyncGenerator[tuple[huggorm.AsyncSession, huggorm.AsyncStore]]:
     """Open a huggorm session and store with no evaluator, forwarding logs for the duration of the block."""
-    init_nix()
+    apply_nix_settings()
     async with huggorm.AsyncSession(store_uri) as session:
         store = session.store()
         async with forward_state_logs(session, None, verbosity=verbosity):
@@ -384,12 +406,10 @@ async def huggorm_build_session(  # noqa: PLR0913 -- keyword-only, one per sessi
 
     Yields the session, the store that builds, the store that evaluates, and
     the evaluator. The two stores are one store unless *eval_store_uri* names
-    another. *settings* is in ``nix.conf`` spelling, and goes in before the
-    first store opens, because a store reads the globals once.
+    another. *settings* is in ``nix.conf`` spelling, and None means the
+    configured ones (:func:`apply_nix_settings`).
     """
-    init_nix()
-    for name, value in (settings or {}).items():
-        huggorm.set_setting(name, value)
+    apply_nix_settings(settings)
     async with huggorm.AsyncSession(store_uri) as session:
         build_store = session.store()
         if eval_store_uri is None:

@@ -41,11 +41,12 @@ from nanopynix_helpers.build import FodBuildError, build_with_fod_update
 
 import nanopynix
 from nanopynix._typechecking import BEARTYPING
-from pynix import _evaluate, _impl
+from pynix import _evaluate
 from pynix._build_monitor import BuildPlan, MonitorState
 from pynix._impl.copy import StoreEnds, closure_of, copy_verified
 from pynix._util import (
     build_derivation,
+    configured_nix_settings,
     error_console,
     error_exit,
     huggorm_build_session,
@@ -534,14 +535,10 @@ async def run_build(command: Build) -> None:
 
     namespaced = _resolve_namespaced(command)
 
-    try:
-        settings = _impl.settings.nix_settings(
-            huggorm.list_settings(),
-            substituters=command.substituters,
-            trusted_public_keys=command.trusted_public_keys,
-        )
-    except _impl.settings.SettingError as exc:
-        error_exit(str(exc))
+    settings = configured_nix_settings(
+        substituters=command.substituters,
+        trusted_public_keys=command.trusted_public_keys,
+    )
 
     # Outside the session, so the error passes through its log forwarding:
     # --nom counts it in the last frame, and the message prints after that.

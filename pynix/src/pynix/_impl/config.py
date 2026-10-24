@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import huggorm
 
-from pynix._util import init_nix, print_json
+from pynix._util import apply_nix_settings, print_json
 from pynix.config import Check, CurrentSystem, Show
 
 
 async def run_show(command: Show) -> None:
     """The body of :meth:`pynix.config.Show.run`."""
-    init_nix()
+    apply_nix_settings()
     settings = huggorm.list_settings()
     if command.setting is not None:
         print_json({command.setting: settings.get(command.setting)})
@@ -25,11 +25,11 @@ async def run_show(command: Show) -> None:
 
 async def run_check(command: Check) -> None:  # noqa: ARG001 -- every runner takes its command, so the shape does not depend on which options one reads
     """The body of :meth:`pynix.config.Check.run`."""
-    init_nix()
+    apply_nix_settings()
     print_json({"ok": True})
 
 
 async def run_current_system(command: CurrentSystem) -> None:  # noqa: ARG001 -- see run_check
     """The body of :meth:`pynix.config.CurrentSystem.run`."""
-    init_nix()
+    apply_nix_settings()
     print_json({"currentSystem": huggorm.current_system()})
