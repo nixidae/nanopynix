@@ -54,7 +54,7 @@ async def test_closing_one_of_two_sharing_files_leaves_the_other_working(lsp_ser
     # EvalSession config.nix still depends on.
     config_context = lsp_server.contexts[config_uri]
     value = config_context.roots["easykubenixEntry"]
-    assert await value.get_type() is not None
+    assert await value.type_name() is not None
 
 
 async def test_closing_both_sharing_files_actually_releases_the_shared_entry(lsp_server: PynixLanguageServer) -> None:

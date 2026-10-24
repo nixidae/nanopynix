@@ -20,9 +20,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import huggorm
 import pytest
+from huggorm.testing.environment import LINUX_CHROOT_BUILD
 
-import nanopynix
 from lsp_support.lsp_drivers import InProcessDriver, WireDriver
 from lsp_support.lsp_environment import asset
 from lsp_support.lsp_scenario import (
@@ -44,7 +45,6 @@ from lsp_support.lsp_scenario import (
     Select,
     Type,
 )
-from nanopynix_testing.nix_markers import LINUX_CHROOT_BUILD
 
 #: What `pkgs.stdenv.hostPlatform.system` renders to on the host that runs
 #: these tests.
@@ -54,7 +54,7 @@ from nanopynix_testing.nix_markers import LINUX_CHROOT_BUILD
 #: comes back when that resolution works. The tests named it `x86_64-linux`,
 #: which is one host and not every host, so each of them failed on macOS with
 #: `aarch64-darwin` in the hover. Ask Nix, as the other pynix tests do.
-_HOST_SYSTEM = nanopynix.current_system()
+_HOST_SYSTEM = huggorm.current_system()
 
 if TYPE_CHECKING:
     import pytest_lsp
@@ -82,7 +82,7 @@ def _driver_for(request: pytest.FixtureRequest) -> LspDriver:
 
     The cost of that laziness is that the discarded fixture also leaves the
     test's declared fixture closure, and ``nix_backend`` is parametrized off
-    that closure (``nanopynix_testing.nix_runtime``'s ``pytest_generate_tests``
+    that closure (``huggorm.testing.environment``'s ``pytest_generate_tests``
     keys on ``metafunc.fixturenames``). Each fixture below therefore keeps
     naming ``nix_backend`` for its parametrizing side effect -- see the
     comment there.

@@ -28,15 +28,16 @@ from lsprotocol import types
 from pygls.uris import from_fs_path
 
 from nanopynix._typechecking import BEARTYPING
-from nanopynix.exceptions import NixError
+from pynix._evaluate import call, to_python
 from pynix._value_render import format_json
 from pynix_lsp._dialect import Dialect
 from pynix_lsp._render import render_value
 from pynix_lsp._syntax import completion_target_at, identifier_path_at, top_level_lambda_formals
+from pynix_lsp._value import EVAL_FAILURES
 
 if TYPE_CHECKING or BEARTYPING:
-    import nanopynix
     from pynix_lsp._context import FileContext
+    from pynix_lsp._value import LazyValue
 
 MODULE_ENTRY_NAME = "moduleEntry"
 CONFIG_NAME = "config"
@@ -58,7 +59,7 @@ def derive_module_roots(context: FileContext) -> None:
     context.roots.setdefault(OPTIONS_NAME, module_entry.attr(OPTIONS_NAME))
 
 
-async def resolve_module_arg(context: FileContext, name: str) -> nanopynix.AsyncValue | None:
+async def resolve_module_arg(context: FileContext, name: str) -> LazyValue | None:
     """Resolve *name* as a NixOS module-system top-level argument (e.g. ``pkgs``).
 
     Requires a ``moduleEntry`` root. A real module receives each of its own
@@ -76,14 +77,14 @@ async def resolve_module_arg(context: FileContext, name: str) -> nanopynix.Async
     for source_attr in ("specialArgs", "args"):
         candidate = module_entry.attr("_module").attr(source_attr).attr(name)
         try:
-            await candidate.get_type()
-        except NixError:
+            await candidate.type_name()
+        except EVAL_FAILURES:
             continue
         return candidate
     return None
 
 
-async def resolve_formal_arg(context: FileContext, source: str, name: str) -> nanopynix.AsyncValue | None:
+async def resolve_formal_arg(context: FileContext, source: str, name: str) -> LazyValue | None:
     """Resolve *name* as a module argument, gated on the file's own lambda declaring it.
 
     Combines ``top_level_lambda_formals`` (does this file's own top-level
@@ -97,7 +98,7 @@ async def resolve_formal_arg(context: FileContext, source: str, name: str) -> na
     return await resolve_module_arg(context, name)
 
 
-async def is_option_declaration(value: nanopynix.AsyncValue) -> bool:
+async def is_option_declaration(value: LazyValue) -> bool:
     """True if *value* looks like an ``mkOption``-produced option declaration.
 
     These attrsets implement nixpkgs' ``__toString`` (returning their dotted
@@ -108,30 +109,30 @@ async def is_option_declaration(value: nanopynix.AsyncValue) -> bool:
     """
     try:
         marker = await value.attr("_type").to_python()
-    except NixError:
+    except EVAL_FAILURES:
         return False
     return marker == "option"
 
 
-async def render_option_declaration(value: nanopynix.AsyncValue) -> list[str]:
+async def render_option_declaration(value: LazyValue) -> list[str]:
     sections: list[str] = []
     try:
         description = await value.attr("description").to_python()
-    except NixError:
+    except EVAL_FAILURES:
         pass
     else:
         if isinstance(description, str):
             sections.append(description)
     try:
         type_description = await value.attr("type").attr("description").to_python()
-    except NixError:
+    except EVAL_FAILURES:
         pass
     else:
         if isinstance(type_description, str):
             sections.append(f"type: `{type_description}`")
     try:
         default = await value.attr("default").to_python()
-    except NixError:
+    except EVAL_FAILURES:
         pass
     else:
         sections.append(f"default:\n```json\n{format_json(default)}\n```")
@@ -159,7 +160,7 @@ def _position_from_json(entry: object) -> types.Location | None:
     return types.Location(uri=uri, range=types.Range(position, position))
 
 
-async def _option_declaration_locations(value: nanopynix.AsyncValue) -> list[types.Location] | None:
+async def _option_declaration_locations(value: LazyValue) -> list[types.Location] | None:
     """Every declaration site of an ``mkOption``-produced *value*, from its own ``declarationPositions``.
 
     nixpkgs' ``lib/options.nix`` already tracks this explicitly (an option
@@ -171,7 +172,7 @@ async def _option_declaration_locations(value: nanopynix.AsyncValue) -> list[typ
     """
     try:
         positions = await value.attr("declarationPositions").to_python()
-    except NixError:
+    except EVAL_FAILURES:
         return None
     if not isinstance(positions, list):
         return None
@@ -197,12 +198,12 @@ class ModuleSystemDialect(Dialect):
     async def derive_roots(self, context: FileContext) -> None:
         derive_module_roots(context)
 
-    async def extra_hover_sections(self, value: nanopynix.AsyncValue) -> list[str] | None:
+    async def extra_hover_sections(self, value: LazyValue) -> list[str] | None:
         if await is_option_declaration(value):
             return await render_option_declaration(value)
         return None
 
-    async def _resolve(self, context: FileContext, source: str, path: list[str]) -> nanopynix.AsyncValue | None:
+    async def _resolve(self, context: FileContext, source: str, path: list[str]) -> LazyValue | None:
         if path and path[0] in context.roots:
             return None
         if path:
@@ -234,7 +235,7 @@ class ModuleSystemDialect(Dialect):
             return None
         try:
             return await render_value(value, dialects)
-        except NixError:
+        except EVAL_FAILURES:
             return None
 
     async def _best_effort_location(
@@ -264,10 +265,12 @@ class ModuleSystemDialect(Dialect):
         if parent_value is None:
             return None
         try:
-            unsafe_get_attr_pos = await eval_session.string("builtins.unsafeGetAttrPos")
-            position_value = await unsafe_get_attr_pos.call(path[-1], parent_value)
-            position = await position_value.to_python()
-        except NixError:
+            unsafe_get_attr_pos = await eval_session.eval_expr("builtins.unsafeGetAttrPos")
+            position_value = await call(
+                unsafe_get_attr_pos, await eval_session.make_string(path[-1]), await parent_value.force()
+            )
+            position = await to_python(position_value)
+        except EVAL_FAILURES:
             return None
         return _position_from_json(position)
 
@@ -322,6 +325,6 @@ class ModuleSystemDialect(Dialect):
             return None
         try:
             names = await value.attr_names()
-        except NixError:
+        except EVAL_FAILURES:
             return None
         return [types.CompletionItem(label=name) for name in names if name.startswith(partial)]

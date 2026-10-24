@@ -34,10 +34,14 @@ from typing import TYPE_CHECKING
 import anyio
 
 from nanopynix._typechecking import BEARTYPING
-from nanopynix.exceptions import NixError
+from pynix._store_layout import StoreLayout
+from pynix._util import build_derivation
+from pynix_lsp._value import EVAL_FAILURES, LazyValue
 
 if TYPE_CHECKING or BEARTYPING:
-    import nanopynix
+    import huggorm
+
+    from pynix_lsp._value import EvalFailure
 
 _HEADER_LINE_RE = re.compile(
     r"^\s*#\s*pynix-lsp:\s*(?P<name>[A-Za-z_][A-Za-z0-9_'-]*)\s*=\s*(?P<expr>.+?)\s*$",
@@ -83,9 +87,9 @@ def parse_directives(source: str) -> list[ContextDirective]:
 class _SharedEval:
     """One (expr, path) directive's shared evaluation outcome, plus how many open files currently depend on it."""
 
-    session: nanopynix.AsyncEvalSession
-    value: nanopynix.AsyncValue | None = None
-    error: NixError | None = None
+    session: huggorm.AsyncEvalState
+    value: LazyValue | None = None
+    error: EvalFailure | None = None
     refcount: int = 0
 
 
@@ -106,7 +110,7 @@ class SharedEvalCache:
     down the value out from under it.
     """
 
-    def __init__(self, nix_session: nanopynix.rpc.Session, store: nanopynix.rpc.Store) -> None:
+    def __init__(self, nix_session: huggorm.AsyncSession, store: huggorm.AsyncStore) -> None:
         self._nix_session = nix_session
         self._store = store
         self._entries: dict[tuple[str, str], _SharedEval] = {}
@@ -117,17 +121,24 @@ class SharedEvalCache:
         """argv prefix needed to run binaries out of the store these evaluations use.
 
         Empty unless that store is relocated -- see
-        ``nanopynix.store_exec_prefix``. Memoized because it costs a
-        ``store_dirs()`` round trip and cannot change for a given store, and
-        because the dialects reach for it on a per-keystroke path.
+        ``StoreLayout.exec_prefix``. Memoized because it costs two store
+        round trips and cannot change for a given store, and because the
+        dialects reach for it on a per-keystroke path.
         """
         if self._store_exec_prefix is None:
-            self._store_exec_prefix = await nanopynix.store_exec_prefix(self._store)
+            self._store_exec_prefix = (await StoreLayout.of(self._store)).exec_prefix()
         return self._store_exec_prefix
+
+    async def build(self, value: LazyValue) -> dict[str, str]:
+        """Build the derivation *value*, and give the path of each output."""
+        drv_path = await value.attr("drvPath").to_python()
+        if not isinstance(drv_path, str):
+            raise TypeError(f"drvPath is {drv_path!r}, not a string")
+        return await build_derivation(self._store, drv_path)
 
     async def acquire(
         self, expr: str, path: str
-    ) -> tuple[nanopynix.AsyncEvalSession, nanopynix.AsyncValue | None, NixError | None]:
+    ) -> tuple[huggorm.AsyncEvalState, LazyValue | None, EvalFailure | None]:
         """Evaluate *expr* (against base directory *path*) on first use, or hand back the already-evaluated result.
 
         Increments the entry's refcount either way -- callers must pair this
@@ -137,12 +148,13 @@ class SharedEvalCache:
         async with self._lock:
             entry = self._entries.get(key)
             if entry is None:
-                session = self._nix_session.eval(self._store)
-                await session.open()
-                entry = _SharedEval(session)
+                state = self._nix_session.eval(self._store)
+                entry = _SharedEval(state)
                 try:
-                    entry.value = await session.string(expr, path)
-                except NixError as exc:
+                    value = await state.eval_expr(expr, path)
+                    await state.force(value)
+                    entry.value = LazyValue(state, value)
+                except EVAL_FAILURES as exc:
                     entry.error = exc
                 self._entries[key] = entry
             entry.refcount += 1
@@ -158,12 +170,12 @@ class SharedEvalCache:
             entry.refcount -= 1
             if entry.refcount <= 0:
                 del self._entries[key]
-                await entry.session.close()
+                await entry.session.aclose()
 
     async def close_all(self) -> None:
         """Force-close every remaining entry, regardless of refcount. Server shutdown only."""
         for entry in self._entries.values():
-            await entry.session.close()
+            await entry.session.aclose()
         self._entries.clear()
 
 
@@ -190,10 +202,10 @@ class FileContext:
         self._shared = shared
         self.directives = directives
         self._file_dir = file_dir
-        self._evals: dict[str, nanopynix.AsyncEvalSession] = {}
+        self._evals: dict[str, huggorm.AsyncEvalState] = {}
         self._acquired_keys: list[tuple[str, str]] = []
-        self.roots: dict[str, nanopynix.AsyncValue] = {}
-        self.errors: dict[str, NixError] = {}
+        self.roots: dict[str, LazyValue] = {}
+        self.errors: dict[str, EvalFailure] = {}
 
     async def reload(self) -> None:
         """(Re-)evaluate every directive's expression, reusing a shared evaluation where one already exists."""
@@ -218,8 +230,12 @@ class FileContext:
         """
         return await self._shared.store_exec_prefix()
 
-    def eval_session(self, root_name: str) -> nanopynix.AsyncEvalSession | None:
-        """The ``EvalSession`` that produced ``roots[root_name]``, if any.
+    async def build(self, value: LazyValue) -> dict[str, str]:
+        """Build the derivation *value* in the store backing this context."""
+        return await self._shared.build(value)
+
+    def eval_session(self, root_name: str) -> huggorm.AsyncEvalState | None:
+        """The evaluator that produced ``roots[root_name]``, if any.
 
         For auxiliary lookups against a value already known to live in that
         root's own evaluation graph (e.g. calling ``builtins.
@@ -241,7 +257,7 @@ class FileContext:
         self.errors.clear()
 
 
-async def resolve_root_path(context: FileContext, path: list[str]) -> nanopynix.AsyncValue | None:
+async def resolve_root_path(context: FileContext, path: list[str]) -> LazyValue | None:
     """Walk *path* through one of *context*'s bound roots by name (``path[0]``).
 
     Works for any name a directive bound directly, or a ``Dialect.derive_roots``

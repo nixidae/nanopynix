@@ -94,7 +94,7 @@ async def detect_tofu_version(tofu_bin: str, store_exec_prefix: Sequence[str] = 
 
     *tofu_bin* is a path inside the Nix store the caller evaluated against, so
     it is only directly executable when that store sits at its own logical
-    location. *store_exec_prefix* -- from ``nanopynix.store_exec_prefix`` --
+    location. *store_exec_prefix* -- from ``StoreLayout.exec_prefix`` --
     is what makes it runnable when the store is relocated instead; it is empty
     for an ordinary store, so passing it is unconditional.
     """

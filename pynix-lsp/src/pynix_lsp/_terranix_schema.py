@@ -4,8 +4,7 @@ Kept separate from ``_terranix.py``'s ``Dialect`` glue so this can be
 unit-tested against a fake JSON blob and a stubbed subprocess runner, with no
 LSP server or Nix evaluator involved at all.
 
-Modeled with pydantic (already a ``nanopynix`` dependency, see
-``nanopynix.settings``) rather than raw ``dict``/``isinstance`` walking: only
+Modeled with pydantic rather than raw ``dict``/``isinstance`` walking: only
 the fields this module actually reads are declared, and every model ignores
 unknown extra fields by default, so a newer ``tofu`` adding schema fields
 doesn't break parsing.
@@ -118,7 +117,7 @@ async def get_provider_schemas(
 
     Cached in-memory for the server's lifetime, and on disk across restarts.
 
-    *store_exec_prefix* (from ``nanopynix.store_exec_prefix``) is what makes
+    *store_exec_prefix* (from ``StoreLayout.exec_prefix``) is what makes
     *tofu_out* executable when it lives in a relocated store; it is empty
     otherwise. It is deliberately *not* part of the cache key: it changes how
     the command is run, never what it returns, since the same pair of store

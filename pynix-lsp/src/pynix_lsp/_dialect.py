@@ -22,8 +22,8 @@ from nanopynix._typechecking import BEARTYPING
 if TYPE_CHECKING or BEARTYPING:
     from lsprotocol import types
 
-    import nanopynix
     from pynix_lsp._context import FileContext
+    from pynix_lsp._value import LazyValue
 
 
 class Dialect:
@@ -37,7 +37,7 @@ class Dialect:
         """
         return
 
-    async def extra_hover_sections(self, value: nanopynix.AsyncValue) -> list[str] | None:
+    async def extra_hover_sections(self, value: LazyValue) -> list[str] | None:
         """Extra Markdown sections for a resolved *value*, replacing the generic type/JSON dump.
 
         Returns None to mean "nothing to add here, use the generic renderer."

@@ -1,19 +1,20 @@
 """Shared PynixLanguageServer test fixtures, wired to a real evaluator.
 
-Mirrors ``nanopynix_testing.nix_environment``'s pattern for reusable test
-infrastructure: any ``test_lsp_*.py`` file can request ``lsp_server`` (or
-``lsp_wire``) without re-deriving the pygls ``Workspace``/``Session``/
-``Store`` wiring.
+Any ``test_lsp_*.py`` file can request ``lsp_server`` (or ``lsp_wire``)
+without re-deriving the pygls ``Workspace`` and the huggorm session and store
+on the hermetic store of ``huggorm.testing``.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import huggorm
 import pytest
 import pytest_lsp
 from lsprotocol import types
@@ -24,9 +25,10 @@ from pytest_lsp import client_capabilities
 from pynix_lsp._handlers import create_server
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncGenerator, AsyncIterator
 
-    from nanopynix_testing.nix_environment import RpcSessionFactory
+    from huggorm.testing.environment import NixTestEnvironment
+
     from pynix_lsp._handlers import PynixLanguageServer
 
 # `parents[1]` is the suite root, `pynix/tests/`. Issue #130 moved this
@@ -41,8 +43,20 @@ def asset(name: str) -> Path:
     return LSP_ASSETS_ROOT / name
 
 
+@contextlib.asynccontextmanager
+async def _seeded(server: PynixLanguageServer, environment: NixTestEnvironment) -> AsyncGenerator[None]:
+    """Give *server* a session and store on *environment*, and close them after."""
+    async with huggorm.AsyncSession(environment.store_uri) as session:
+        server.nix_session = session
+        server.store = session.store()
+        try:
+            yield
+        finally:
+            await server.aclose()
+
+
 @pytest.fixture
-async def lsp_server(rpc_session: RpcSessionFactory) -> AsyncIterator[PynixLanguageServer]:
+async def lsp_server(shared_nix_environment: NixTestEnvironment) -> AsyncIterator[PynixLanguageServer]:
     """A PynixLanguageServer wired to a real evaluator and the test_lsp/ workspace."""
     server = create_server()
     # pygls exposes no public way to seed a Workspace without a real stdio
@@ -50,15 +64,8 @@ async def lsp_server(rpc_session: RpcSessionFactory) -> AsyncIterator[PynixLangu
     server.protocol._workspace = Workspace(  # type: ignore[reportPrivateUsage] -- intentional, see comment above
         root_uri=LSP_ASSETS_ROOT.as_uri(),
     )
-    async with rpc_session() as nix:
-        store = nix.store()
-        await store.open()
-        server.nix_session = nix
-        server.store = store
-        try:
-            yield server
-        finally:
-            await server.aclose()
+    async with _seeded(server, shared_nix_environment):
+        yield server
 
 
 class _FeedWriter:
@@ -84,7 +91,7 @@ class _FeedWriter:
 
 @pytest.fixture
 async def lsp_wire(
-    rpc_session: RpcSessionFactory,
+    shared_nix_environment: NixTestEnvironment,
 ) -> AsyncIterator[tuple[PynixLanguageServer, pytest_lsp.LanguageClient]]:
     """A real ``pytest_lsp.LanguageClient`` <-> ``PynixLanguageServer`` pair, wired in-process.
 
@@ -114,11 +121,7 @@ async def lsp_wire(
         run_async(stop_event=stop_event, reader=to_client, protocol=client.protocol, logger=_logger),
     )
 
-    async with rpc_session() as nix:
-        store = nix.store()
-        await store.open()
-        server.nix_session = nix
-        server.store = store
+    async with _seeded(server, shared_nix_environment):
         try:
             await client.initialize_session(
                 types.InitializeParams(
@@ -133,4 +136,3 @@ async def lsp_wire(
             to_server.feed_eof()
             to_client.feed_eof()
             await asyncio.gather(server_task, client_task)
-            await server.aclose()

@@ -9,6 +9,7 @@ import threading
 from typing import TYPE_CHECKING
 
 import anyio
+import huggorm
 from lsprotocol import types
 
 # `types.PrepareRenameResult` is a PEP 563-deferred type alias whose own
@@ -23,9 +24,8 @@ from pygls.lsp.server import LanguageServer
 from pygls.uris import from_fs_path, to_fs_path
 from pygls.workspace import TextDocument
 
-import nanopynix
 from nanopynix._typechecking import BEARTYPING
-from nanopynix.exceptions import NixError
+from pynix._util import apply_nix_settings
 from pynix_lsp._context import FileContext, SharedEvalCache, parse_directives, resolve_root_path
 from pynix_lsp._dialects import DIALECTS
 from pynix_lsp._module_system import resolve_module_arg
@@ -39,10 +39,12 @@ from pynix_lsp._syntax import (
     top_level_lambda_formals,
     top_level_symbols,
 )
+from pynix_lsp._value import EVAL_FAILURES
 
 if TYPE_CHECKING or BEARTYPING:
     from pynix_lsp._context import ContextDirective
     from pynix_lsp._syntax import ParseErrorRange
+    from pynix_lsp._value import EvalFailure
 
 _SERVER_NAME = "pynix-lsp"
 _SERVER_VERSION = "0.1.0"
@@ -50,23 +52,21 @@ _logger = logging.getLogger(__name__)
 
 
 class PynixLanguageServer(LanguageServer):
-    """Owns the one shared Nix evaluator worker for the whole server session.
+    """Owns the one huggorm session and store for the whole server session.
 
     Each open file with a ``# pynix-lsp:`` directive gets its own
-    ``FileContext`` within this one shared ``Session``/``Store`` --
-    opening a new ``EvalSession`` is cheap (a dedicated thread in the
-    existing worker), unlike spawning a whole new worker subprocess per
-    file. ``FileContext`` itself resolves each directive's ``EvalSession``
-    via ``shared_evals`` (a ``SharedEvalCache``), so two files declaring the
-    byte-identical directive expression share one already-evaluated
-    ``EvalSession`` rather than each paying its evaluation cost separately
-    -- see ``SharedEvalCache``'s own docstring.
+    ``FileContext`` within this one shared session and store.
+    ``FileContext`` resolves each directive's evaluator via ``shared_evals``
+    (a ``SharedEvalCache``), so two files declaring the byte-identical
+    directive expression share one already-evaluated evaluator rather than
+    each paying its evaluation cost separately -- see ``SharedEvalCache``'s
+    own docstring.
     """
 
     def __init__(self) -> None:
         super().__init__(_SERVER_NAME, _SERVER_VERSION)  # type: ignore[reportUnknownMemberType] -- pygls' LanguageServer.__init__ forwards *args/**kwargs, so pyright can't fully resolve its composed signature
-        self.nix_session: nanopynix.rpc.Session | None = None
-        self.store: nanopynix.rpc.Store | None = None
+        self.nix_session: huggorm.AsyncSession | None = None
+        self.store: huggorm.AsyncStore | None = None
         self.shared_evals: SharedEvalCache | None = None
         self.contexts: dict[str, FileContext] = {}
         self.diagnostics: dict[str, list[types.Diagnostic]] = {}
@@ -83,23 +83,19 @@ class PynixLanguageServer(LanguageServer):
         # asyncio is free to garbage-collect a still-running task.
         self.warm_tasks: set[asyncio.Task[None]] = set()
 
-    async def ensure_nix(self) -> tuple[nanopynix.rpc.Session, nanopynix.rpc.Store, SharedEvalCache]:
-        """Open the shared Session/Store/SharedEvalCache on first use.
+    async def ensure_nix(self) -> tuple[huggorm.AsyncSession, huggorm.AsyncStore, SharedEvalCache]:
+        """Open the shared session, store and SharedEvalCache on first use.
 
         ``nix_session``/``store`` may already be set without going through
         this method at all (the test suite's ``lsp_server`` fixture seeds
-        them directly from a shared, test-session-lifetime worker rather
-        than spawning a fresh one per test) -- only missing pieces are
-        created, so this must never unconditionally build a brand new
-        ``nanopynix.rpc.Session`` when one is already sitting there.
+        them on a hermetic store) -- only missing pieces are created.
         """
         if self.nix_session is None or self.store is None:
-            session = nanopynix.rpc.Session(experimental_features=["flakes", "nix-command"])
-            await session.open()
-            store = session.store()
-            await store.open()
-            self.nix_session = session
-            self.store = store
+            apply_nix_settings()
+            for feature in ("flakes", "nix-command"):
+                huggorm.enable_experimental_feature(feature)
+            self.nix_session = huggorm.AsyncSession()
+            self.store = self.nix_session.store()
         if self.shared_evals is None:
             self.shared_evals = SharedEvalCache(self.nix_session, self.store)
         return self.nix_session, self.store, self.shared_evals
@@ -112,11 +108,9 @@ class PynixLanguageServer(LanguageServer):
         if self.shared_evals is not None:
             await self.shared_evals.close_all()
             self.shared_evals = None
-        if self.store is not None:
-            await self.store.close()
-            self.store = None
+        self.store = None
         if self.nix_session is not None:
-            await self.nix_session.close()
+            await self.nix_session.aclose()
             self.nix_session = None
 
     async def start_io_async(self) -> None:
@@ -218,11 +212,11 @@ def _parse_error_diagnostic(error: ParseErrorRange) -> types.Diagnostic:
     )
 
 
-def _context_error_diagnostic(error: NixError, line: int) -> types.Diagnostic:
+def _context_error_diagnostic(error: EvalFailure, line: int) -> types.Diagnostic:
     position = types.Position(line, 0)
     return types.Diagnostic(
         range=types.Range(start=position, end=position),
-        message=f"pynix-lsp context failed to evaluate: {error.msg_without_ansi}",
+        message=f"pynix-lsp context failed to evaluate: {error}",
         severity=types.DiagnosticSeverity.Error,
         source=_SERVER_NAME,
     )
@@ -257,10 +251,9 @@ async def _warm_module_args(context: FileContext, source: str) -> None:
 
 def _setup_failure_diagnostic(error: Exception, line: int) -> types.Diagnostic:
     position = types.Position(line, 0)
-    message = error.msg_without_ansi if isinstance(error, NixError) else str(error)
     return types.Diagnostic(
         range=types.Range(start=position, end=position),
-        message=f"pynix-lsp could not open a Nix context: {message}",
+        message=f"pynix-lsp could not open a Nix context: {error}",
         severity=types.DiagnosticSeverity.Error,
         source=_SERVER_NAME,
     )
@@ -395,7 +388,7 @@ async def _hover(ls: PynixLanguageServer, params: types.HoverParams) -> types.Ho
         return None
     try:
         rendered = await render_value(value, DIALECTS)
-    except NixError:
+    except EVAL_FAILURES:
         return None
     return types.Hover(contents=types.MarkupContent(kind=types.MarkupKind.Markdown, value=rendered))
 
@@ -433,7 +426,7 @@ async def _completion(ls: PynixLanguageServer, params: types.CompletionParams) -
         return None
     try:
         names = await value.attr_names()
-    except NixError:
+    except EVAL_FAILURES:
         return None
     items = [types.CompletionItem(label=name) for name in names if name.startswith(partial)]
     return types.CompletionList(is_incomplete=False, items=items)

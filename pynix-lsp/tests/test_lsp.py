@@ -3,11 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, NoReturn
 
 import pytest
+from huggorm.testing.environment import LINUX_CHROOT_BUILD
 from lsprotocol import types
 
 from lsp_support.lsp_cursor import cursor_after
 from lsp_support.lsp_environment import asset
-from nanopynix_testing.nix_markers import LINUX_CHROOT_BUILD
 from pynix_lsp._context import parse_directives
 from pynix_lsp._handlers import _completion, _document_symbols, _hover, _sync_document
 from pynix_lsp._syntax import (

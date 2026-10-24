@@ -5,10 +5,10 @@ its own project. Two of them are the server itself, and the third realises an
 asset that only these scenarios read, so none of them belongs to `pynix` any
 more.
 
-**The rest of the harness arrives as a plugin.** `nix_backend`, `rpc_session`
-and the store fixtures come from `nanopynix_testing`, which every suite here
-installs, so this file does not repeat them. Issue #130 tracks the wider
-question of a shared test setup; nothing here waits on it.
+**The rest of the harness arrives as a plugin.** `nix_backend` and the store
+fixtures come from `huggorm.testing`, so this file does not repeat them.
+Issue #130 tracks the wider question of a shared test setup; nothing here
+waits on it.
 """
 
 from __future__ import annotations
@@ -18,15 +18,15 @@ from pathlib import Path
 
 import pytest
 
-from lsp_support.lsp_environment import lsp_server as lsp_server, lsp_wire as lsp_wire
-
 # Session scope, and anyio's own `anyio_backend` is module scope. Both are
 # global plugins because `pytest.ini` registers ours with `-p`, and anyio wins
 # that tie -- every session-scoped fixture that requests it then fails, which
 # `shared_nix_environment` does. A conftest beats any plugin, so importing the
-# fixture here settles it. `pynix/tests/conftest.py` and
-# `nanopynix/tests/conftest.py` carry the same import and the full account.
-from nanopynix_testing.nix_environment import anyio_backend as anyio_backend
+# fixture here settles it. `pynix/tests/conftest.py` carries the same import
+# and the full account.
+from huggorm.testing.environment import anyio_backend as anyio_backend
+
+from lsp_support.lsp_environment import lsp_server as lsp_server, lsp_wire as lsp_wire
 
 
 @pytest.fixture(scope="session")

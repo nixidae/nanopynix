@@ -53,7 +53,6 @@ from typing import TYPE_CHECKING, cast
 from lsprotocol import types
 
 from nanopynix._typechecking import BEARTYPING
-from nanopynix.exceptions import NixError
 from pynix_lsp._dialect import Dialect
 from pynix_lsp._jsonschema import FindingKind, list_properties, render, validate
 from pynix_lsp._module_system import MODULE_ENTRY_NAME, derive_module_roots
@@ -77,14 +76,15 @@ from pynix_lsp._terranix_schema import (
     walk_schema_block,
 )
 from pynix_lsp._tofu_core_schema import detect_tofu_version, get_core_schema, merge_schema_blocks
+from pynix_lsp._value import EVAL_FAILURES
 
 if TYPE_CHECKING or BEARTYPING:
     from collections.abc import Mapping
 
-    import nanopynix
     from pynix_lsp._context import FileContext
     from pynix_lsp._terranix_schema import ProviderSchemas
     from pynix_lsp._tofu_core_schema import CoreBlockSchema
+    from pynix_lsp._value import LazyValue
 
 TERRANIX_ENTRY_NAME = "terranixEntry"
 _BLOCK_KINDS = ("resource", "data")
@@ -201,15 +201,15 @@ class TerranixDialect(Dialect):
         config_root = entry.attr("terranix").attr("config")
         try:
             names = await config_root.attr_names()
-        except NixError:
+        except EVAL_FAILURES:
             return
         for name in names:
             context.roots.setdefault(name, config_root.attr(name))
 
-    async def _resource_output(self, entry: nanopynix.AsyncValue, attr_name: str) -> str | None:
+    async def _resource_output(self, context: FileContext, entry: LazyValue, attr_name: str) -> str | None:
         try:
-            outputs = await entry.attr(attr_name).build()
-        except NixError:
+            outputs = await context.build(entry.attr(attr_name))
+        except (*EVAL_FAILURES, TypeError):
             return None
         return outputs.get("out")
 
@@ -217,8 +217,8 @@ class TerranixDialect(Dialect):
         entry = context.roots.get(TERRANIX_ENTRY_NAME)
         if entry is None:
             return None
-        tofu_out = await self._resource_output(entry, "tofu")
-        module_out = await self._resource_output(entry, "module")
+        tofu_out = await self._resource_output(context, entry, "tofu")
+        module_out = await self._resource_output(context, entry, "module")
         if tofu_out is None or module_out is None:
             return None
         return tofu_out, module_out
@@ -321,7 +321,7 @@ class TerranixDialect(Dialect):
         if value is not None:
             # Blending in the assigned value is a bonus, not required -- the
             # schema section above is already a complete hover on its own.
-            with contextlib.suppress(NixError):
+            with contextlib.suppress(*EVAL_FAILURES):
                 sections.append(await render_value(value, dialects))
         return "\n\n".join(sections)
 
@@ -329,15 +329,15 @@ class TerranixDialect(Dialect):
         self,
         context: FileContext,
         path: list[str],
-    ) -> nanopynix.AsyncValue | None:
+    ) -> LazyValue | None:
         if path[0] not in context.roots:
             return None
         value = context.roots[path[0]]
         try:
             for segment in path[1:]:
                 value = value.attr(segment)
-            await value.get_type()
-        except NixError:
+            await value.type_name()
+        except EVAL_FAILURES:
             return None
         return value
 
@@ -432,7 +432,7 @@ class TerranixDialect(Dialect):
                 continue
             try:
                 resource_types = await root.attr_names()
-            except NixError:
+            except EVAL_FAILURES:
                 continue
             for resource_type in resource_types:
                 block = await self._block_for(context, block_kind, resource_type)
@@ -442,14 +442,14 @@ class TerranixDialect(Dialect):
                 type_root = root.attr(resource_type)
                 try:
                     instance_names = await type_root.attr_names()
-                except NixError:
+                except EVAL_FAILURES:
                     continue
                 for instance_name in instance_names:
                     if attrpath_range(source, (block_kind, resource_type, instance_name)) is None:
                         continue
                     try:
                         value = await type_root.attr(instance_name).to_python()
-                    except NixError:
+                    except EVAL_FAILURES:
                         continue
                     for finding in validate(schema, value):
                         if finding.kind is not FindingKind.UNKNOWN_PROPERTY:

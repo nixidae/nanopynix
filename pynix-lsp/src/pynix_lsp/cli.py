@@ -7,7 +7,6 @@ from typing import override
 import rich.traceback
 
 from libpynix import build_parser, complete, dispatch
-from nanopynix import set_manager_title
 from pynix._impl.main import run
 from pynix._settings import PynixCommand
 from pynix._util import configure_logging
@@ -50,6 +49,5 @@ def main() -> None:
     complete(parser)
     command = dispatch(parser, parser.parse_args())
     rich.traceback.install(show_locals=True)
-    set_manager_title("pynix-lsp")
     configure_logging()
     run(command.run)

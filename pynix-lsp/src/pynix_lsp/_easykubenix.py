@@ -48,16 +48,16 @@ from typing import TYPE_CHECKING, Any
 from lsprotocol import types
 
 from nanopynix._typechecking import BEARTYPING
-from nanopynix.exceptions import NixError
 from pynix_lsp._dialect import Dialect
 from pynix_lsp._easykubenix_schema import find_definition_key, load_schema, split_api_version
 from pynix_lsp._jsonschema import list_properties, render, walk
 from pynix_lsp._module_system import CONFIG_NAME, MODULE_ENTRY_NAME, derive_module_roots
 from pynix_lsp._syntax import completion_target_at, enclosing_binding_path_at, identifier_path_at
+from pynix_lsp._value import EVAL_FAILURES
 
 if TYPE_CHECKING or BEARTYPING:
-    import nanopynix
     from pynix_lsp._context import FileContext
+    from pynix_lsp._value import LazyValue
 
 EASYKUBENIX_ENTRY_NAME = "easykubenixEntry"
 _OBJECT_ROOT_NAMES = ("objects", "resources")
@@ -109,12 +109,12 @@ class EasykubenixDialect(Dialect):
         context.roots.setdefault(MODULE_ENTRY_NAME, entry.attr("moduleSystem"))
         derive_module_roots(context)
 
-    async def _attr_names(self, value: nanopynix.AsyncValue | None) -> list[str] | None:
+    async def _attr_names(self, value: LazyValue | None) -> list[str] | None:
         if value is None:
             return None
         try:
             return await value.attr_names()
-        except NixError:
+        except EVAL_FAILURES:
             return None
 
     async def _kind_names(self, context: FileContext) -> list[str] | None:
@@ -157,7 +157,7 @@ class EasykubenixDialect(Dialect):
         try:
             api_version = await config_root.attr("kubernetes").attr("apiMappings").attr(kind).to_python()
             schema_path = await entry.attr("openApiSchemaPath").to_python()
-        except NixError:
+        except EVAL_FAILURES:
             return None
         if not isinstance(api_version, str) or not isinstance(schema_path, str):
             return None

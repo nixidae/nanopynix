@@ -26,6 +26,7 @@ license-files = [ "LICENSE" ]
 # optional import does not close a cycle.
 dependencies = [
   "pynix",
+  "huggorm",
   "nanopynix",
   "jsonschema",
   "pydantic",
