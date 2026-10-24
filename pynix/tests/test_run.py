@@ -14,9 +14,9 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
+import huggorm
 import pytest
 
-import nanopynix
 from pynix._impl.run import choose_bin, expected_type, main_program
 from pynix.target import EvaluationTargetError
 from test_support.git_fixtures import commit_files, init_repo
@@ -82,7 +82,7 @@ _TOOLS = """
 
 def _flake(path: Path, nixpkgs_path: str, outputs: str) -> Path:
     path.mkdir()
-    system = nanopynix.current_system()
+    system = huggorm.current_system()
     (path / "flake.nix").write_text(
         "{\n"
         f'  inputs.nixpkgs = {{ url = "path:{nixpkgs_path}"; flake = false; }};\n'
@@ -160,4 +160,4 @@ def test_an_app_must_be_an_app(shared_nix_environment: NixTestEnvironment, nixpk
     flake = _flake(tmp_path / "wrong", nixpkgs_path, "apps.SYSTEM.default = tools;")
     result = _run(shared_nix_environment.store_uri, f"{flake}#")
     assert result.returncode == 1
-    assert f"attribute 'apps.{nanopynix.current_system()}.default' should have type 'app'" in result.stderr
+    assert f"attribute 'apps.{huggorm.current_system()}.default' should have type 'app'" in result.stderr

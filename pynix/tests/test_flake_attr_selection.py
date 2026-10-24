@@ -16,11 +16,11 @@ import json
 import re
 from typing import TYPE_CHECKING
 
+import huggorm
 import pytest
 
-import nanopynix
-from nanopynix._ansi import strip_ansi
 from pynix import parse
+from support.ansi import strip_ansi
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -138,7 +138,7 @@ async def test_a_missing_fragment_names_every_candidate(
     search_flake: Path,
 ) -> None:
     """The message of `InstallableFlake::getCursors`, and the names that exist."""
-    system = nanopynix.current_system()
+    system = huggorm.current_system()
     cmd = parse(["eval", "--flake", f"{search_flake}#absent", *shared_nix_environment.pynix_store_args()])
 
     with pytest.raises(SystemExit):

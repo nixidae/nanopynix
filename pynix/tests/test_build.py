@@ -10,7 +10,6 @@ from huggorm.errors import BuildError, EvalError
 from huggorm.fod import replace_fod_hash as _real_replace_fod_hash
 from huggorm.testing.environment import LINUX_CHROOT_BUILD, with_nixpkgs
 
-from nanopynix._ansi import strip_ansi
 from pynix import _util, parse
 from pynix._impl import build as build_impl
 from pynix._impl.build import (  # pyright: ignore[reportPrivateUsage] -- test drives the private build step directly to exercise FOD-update/dry-run paths
@@ -19,6 +18,7 @@ from pynix._impl.build import (  # pyright: ignore[reportPrivateUsage] -- test d
     _build_target,
 )
 from pynix.target import EvaluationTarget
+from support.ansi import strip_ansi
 from test_support.git_fixtures import init_flake_repo
 
 if TYPE_CHECKING:

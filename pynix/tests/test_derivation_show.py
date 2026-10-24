@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+import huggorm
 import pytest
 from huggorm.testing.environment import with_nixpkgs
 
-import nanopynix
-from nanopynix._ansi import strip_ansi
 from pynix import parse
+from support.ansi import strip_ansi
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -61,7 +61,7 @@ async def test_show_file(
     # system of the machine. Naming one host made this fail on macOS with
     # `aarch64-darwin`, and the subject is that `derivation show` reports the
     # field, not what the field holds.
-    assert drv["system"] == nanopynix.current_system()
+    assert drv["system"] == huggorm.current_system()
     assert "out" in drv["outputs"]
 
 

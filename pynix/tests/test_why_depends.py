@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING
 import pytest
 from huggorm.testing.environment import LINUX_CHROOT_BUILD, with_nixpkgs
 
-from nanopynix import strip_ansi
 from pynix import parse
+from support.ansi import strip_ansi
 from support.nix_oracle import require_matching_nix_cli
 from test_support.subprocess_output import run_process
 

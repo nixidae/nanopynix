@@ -35,8 +35,8 @@ from typing import TYPE_CHECKING, Any
 import anyio
 import pytest
 
-from nanopynix import strip_ansi
 from pynix import parse
+from support.ansi import strip_ansi
 from support.nix_oracle import require_matching_nix_cli
 from test_support.subprocess_output import run_process
 

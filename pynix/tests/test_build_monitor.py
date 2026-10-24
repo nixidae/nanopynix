@@ -4,8 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from nanopynix import ActivityType, LogEvent, ResultType
-from pynix._build_monitor import BuildPlan, MonitorState, format_bytes, format_duration, render, store_path_name
+from huggorm import ActivityType, ResultType
+
+from pynix._build_monitor import (
+    BuildPlan,
+    MonitorState,
+    RecordEvent,
+    format_bytes,
+    format_duration,
+    render,
+    store_path_name,
+)
 
 DRV = "/nix/store/zrrcdd2k8m57ciadr6rkm56vww6pbjhw-hello-2.12.drv"
 OTHER_DRV = "/nix/store/6lf31wv62nchj9347w6p1nkcrywb4k20-broken-1.0.drv"
@@ -15,23 +24,25 @@ CACHE = "https://cache.nixos.org"
 BUILDS_ID, COPIES_ID, BUILD_ID, COPY_ID, FAIL_ID = 1, 2, 3, 4, 5
 
 
-def start(activity_id: int, activity_type: ActivityType, text: str = "", fields: list[Any] | None = None) -> LogEvent:
-    return LogEvent(request_id=1, action="start", args=[activity_id, 3, int(activity_type), text, fields or [], 0])
+def start(
+    activity_id: int, activity_type: ActivityType, text: str = "", fields: list[Any] | None = None
+) -> RecordEvent:
+    return RecordEvent("start", [activity_id, 3, int(activity_type), text, fields or [], 0])
 
 
-def stop(activity_id: int) -> LogEvent:
-    return LogEvent(request_id=1, action="stop", args=[activity_id])
+def stop(activity_id: int) -> RecordEvent:
+    return RecordEvent("stop", [activity_id])
 
 
-def result(activity_id: int, result_type: ResultType, fields: list[Any]) -> LogEvent:
-    return LogEvent(request_id=1, action="result", args=[activity_id, int(result_type), fields])
+def result(activity_id: int, result_type: ResultType, fields: list[Any]) -> RecordEvent:
+    return RecordEvent("result", [activity_id, int(result_type), fields])
 
 
-def error(message: str) -> LogEvent:
-    return LogEvent(request_id=1, action="error", args=[0, message, {}])
+def error(message: str) -> RecordEvent:
+    return RecordEvent("error", [0, message, {}], message)
 
 
-def feed(state: MonitorState, events: list[tuple[float, LogEvent]]) -> list[str]:
+def feed(state: MonitorState, events: list[tuple[float, RecordEvent]]) -> list[str]:
     printed: list[str] = []
     for now, event in events:
         printed += [line.plain for line in state.apply(event, now)]

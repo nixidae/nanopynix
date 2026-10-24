@@ -5,13 +5,8 @@
 # test infrastructure.
 """What this suite needs, and the scenario objects that only it uses.
 
-Issue #130 moved the suite here from ``tests/pynix/``, so that a Nix
-invocation reads one project and not the whole repository. Everything the root
-``tests/conftest.py`` used to supply is now registered below.
-
-``nanopynix_testing.fixtures`` is present here and absent from the helpers
-suite: these tests drive a real CLI against a real store, so they need the
-store, the evaluator and ``repo_root``.
+The stores come from ``huggorm.testing``. This file adds what only this suite
+uses: ``repo_root``, ``nixpkgs_path`` and the shared sessions.
 
 ``support/`` is a package inside the suite because nothing outside the suite
 reads it. The language-server fixtures that used to be re-exported here moved

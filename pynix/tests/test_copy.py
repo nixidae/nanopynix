@@ -18,7 +18,6 @@ import pytest
 from huggorm.errors import NixError
 from huggorm.testing.environment import LINUX_CHROOT_BUILD, force_rmtree, with_nixpkgs
 
-from nanopynix import stores
 from pynix import parse
 from test_support.subprocess_output import run_process
 
@@ -64,7 +63,7 @@ async def destination_store(tmp_path_factory: pytest.TempPathFactory) -> AsyncIt
     """
     root = tmp_path_factory.mktemp("pynix-copy-destination")
     try:
-        yield stores.Local(root=str(root), require_sigs=True).uri()
+        yield f"local://?require-sigs=true&root={root}"
     finally:
         force_rmtree(root)
 

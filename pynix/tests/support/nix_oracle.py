@@ -20,9 +20,9 @@ from __future__ import annotations
 import re
 import shutil
 
+import huggorm
 import pytest
 
-import nanopynix
 from test_support.subprocess_output import run_process
 
 
@@ -49,7 +49,7 @@ async def require_matching_nix_cli() -> str:
         pytest.skip(f"the nix CLI is the oracle for this test, and `nix --version` exited {result.returncode}")
 
     cli = _version_of(result.stdout)
-    linked = _version_of(str(nanopynix.build_info()["nix_version"]))  # type: ignore[reportUnknownArgumentType] -- extension lacks stubs
+    linked = _version_of(huggorm.nix_version())
     if cli is None or linked is None:
         pytest.skip(f"cannot read both Nix versions to compare them: cli={cli!r} linked={linked!r}")
     if cli != linked:

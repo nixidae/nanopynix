@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from nanopynix._ansi import strip_ansi
 from pynix import parse
+from support.ansi import strip_ansi
 
 if TYPE_CHECKING:
     from pathlib import Path
