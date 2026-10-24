@@ -59,7 +59,6 @@ let
       ../ruff.toml
       ../ruff-strict.toml
       ../nanopynix
-      ../nanopynix-helpers
       ../nanopynix-proto
       # The CLI layer, which issue #222 moved out of `../pynix`. Without it
       # `check-lint`, `check-format` and `check-types` read a smaller tree
@@ -116,7 +115,6 @@ let
   # `extraPaths` lists `docs` and `docs/conf.py` imports sphinx.
   pythonEnv = pythonSet.mkVirtualEnv "nanopynix-check-env" {
     nanopynix = [ "test" ];
-    nanopynix-helpers = [ "test" ];
     # pyright reads `libpynix/src` and `libpynix/tests`, and that suite
     # imports `argcomplete` and `pytest` directly.
     libpynix = [ "test" ];
@@ -175,17 +173,7 @@ let
     test-support = [ "test" ];
   };
 
-  # And a fifth. `nanopynix-helpers` carries its own suite since issue #130.
-  # The repository run reaches it through `testpaths`, and this gate is what
-  # proves the suite also stands up alone, under its own rootdir and with
-  # only this project's dependencies. Its `test` extra reaches
-  # `nanopynix[test]`, which supplies pytest, `test-support` and
-  # `nanopynix-testing`.
-  helpersEnv = pythonSet.mkVirtualEnv "nanopynix-helpers-test-env" {
-    nanopynix-helpers = [ "test" ];
-  };
-
-  # And a sixth. `libpynix` is the command-line layer that issue #222 moved
+  # And a fifth. `libpynix` is the command-line layer that issue #222 moved
   # out of `pynix`. A venv holding this project alone is what proves it stands
   # up without `pynix`, and without any part of Nix: the whole reason it is a
   # separate project is that a consumer should be able to take the parser
@@ -194,7 +182,7 @@ let
     libpynix = [ "test" ];
   };
 
-  # And a seventh. `pynix` and nothing else, which is what the `pynix-isolated`
+  # And a sixth. `pynix` and nothing else, which is what the `pynix-isolated`
   # gate below asks a question of. The dev shell carries the language server
   # on purpose, so no environment that a person works in can answer it.
   pynixOnlyEnv = pythonSet.mkVirtualEnv "pynix-only-env" {
@@ -340,21 +328,9 @@ in
     python -m pytest -p no:cacheprovider pytest-agent/tests
   '';
 
-  # The shared helpers, gated for the same reason as the two gates above: the
-  # repository suite collects `tests/` and not this directory, so without this
-  # the suite of the project that every other suite depends on would run
-  # nowhere.
-  #
-  # The suite of the helpers package, which moved beside the package that it
-  # tests. The directory and not `nanopynix-helpers/tests`, for the same
-  # reason as the gate below: this project carries its own `pytest.ini`.
-  nanopynix-helpers = mkCheck "nanopynix-helpers" [
-    helpersEnv
-  ] "python -m pytest -p no:cacheprovider nanopynix-helpers";
-
-  # The CLI layer of issue #222. The directory and not `libpynix/tests`, for
-  # the same reason as the gate above: this project carries its own
-  # `pytest.ini`, and pointing pytest at the project makes `testpaths` apply.
+  # The CLI layer of issue #222. The directory and not `libpynix/tests`: this
+  # project carries its own `pytest.ini`, and pointing pytest at the project
+  # makes `testpaths` apply.
   libpynix = mkCheck "libpynix" [
     libpynixEnv
   ] "python -m pytest -p no:cacheprovider libpynix";

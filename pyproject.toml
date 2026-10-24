@@ -7,7 +7,6 @@ defineConstant = { GC_PATHS_UNION = false }
 extraPaths = [
   ".",
   "nanopynix/src",
-  "nanopynix-helpers/src",
   "libpynix/src",
   "pynix/src",
   "pytest-agent/src",
@@ -77,7 +76,7 @@ extraPaths = ["pytest-agent/tests"]
 reportPrivateUsage = "none"
 
 [tool.coverage.run]
-source_pkgs = ["nanopynix", "nanopynix_helpers", "libpynix", "pynix", "pynix_lsp"]
+source_pkgs = ["nanopynix", "libpynix", "pynix", "pynix_lsp"]
 branch = true
 # The Nix worker runs in a process forked from a `multiprocessing` forkserver
 # helper, not a plain subprocess. `concurrency = multiprocessing` plus
@@ -93,10 +92,6 @@ sigterm = true
 
 [tool.coverage.paths]
 nanopynix = ["nanopynix/src/nanopynix", "*/site-packages/nanopynix"]
-nanopynix_helpers = [
-  "nanopynix-helpers/src/nanopynix_helpers",
-  "*/site-packages/nanopynix_helpers",
-]
 libpynix = ["libpynix/src/libpynix", "*/site-packages/libpynix"]
 pynix = ["pynix/src/pynix", "*/site-packages/pynix"]
 pynix_lsp = ["pynix-lsp/src/pynix_lsp", "*/site-packages/pynix_lsp"]

@@ -92,7 +92,7 @@ the split worth having: every import that reaches an evaluator sits inside the
 function a completion calls, so a start that only lists an option pays for a
 function object and nothing else.
 
-**The walk itself is in `nanopynix_helpers.attr_completion`, and a second Nix
+**The walk itself is in `huggorm.attrcompletion`, and a second Nix
 CLI takes it from there.** That module holds the two rules `nix` applies -- one
 for `--file`, one for the fragment of a flake -- as two functions over a value
 the caller already evaluated. It opens no store and holds no budget, so a

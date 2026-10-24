@@ -143,15 +143,6 @@ let
         };
       };
 
-    nanopynix-helpers =
-      _pySelf: rendered:
-      nixLinked rendered
-      // {
-        meta = rendered.meta // {
-          platforms = lib.platforms.unix;
-        };
-      };
-
     # No `nixLinked`, although this project declares `--file`, `--flake` and
     # `--attr`. It declares those three and reads none of them, so it reaches
     # `huggorm-bindings` through nothing and really is the same package
@@ -236,11 +227,10 @@ let
     # change to a transport is live in the dev shell without a rebuild.
     grpclib-transports = { };
     nanopynix = { };
-    nanopynix-helpers = { };
     # The command-line layer, which issue #222 moved out of
     # `pynix/src/pynix/_cli.py`. `easykubenix` had copied the same 359 lines
     # to get a second Nix CLI, and the two diverged in six days. A separate
-    # project and not a module of `nanopynix-helpers`: this one depends on no
+    # project and not a module of `pynix`: this one depends on no
     # part of nanopynix, and a consumer that takes it should not have to take
     # the evaluator with it.
     libpynix = { };

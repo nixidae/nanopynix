@@ -13,7 +13,7 @@ because ``pynix.target`` pulls ``structlog`` and the exception tree of
 nanopynix. A command module imports whatever declares its options, so a
 declaration next to the code that reads it puts that cost on every command.
 The code that reads these three stays in the program: ``pynix.target``
-resolves them, and ``nanopynix_helpers.eval_target`` holds the search.
+resolves them, and ``huggorm.attrpath`` holds the search.
 
 **A completer is a parameter, and this module supplies none.** Answering a
 Tab after ``--attr`` means evaluating Nix while a person holds a key down,

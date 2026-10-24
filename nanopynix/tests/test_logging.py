@@ -305,7 +305,7 @@ def _log_event(request_id: int) -> LogEventProto:
 async def test_the_outbox_discards_the_oldest_log_line():
     """The oldest, because the end of a log is the part worth keeping.
 
-    ``nanopynix_helpers.build`` scans a capture for the
+    A fixed-output hash update scans a capture for the
     fixed-output hash mismatch Nix prints next to the failure.
     """
     outbox = LogOutbox(maxsize=3)

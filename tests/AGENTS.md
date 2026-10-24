@@ -27,7 +27,6 @@ rootdir:
 | directory | holds | scope of one test |
 |---|---|---|
 | `nanopynix/tests/` | the library, by subsystem | one behaviour of nanopynix |
-| `nanopynix-helpers/tests/` | the pure helper package | one helper behaviour |
 | `pynix/tests/` | the CLI and the LSP server | one command or one editor request |
 | `pynix/tests/support/` | the LSP client, drivers, markers and scenarios. **No tests.** | — |
 | `pynix/completions/tests/` | the shell completions of the installed `pynix` | one line a user can type |
@@ -98,7 +97,7 @@ the scanners of the meta tests, and the LSP drivers.
 **The beartype hook went with the fixtures, and it had to.** A suite that
 reaches its own rootdir and cannot install the hook loses runtime type
 checking and still passes every test, so the loss is silent. It names
-`nanopynix`, `nanopynix_helpers` and `pynix` in its package list, which is why
+`nanopynix` and `pynix` in its package list, which is why
 it is in `nanopynix-testing` and not in `test-support`.
 
 `nanopynix/tests/` is the large one, and it groups by the layer under test:

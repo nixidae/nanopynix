@@ -361,7 +361,7 @@ class BuildHashMismatchError(BuildError, HashMismatchError):
     (see :class:`OutputRejectedError`). When this *is* raised, ``msg`` contains
     Nix's ``specified:``/``got:`` prose -- the hashes have no structured
     representation anywhere in Nix, so parsing the message is the only way to
-    recover them (``nanopynix_helpers.fod`` does exactly that).
+    recover them (``huggorm.fod`` does exactly that).
     """
 
 

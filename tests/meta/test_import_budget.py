@@ -207,7 +207,7 @@ def test_the_budget_is_not_slack() -> None:
 #: - ``pydantic_settings``, 123.6 ms. A settings model of about 200 fields
 #:   built itself in its class body. pynix now holds no such model.
 #: - ``prompt_toolkit``, 85 ms. The REPL, now in ``pynix._impl.repl``.
-#: - ``nanopynix_helpers.fod``, which imports ``tree_sitter_nix``, which
+#: - ``huggorm.fod``, which imports ``tree_sitter_nix``, which
 #:   imports ``tree_sitter_config``, which imports ``email_validator`` for one
 #:   ``EmailStr`` field.
 #: - ``nanopynix.settings`` and ``nanopynix.stores``, which the lazy surface of
@@ -215,12 +215,12 @@ def test_the_budget_is_not_slack() -> None:
 #: - either engine, which no command needs before it runs.
 FORBIDDEN_IN_PYNIX = (
     "anyio",
+    "huggorm.fod",
     "nanopynix.exceptions",
     "nanopynix.inproc",
     "nanopynix.rpc",
     "nanopynix.settings",
     "nanopynix.stores",
-    "nanopynix_helpers.fod",
     "nanopynix_proto",
     "prompt_toolkit",
     "pydantic",

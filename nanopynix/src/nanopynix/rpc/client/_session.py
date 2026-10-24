@@ -923,7 +923,7 @@ class LockedFlakeHandle(AsyncLockedFlake):
         ``outputs`` and ``sourceInfo``. Every command of `nix` selects ``outputs``
         out of it before it resolves an attribute path, in `openEvalCache` of
         `src/libflake/flake.cc`. A caller that copies the `nix` CLI takes
-        :func:`nanopynix_helpers.flake_outputs`, which is that step. Issue #228
+        :func:`huggorm.attrpath.flake_outputs`, which is that step. Issue #228
         measured what skipping it accepted.
         """
         self._check_active()
@@ -1371,7 +1371,7 @@ class EvalSession(AsyncEvalSession["ValueProxy"]):
         ``outputs`` and ``sourceInfo``. Every command of `nix` selects ``outputs``
         out of it before it resolves an attribute path, in `openEvalCache` of
         `src/libflake/flake.cc`. A caller that copies the `nix` CLI takes
-        :func:`nanopynix_helpers.flake_outputs`, which is that step. Issue #228
+        :func:`huggorm.attrpath.flake_outputs`, which is that step. Issue #228
         measured what skipping it accepted.
 
             For more control (e.g. updating locks in memory before evaluating),

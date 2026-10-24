@@ -33,7 +33,6 @@ let
   # this runner is what CI executes.
   pythonEnv = pythonSet.mkVirtualEnv "nanopynix-test-env" {
     nanopynix = [ "test" ];
-    nanopynix-helpers = [ ];
     pynix = [ "test" ];
     # `testpaths` in the repository `pytest.ini` names `pynix-lsp/tests`, so
     # the runner collects that suite and needs the server and `pytest-lsp`.

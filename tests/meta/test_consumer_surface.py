@@ -4,7 +4,7 @@ CLAUDE.md states two rules about this boundary, and nothing checked either one.
 ``pynix`` must depend on the public APIs of ``nanopynix``, and a narrow
 dependency on a private module is acceptable only when a redesign is not
 justified. Measured before this file existed: 30 private import sites across
-``pynix`` and ``nanopynix-helpers``, and none of them recorded the
+``pynix`` and its helper package, and none of them recorded the
 decision. The rule was clear, it was written down, and nothing looked.
 
 Three gates, and they are not the same kind of thing.
@@ -119,7 +119,7 @@ CONSUMER_ENGINE_ANNOTATIONS: dict[tuple[str, str], str] = {
 # Five entries retired here, and the `ValueProxy` one named its own condition:
 # "expressing it would make `AsyncValue` generic over the store type. Until
 # then, the one function that pairs a value with a build store names the
-# class." Issue #232 made it generic, so `nanopynix_helpers.build` and
+# class." Issue #232 made it generic, so the fixed-output build helper and
 # `pynix._impl.build` take the protocols and the four entries for the first
 # and the one for the second have no subject left.
 #
@@ -178,8 +178,8 @@ def test_the_scanner_ignores_a_mention_that_is_not_an_import() -> None:
 
 
 def test_the_scanner_ignores_a_package_with_a_similar_name() -> None:
-    """``nanopynix_helpers`` is a separate distribution, not a submodule."""
-    assert not scan_source("from nanopynix_helpers import build", Path("x.py"))
+    """``nanopynix_testing`` is a separate distribution, not a submodule."""
+    assert not scan_source("from nanopynix_testing import nix_runtime", Path("x.py"))
 
 
 def test_the_scanner_sees_an_internal_module_with_a_public_looking_name() -> None:

@@ -13,7 +13,7 @@ was still narrower than Nix's:
   most three numeric parameters;
 - ``nanopynix/tests/primops/test_primop_error_parity.py``,
   ``\x1b\[[0-9;]*m``, any SGR sequence;
-- ``nanopynix_helpers.fod``, ``\x1b\[[0-?]*[ -/]*[@-~]``, any CSI sequence.
+- ``huggorm.fod``, ``\x1b\[[0-?]*[ -/]*[@-~]``, any CSI sequence.
 
 Measured against three sequences that Nix removes. None of the three patterns
 removes an OSC 8 hyperlink, ``\x1b]8;;http://x\x1b\a\x1b]8;;\x1b\``, because

@@ -27,7 +27,6 @@ SUITE_ROOTS = (
     REPO_ROOT / "tests",
     REPO_ROOT / "nanopynix" / "tests",
     REPO_ROOT / "test-support" / "tests",
-    REPO_ROOT / "nanopynix-helpers" / "tests",
     # The CLI layer, which issue #222 moved out of `pynix/src/pynix/_cli.py`
     # so that a second Nix CLI in Python does not have to copy it.
     REPO_ROOT / "libpynix" / "tests",

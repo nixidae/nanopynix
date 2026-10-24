@@ -32,7 +32,6 @@
 pythonSet.mkVirtualEnv "nanopynix-dev-env" (
   {
     nanopynix = [ "test" ];
-    nanopynix-helpers = [ "test" ];
     # The CLI layer, which issue #222 moved out of `pynix`. Already in the
     # venv as a dependency of `pynix`; named here for its `test` extra, so
     # `pytest libpynix` runs from the dev shell.

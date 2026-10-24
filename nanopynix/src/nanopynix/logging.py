@@ -88,7 +88,7 @@ the rule reaches both engines."""
 _CAPTURE_MAX_EVENTS = 100_000
 """How many events one :class:`LogCapture` keeps before it discards the oldest.
 
-The oldest, not the newest: ``nanopynix_helpers.build`` scans a capture for
+The oldest, not the newest: a fixed-output hash update scans a capture for
 the fixed-output hash mismatch that Nix prints next to the failure, so the end
 of the log is the part worth keeping."""
 

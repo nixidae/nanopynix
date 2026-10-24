@@ -36,7 +36,6 @@ NIX_LAYER = REPO_ROOT / "nanopynix-testing" / "src" / "nanopynix_testing"
 _FORBIDDEN_FOR_GENERIC = (
     "nanopynix",
     "nanopynix_testing",
-    "nanopynix_helpers",
     "nanopynix_proto",
     "pynix",
     "ekn",

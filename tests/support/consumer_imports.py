@@ -67,7 +67,6 @@ CONSUMER_ROOTS = (
     # first-party consumer of `nanopynix` exactly as `pynix` is, and without
     # this entry the move took 14 modules out from under the ledger.
     "pynix-lsp/src",
-    "nanopynix-helpers/src",
     "docs",
 )
 
@@ -137,7 +136,7 @@ def _is_nanopynix(module: str | None) -> bool:
     ``nanopynix_proto`` is not under ``nanopynix``, so the prefix test alone
     would not see it. It is tracked because it is on ``INTERNAL_PREFIXES``.
     A package that merely starts with the same letters, such as
-    ``nanopynix_helpers``, is a separate distribution and is not tracked.
+    ``nanopynix_testing``, is a separate distribution and is not tracked.
     """
     if module is None:
         return False

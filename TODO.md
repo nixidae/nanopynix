@@ -482,7 +482,7 @@ these functions: `pynix/tests/support/lsp_scenario.py`'s `_apply` (38 branches/8
 branches/56 statements), `pynix-lsp/src/pynix_lsp/_syntax.py`'s `_resolve_declaration`
 (18 branches) and `_identifier_path_at_node` (17 branches/11 returns), and a
 long tail of smaller too-many-arguments constructors/factories (`ekn/apply.py`,
-`nanopynix_helpers/build.py`, `nanopynix/inproc/_impl.py`,
+`nanopynix/inproc/_impl.py`,
 `rpc/client/_pool.py`, `rpc/client/session.py`, `rpc/client/_session.py`,
 among others). Run `ruff check --select C901,PLR0911,PLR0912,PLR0913,PLR0915`
 for the full current list.

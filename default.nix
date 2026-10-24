@@ -284,7 +284,6 @@ let
 
         inherit (final.pythonSet)
           nanopynix-proto
-          nanopynix-helpers
           # The command-line layer that issue #222 moved out of
           # `pynix`. Exported so that a second Nix CLI in Python can
           # take it instead of copying it, which is the whole reason it
@@ -490,7 +489,6 @@ lib.throwIf (unlistedVariants != [ ])
       nanopynix
       # The engine: huggorm's generated bindings, linked against this Nix.
       huggorm-bindings
-      nanopynix-helpers
       nanopynix-proto
       # The command-line layer of issue #222. It reaches
       # `huggorm-bindings` through nothing, so this one attribute is the

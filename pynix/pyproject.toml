@@ -12,11 +12,10 @@ license-files = [ "LICENSE" ]
 dependencies = [
   "huggorm",
   "nanopynix",
-  "nanopynix-helpers",
   # The command-line layer, which issue #222 moved out of this project so that
   # a second Nix CLI in Python does not have to copy 359 lines to exist. It
   # depends on no part of nanopynix, which is why it is a project beside this
-  # one rather than a module of `nanopynix-helpers`.
+  # one rather than a module of it.
   "libpynix",
   "myst-parser",
   "prompt-toolkit",

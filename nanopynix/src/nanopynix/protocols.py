@@ -273,7 +273,7 @@ class AsyncValue[StoreT: AsyncStore = Any](Protocol):
         own store type, so each engine names its own.
 
         Issue #232 measured what the omission cost.
-        ``nanopynix_helpers.build`` had to import ``nanopynix.rpc`` to reach
+        A build helper had to import ``nanopynix.rpc`` to reach
         this parameter, and beartype checks an annotation at call time, so the
         helper then refused every value that ``nanopynix.inproc`` makes.
         """
@@ -684,7 +684,7 @@ class AsyncLockedFlake(Protocol):
 
         The value holds the outputs merged with the metadata of the flake, so
         a caller that copies the `nix` CLI takes
-        :func:`nanopynix_helpers.flake_outputs` first. Issue #228 says why.
+        :func:`huggorm.attrpath.flake_outputs` first. Issue #228 says why.
         """
         ...
 
@@ -916,7 +916,7 @@ class AsyncEvalSession[ValueT: AsyncValue = AsyncValue](AsyncVerbosityController
 
         The value holds the outputs merged with the metadata of the flake, so
         a caller that copies the `nix` CLI takes
-        :func:`nanopynix_helpers.flake_outputs` first. Issue #228 says why.
+        :func:`huggorm.attrpath.flake_outputs` first. Issue #228 says why.
         """
         ...
 

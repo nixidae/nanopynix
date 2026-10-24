@@ -40,7 +40,7 @@ Issue #222 made this a library. Before it, ``pynix/src/pynix/_cli.py`` was
 # every import in it is a deliberate re-export that no runtime line reads, so
 # 'unused' is what a correct entry looks like.
 #
-# Eager, and not the lazy PEP 562 table that `nanopynix_helpers` uses.
+# Eager, and not a lazy PEP 562 table.
 #
 # Measured: a bare interpreter holds 34 modules, `import libpynix` holds 92,
 # and `import libpynix.command` alone holds the same 92. So `command` is the

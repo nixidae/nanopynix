@@ -62,7 +62,7 @@ reach, in the `static-checks` job. Each one is a derivation in
 `nix/checks.nix`, and each is a package. Build them to run a gate the way CI
 runs it, in a sandbox and not in the dev shell:
 
-- nix build --file . --no-link --keep-going checks.lint checks.lint-strict checks.format checks.types checks.shell checks.grpclib-transports checks.pytest-agent checks.test-support checks.nanopynix-helpers checks.libpynix checks.pynix-isolated checks.completions
+- nix build --file . --no-link --keep-going checks.lint checks.lint-strict checks.format checks.types checks.shell checks.grpclib-transports checks.pytest-agent checks.test-support checks.libpynix checks.pynix-isolated checks.completions
 
 **This repository does not build as a flake, so `--file .` is the only way
 in.** `nix/sources.nix` asks the nixidae umbrella where every dependency
@@ -257,8 +257,8 @@ a second Nix CLI, and the two diverged in six days.
 
 **It depends on `argcomplete` and on nothing else. Keep it that way.** A
 consumer takes the parser without taking the evaluator, which is the whole
-reason it is a project beside `pynix` rather than a module of
-`nanopynix-helpers`. Two things follow. `nix/py-packages.nix` gives it no
+reason it is a project beside `pynix` rather than a module of it. Two
+things follow. `nix/py-packages.nix` gives it no
 `nixLinked` suffix, so it is one package for every Nix version -- measured:
 `nanopynixVersions.stable.libpynix` and `nanopynixVersions.nix_2_35.libpynix`
 are the same store path. And `libpynix/src/libpynix/_typecheck.py` carries its

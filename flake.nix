@@ -80,7 +80,6 @@
           inherit (each.${system})
             nanopynix
             huggorm-bindings
-            nanopynix-helpers
             nanopynix-proto
             nanopynix-docs
             libpynix
