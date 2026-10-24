@@ -8,9 +8,11 @@ node moved, and which node stayed.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import huggorm
 import pygit2
 import pytest
 from huggorm.testing.environment import NixTestEnvironment
@@ -19,6 +21,16 @@ from pynix import parse
 from support.nix_oracle import require_matching_nix_cli
 from test_support.git_fixtures import LinkedFlakes, commit_files, init_linked_flakes
 from test_support.subprocess_output import run_process
+
+
+@pytest.fixture(autouse=True)
+def _tarball_ttl_returns() -> Iterator[None]:
+    """`flake lock` sets `tarball-ttl` to 0 for its process, as `nix flake lock`
+    does, and these tests run it in the pytest process."""
+    before = huggorm.get_setting("tarball-ttl")
+    assert before is not None
+    yield
+    huggorm.set_setting("tarball-ttl", before)
 
 
 async def _pynix(environment: NixTestEnvironment, *argv: str) -> None:
