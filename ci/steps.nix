@@ -13,7 +13,7 @@
 #    these live beside `tests`, and CI runs the identical command:
 #
 #        nix build --file . ciSteps.nix_2_34 --out-link result
-#        BACKEND=local ./result/bin/nanopynix-ci soak
+#        ./result/bin/nanopynix-ci suite
 #
 # 4. **Changing it costs no re-render.** A `run:` body reaches CI only through
 #    the 3347 lines of generated YAML, and the shell quoting and the GitHub
@@ -41,7 +41,6 @@ let
     "--verbose"
     "--tb=short"
     "-rsxXfE"
-    "--run-temp-store-builds"
   ];
 
   # A sanitized run adds `--capture=no`, because a report that the sanitizer
@@ -96,30 +95,7 @@ let
 
   runnerOf = version: lib.getExe' tests."nanopynix-tests-${version}" "nanopynix-tests";
 
-  # The soak, which every kind runs and which no kind runs in the same way.
-  #
-  # **The soak must not share a process with the rest of the suite.** It drives
-  # eight overlapping lanes of existing tests through one interpreter, and it
-  # reaches the corruption of issue #70, which ends the process with SIGSEGV.
-  # Inside the full-suite invocation that one crash took the results of about
-  # 1700 other tests with it -- measured in run 30931403310, job
-  # `test-daemon-nix_2_34`. Every full-suite invocation therefore passes
-  # `-m "not soak"`, and this is where the soak runs instead.
-  #
-  # It still fails its job. The soak reports a real defect, and a job that goes
-  # green over one is worth nothing. What the separation changes is the blast
-  # radius, and not the verdict.
-  soakBody =
-    { runner, env }:
-    ''
-      soak() {
-        env ${quote env} \
-          ${runner} ${quote uncapturedArgs} \
-          --nix-test-backends "$BACKEND" -m soak
-      }
-    '';
-
-  # The shape that the regular, UBSAN, ASAN and no-collector suites share:
+  # The shape that every suite shares:
   # run the suite, keep the whole log, and then read that log for a report.
   #
   # **The log decides, and not the exit status alone.** `halt_on_error=1` makes
@@ -174,7 +150,7 @@ let
         # pytest-cov combines *inside* the run, alongside live evaluator
         # threads and forkserver workers, and that combine intermittently
         # failed with "database is locked" -- exit 3 on a job whose tests had
-        # all passed. See nanopynix/tests.nix.
+        # all passed. See nix/tests.nix.
         # **The job may raise this, and the macOS one does.** A GitHub runner
         # for Linux is a VM among many; a runner for macOS is a real Apple
         # machine from a much smaller pool, and it is short of both compute and
@@ -202,8 +178,6 @@ let
             NANOPYNIX_TEST_DELETE_PATHS_FILE="$paths_to_delete" \
             NANOPYNIX_HANG_REPORT_FILE="$hang_report_log" \
           ${runner} ${quote baseArgs} \
-          --nix-test-backends "$BACKEND" \
-          -m "not soak" \
           --junitxml="$GITHUB_WORKSPACE/junit.xml" \
           2>&1 | tee "$GITHUB_WORKSPACE/test-gdb-output.log" || status=$?
 
@@ -224,126 +198,6 @@ let
       }
     '';
 
-  # The five-seed TSAN soak.
-  #
-  # **There is no retry, and no abort budget.** Both existed while issue #69
-  # was open, when the collector aborted often and for no known reason. The
-  # cause is known now, and it is corrected: `99f74d82` registers the thread
-  # that builds an evaluator with Boehm, and #72 gives the mechanism -- the
-  # collector signalled a `pthread_t` that glibc had already handed on. Every
-  # `test-tsan-*` job since that commit reports zero aborts: 18 jobs, six runs,
-  # three Nix versions, five seeds against two backends each. A budget above
-  # zero therefore tolerates nothing that happens, and hides a regression of
-  # `99f74d82` up to five times over. The budget was already 0 before this
-  # became a script, so the loop that carried it could never take a second
-  # attempt.
-  #
-  # `GC_INITIAL_HEAP_SIZE` gives Boehm a heap it does not have to grow, and a
-  # collection that never happens cannot fail to stop the world. Nix sets this
-  # itself when the variable is absent, to 25% of RAM capped at 384 MiB
-  # (libexpr/eval-gc.cc), and the soak exhausts that: it holds 66 tests and
-  # their evaluators in one process. The cap is what this raises, and
-  # `GC_expand_hp` takes virtual rather than resident memory, so the runner
-  # pays little for it. **This lowers the abort rate, and corrects nothing.**
-  #
-  # `GC_PRINT_STATS` turns on `GC_COND_LOG_PRINTF`, and `resend_lost_signals`
-  # uses it to report how many threads still owe an acknowledgement on each
-  # pass. That count is the first thing issue #69 needs. `GC_LOG_FILE` keeps
-  # the rest of the collector chatter out of the job log.
-  tsanSoakSeeds =
-    { runner, bare }:
-    ''
-      soak_seeds() {
-        local logfile="$GITHUB_WORKSPACE/tsan-output-${bare}.log"
-        local seed status runlog gclog
-
-        for seed in $(seq 1 5); do
-          echo "=== TSAN run $seed ===" | tee -a "$logfile"
-          runlog="$(mktemp)"
-          gclog="$(mktemp)"
-          status=0
-          unshare --user --map-root-user --mount --pid --fork --mount-proc \
-            env NANOPYNIX_CORE_DEBUG=1 \
-                NANOPYNIX_RPC_TIMEOUT=30 \
-                NANOPYNIX_TEST_SANITIZER=tsan \
-                PYTHONDONTWRITEBYTECODE=1 \
-                GC_INITIAL_HEAP_SIZE=2147483648 \
-                GC_PRINT_STATS=1 \
-                GC_LOG_FILE="$gclog" \
-              ${runner} ${quote uncapturedArgs} \
-              --nix-test-backends local,daemon \
-              -m soak --soak-seed="$seed" \
-              --soak-report="$GITHUB_WORKSPACE/soak-${bare}-run$seed.json" \
-              2>&1 | tee "$runlog" || status=$?
-          cat "$runlog" >> "$logfile"
-          echo "=== TSAN run $seed exit status: $status ===" | tee -a "$logfile"
-
-          # Read the attempt, and not the whole log. The log holds every
-          # earlier seed, so a match there says nothing about this one.
-          if grep -q "ThreadSanitizer: data race" "$runlog"; then
-            rm -f "$runlog" "$gclog"
-            echo "::error::genuine ThreadSanitizer data race on run $seed -- see the log above"
-            return 1
-          fi
-
-          if [ "$status" -ne 0 ]; then
-            # The collector log goes out on any non-zero status, and not only
-            # on an abort. A stop-the-world that fails can hang rather than
-            # abort, and then the status is the status of pytest. Run
-            # 31189073155 hit that: `test_soak_inproc[local]` reached its 120s
-            # deadline with `nix-eval_0` inside `lock_flake`, the status was 1,
-            # and these lines were deleted unread. See issue #99.
-            echo "=== Boehm resend log of run $seed ===" | tee -a "$logfile"
-            grep -E "Resent|Lost some threads|stop_world" "$gclog" \
-              | tail -40 | tee -a "$logfile" || true
-            if [ "$status" -eq 134 ] && grep -q "Signals delivery fails" "$runlog"; then
-              echo "::error::the collector could not stop the world on run $seed -- see issue #69"
-            else
-              echo "::error::run $seed failed with status $status -- see the log above"
-            fi
-            rm -f "$runlog" "$gclog"
-            return 1
-          fi
-
-          rm -f "$runlog" "$gclog"
-        done
-      }
-    '';
-
-  # One pass over the concurrency tests, under TSAN.
-  #
-  # **This reports on the log and not on the exit status, and that is a hole.**
-  # A pass that ends for a reason none of these patterns match reports success.
-  # A run stopped by its own deadline is the case that matters, because it is
-  # the shape of issue #99. The behaviour is unchanged from the step this
-  # replaces, deliberately: correcting it turns jobs red for a reason that has
-  # nothing to do with moving the body into a script.
-  tsanBroad =
-    { runner, bare }:
-    ''
-      broad() {
-        local logfile="$GITHUB_WORKSPACE/tsan-output-broad-${bare}.log"
-        local status=0
-        unshare --user --map-root-user --mount --pid --fork --mount-proc \
-          env NANOPYNIX_CORE_DEBUG=1 \
-              NANOPYNIX_RPC_TIMEOUT=30 \
-              NANOPYNIX_TEST_SANITIZER=tsan \
-              PYTHONDONTWRITEBYTECODE=1 \
-            ${runner} ${quote uncapturedArgs} \
-            --nix-test-backends local,daemon -m concurrency \
-            2>&1 | tee -a "$logfile" || status=$?
-        echo "=== TSAN broad pass exit status: $status ===" | tee -a "$logfile"
-        if grep -q "ThreadSanitizer: data race" "$logfile"; then
-          echo "::error::genuine ThreadSanitizer data race detected -- see the log above"
-          return 1
-        fi
-        if grep -qE "[0-9]+ (failed|error)|Fatal Python error|pthread_kill failed at suspend" "$logfile"; then
-          echo "::error::pytest reported a real failure, or the process crashed -- see the log above"
-          return 1
-        fi
-      }
-    '';
-
   # A sanitized or no-collector suite: one call of `run_and_scan`.
   #
   # `env`, `pattern` and `args` are what differ between the kinds.
@@ -360,8 +214,7 @@ let
       suite() {
         run_and_scan "$GITHUB_WORKSPACE/${kind}-output-${bare}.log" ${quote [ pattern ]} \
           env ${quote env} \
-          ${runner} ${quote args} \
-          --nix-test-backends local -m "not soak"
+          ${runner} ${quote args}
       }
     '';
 
@@ -403,7 +256,12 @@ let
       "NANOPYNIX_RPC_TIMEOUT=30"
       "PYTHONDONTWRITEBYTECODE=1"
     ];
-    tsan = [ ];
+    tsan = [
+      "NANOPYNIX_CORE_DEBUG=1"
+      "NANOPYNIX_RPC_TIMEOUT=30"
+      "NANOPYNIX_TEST_SANITIZER=tsan"
+      "PYTHONDONTWRITEBYTECODE=1"
+    ];
   };
 
   kindPattern = {
@@ -411,7 +269,7 @@ let
     asan = "AddressSanitizer|LeakSanitizer";
     nogc = "";
     regular = "";
-    tsan = "";
+    tsan = "ThreadSanitizer: data race";
   };
 
   # **The pynix suite is out of the ASAN selection, and run 30895974566 is
@@ -487,6 +345,7 @@ let
       "--ignore-glob=pynix-lsp/tests/*"
     ];
     nogc = baseArgs;
+    tsan = uncapturedArgs;
   };
 
   # The subcommands of one version, as a `case` body plus the functions it
@@ -498,68 +357,23 @@ let
       runner = runnerOf version;
       bare = bareOf version;
       kind = kindOf version;
-      soakEnv = kindEnv.${kind};
     in
-    if kind == "tsan" then
-      {
-        arms = {
-          "soak-seeds" = "soak_seeds";
-          broad = "broad";
-        };
-        body = tsanSoakSeeds { inherit runner bare; } + tsanBroad { inherit runner bare; };
-      }
-    else
-      {
-        arms = {
-          suite = "suite";
-          soak = "soak";
-        };
-        body =
-          scanBody
-          + (
-            if kind == "regular" then
-              regularSuite { inherit runner; }
-            else
-              scannedSuite {
-                inherit runner bare kind;
-                env = kindEnv.${kind};
-                pattern = kindPattern.${kind};
-                args = kindArgs.${kind};
-              }
-          )
-          + soakBody {
-            inherit runner;
-            env = soakEnv;
-          };
-      };
-
-  # Where the backend of a run comes from.
-  #
-  # A regular build takes it from the job, so that `test-local-*` and
-  # `test-daemon-*` are two jobs over one script. Every sanitized kind fixes it
-  # at `local`: a sanitized run costs too much to do twice, and the daemon
-  # backend forks a handler process per connection -- a shape worth a separate
-  # decision once the run time of the simple case is a number rather than a
-  # guess. TSAN names both backends in the invocation itself, so it reads no
-  # such variable and must not declare one.
-  backendPreamble =
-    version:
-    let
-      kind = kindOf version;
-    in
-    if kind == "tsan" then
-      ""
-    else if kind == "regular" then
-      ''
-        # The job decides, so that test-local-* and test-daemon-* are two jobs
-        # over one script.
-        : "''${BACKEND:?BACKEND must name a --nix-test-backends value, for example local}"
-      ''
-    else
-      ''
-        # Fixed for a sanitized build. See ci/steps.nix.
-        BACKEND="''${BACKEND:-local}"
-      '';
+    {
+      arms.suite = "suite";
+      body =
+        scanBody
+        + (
+          if kind == "regular" then
+            regularSuite { inherit runner; }
+          else
+            scannedSuite {
+              inherit runner bare kind;
+              env = kindEnv.${kind};
+              pattern = kindPattern.${kind};
+              args = kindArgs.${kind};
+            }
+        );
+    };
 
   mkVersionStep =
     version:
@@ -582,7 +396,6 @@ let
         util-linux
       ];
       text = ''
-        ${backendPreamble version}
         ${sub.body}
         case "''${1:-}" in
         ${dispatch}  *)

@@ -1,4 +1,4 @@
-"""The one definition of nanopynix's beartype instrumentation.
+"""The one definition of the suites' beartype instrumentation.
 
 Two places install it, and neither can import the other:
 `nanopynix_testing.beartype_hook` (covering the pytest process) and the
@@ -21,37 +21,29 @@ import os
 
 # huggorm_bindings is deliberately absent: its modules are
 # nanobind-compiled .so extensions, not Python source, so there is no AST for
-# beartype's import hook to instrument. nanopynix_proto is absent too -- it is
-# betterproto2-generated code, not hand-written, so checking it would flag
-# generator quirks rather than our own bugs.
+# beartype's import hook to instrument.
 #
 # `pynix_lsp` is here because issue #107 moved 14 modules out of `pynix`, and
 # a package that this tuple does not name is not instrumented at all. The
 # split would otherwise have taken the checks off those modules in silence.
-PACKAGES = ("nanopynix", "libpynix", "pynix", "pynix_lsp")
+PACKAGES = ("libpynix", "pynix", "pynix_lsp")
 
-ENV_VAR = "NANOPYNIX_BEARTYPING"
+#: Set in the environment, so that `sitecustomize` installs the hook in each
+#: interpreter the suite starts.
+ENV_VAR = "BEARTYPING"
 
 
 def install() -> None:
-    """Set ``NANOPYNIX_BEARTYPING`` and install beartype's import hook.
-
-    Order matters: the environment variable has to be set before the hook,
-    and the hook before any of :data:`PACKAGES` is imported. See
-    ``nanopynix/_typechecking.py`` for what the variable does -- modules
-    guarding a type-only import with ``if TYPE_CHECKING or BEARTYPING:``
-    promote it to a real runtime import under it, so beartype has an actual
-    object to check those hints against instead of an unresolvable forward
-    reference.
+    """Set :data:`ENV_VAR` and install beartype's import hook, before any of
+    :data:`PACKAGES` is imported. ``DEFERIMPORT=eager`` turns deferimport's
+    ``install`` into a no-op, so every name an annotation uses is real.
 
     ``claw_is_pep526=False`` disables beartype's runtime checking of annotated
     *global variable* assignments (PEP 526); function and method signatures
     are unaffected and still fully checked. This codebase relies on
     ``from __future__ import annotations`` (PEP 563) to defer annotation
     evaluation, including forward references to classes defined later in the
-    same module for module-level globals (e.g. nanopynix/logging.py's
-    ``ACTIVE_LOG_CAPTURES: ContextVar[tuple[LogCapture, ...]]``, declared
-    ~200 lines above the ``LogCapture`` class it names). beartype.claw's PEP
+    same module for module-level globals. beartype.claw's PEP
     526 instrumentation re-embeds the raw annotation expression as a live
     argument to its own runtime-check call immediately after the assignment --
     outside of any annotation position -- so PEP 563's deferral does not apply
@@ -64,14 +56,11 @@ def install() -> None:
     changes here.)
     """
     os.environ[ENV_VAR] = "1"
+    os.environ["DEFERIMPORT"] = "eager"
 
-    # Deferred deliberately, and this is the one place in the repo where that
-    # is not a code smell: importing beartype is what arms the hook, and the
-    # environment variable above has to be set before any instrumented module
-    # observes it. A top-level import here would also make `sitecustomize`
-    # pull beartype into every subprocess the suite spawns, instrumented or
-    # not, at interpreter startup.
-    from beartype import BeartypeConf  # noqa: PLC0415 -- must follow the env var above
-    from beartype.claw import beartype_packages  # noqa: PLC0415 -- must follow the env var above
+    # A top-level import would make `sitecustomize` pull beartype into every
+    # subprocess the suite spawns, instrumented or not, at interpreter startup.
+    from beartype import BeartypeConf  # noqa: PLC0415 -- see above
+    from beartype.claw import beartype_packages  # noqa: PLC0415 -- see above
 
     beartype_packages(PACKAGES, conf=BeartypeConf(claw_is_pep526=False))

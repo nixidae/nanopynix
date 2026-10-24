@@ -9,20 +9,12 @@
 # names the gate that failed, and so the cheap ones still report when pyright
 # is the slow one.
 #
-# `grpclib-transports` and `pytest-agent` are the two gates here that run
-# tests rather than a static tool, and both are here because nothing else
-# would run them. Each subproject carries its own pytest configuration, and
-# the repository's own test runner (nanopynix/tests.nix) collects what
-# `testpaths` in the repository `pytest.ini` names, so a suite that nobody
-# names runs nowhere.
-#
-# The two arrived at that state differently. `grpclib-transports` used to run
-# by itself: the project came from a separate repository as a nixpkgs
-# `buildPythonPackage`, so `pytestCheckHook` executed it inside every build,
-# and vendoring it moved the project to pyproject.nix's builders, which have
-# no check phase. `pytest-agent` never ran anywhere at all -- it is the
-# plugin that every other suite here reports through, so a defect in it
-# reaches every job while its own 14 test modules gate nothing.
+# `pytest-agent` is a gate here that runs tests rather than a static tool,
+# because nothing else would run them. It carries its own pytest
+# configuration, and the repository's own test runner (nix/tests.nix)
+# collects what `testpaths` in the repository `pytest.ini` names, so a suite
+# that nobody names runs nowhere. It is the plugin that every other suite
+# here reports through, so a defect in it reaches every job.
 {
   lib,
   runCommand,
@@ -58,14 +50,10 @@ let
       ../pyproject.toml
       ../ruff.toml
       ../ruff-strict.toml
-      ../nanopynix
-      ../nanopynix-proto
       # The CLI layer, which issue #222 moved out of `../pynix`. Without it
       # `check-lint`, `check-format` and `check-types` read a smaller tree
       # than `ruff check .` in the dev shell reads.
       ../libpynix
-      ../greeter-proto
-      ../grpclib-transports
       ../pynix
       # The language server, which issue #107 moved out of `../pynix`. Without
       # it `check-lint`, `check-format` and `check-types` read a smaller tree
@@ -114,7 +102,6 @@ let
   # The spec matches the dev shell's, `docs` extra included, because
   # `extraPaths` lists `docs` and `docs/conf.py` imports sphinx.
   pythonEnv = pythonSet.mkVirtualEnv "nanopynix-check-env" {
-    nanopynix = [ "test" ];
     # pyright reads `libpynix/src` and `libpynix/tests`, and that suite
     # imports `argcomplete` and `pytest` directly.
     libpynix = [ "test" ];
@@ -131,9 +118,6 @@ let
     # `partial`, so pyright reads `huggorm_bindings` beside them for what no
     # stub describes, such as the words of `words.py`.
     huggorm-generated = [ ];
-    # The `test` extra, because pyright reads grpclib-transports' own tests
-    # and benchmarks and they import `greeter`, `asyncssh` and `rich`.
-    grpclib-transports = [ "test" ];
     test-support = [ "test" ];
     nanopynix-testing = [ ];
     # `completion-spike` itself is not a package of this set -- it is a nixpkgs
@@ -145,17 +129,7 @@ let
     pexpect = [ ];
   };
 
-  # A second venv, holding this one library and its test extra and nothing
-  # else. Not `pythonEnv` above: that one is built for pyright and carries
-  # every project in the repository, so a `grpclib_transports` import
-  # satisfied by some other project's dependency edge would go unnoticed --
-  # which is the failure this suite exists to catch. Small enough that the
-  # separate venv costs nothing.
-  grpclibEnv = pythonSet.mkVirtualEnv "grpclib-transports-test-env" {
-    grpclib-transports = [ "test" ];
-  };
-
-  # And a third, for the same reason. This one must also be an installed
+  # A second venv, holding this one project. This one must also be an installed
   # `pytest-agent` rather than a `pythonpath` entry: the suite asks
   # `plugin_registered_via_entry_points()` to decide whether to pass `-p
   # pytest_agent.plugin` to each inner pytest, and that question only has the
@@ -164,16 +138,16 @@ let
     pytest-agent = [ "test" ];
   };
 
-  # And a fourth. `test-support` holds the helpers that every suite here shares
+  # And a third. `test-support` holds the helpers that every suite here shares
   # and that name no Nix concept, so its own suite must not reach anything that
-  # does: a venv with nanopynix in it would let a helper grow a dependency on
-  # the library and nothing would report it. That is the rule this project
+  # does: a venv with huggorm in it would let a helper grow a dependency on
+  # the engine and nothing would report it. That is the rule this project
   # exists to keep, so the venv is what enforces it.
   testSupportEnv = pythonSet.mkVirtualEnv "test-support-test-env" {
     test-support = [ "test" ];
   };
 
-  # And a fifth. `libpynix` is the command-line layer that issue #222 moved
+  # And a fourth. `libpynix` is the command-line layer that issue #222 moved
   # out of `pynix`. A venv holding this project alone is what proves it stands
   # up without `pynix`, and without any part of Nix: the whole reason it is a
   # separate project is that a consumer should be able to take the parser
@@ -182,7 +156,7 @@ let
     libpynix = [ "test" ];
   };
 
-  # And a sixth. `pynix` and nothing else, which is what the `pynix-isolated`
+  # And a fifth. `pynix` and nothing else, which is what the `pynix-isolated`
   # gate below asks a question of. The dev shell carries the language server
   # on purpose, so no environment that a person works in can answer it.
   pynixOnlyEnv = pythonSet.mkVirtualEnv "pynix-only-env" {
@@ -236,27 +210,11 @@ in
 
   # `scripts/` was covered by nothing. `writeShellApplication` runs shellcheck
   # over the script it builds, which covers the test runner of
-  # nanopynix/tests.nix and no hand-written file, so these three grew without a
+  # nix/tests.nix and no hand-written file, so these three grew without a
   # gate. `-x` follows a `source`, and the scripts are the only shell here.
   shell = mkCheck "shell" [
     shellcheck
   ] "shellcheck -x scripts/*.sh";
-
-  # The vendored library's own suite. See this file's header for why it is a
-  # gate here and not a check phase.
-  #
-  # `-p no:cacheprovider`, because the source is a read-only store path.
-  # `grpclib-transports/tests/conftest.py` already knows it is in a sandbox
-  # and skips the `tcp` cases there, so nothing has to be excluded by hand.
-  #
-  # `tests`, spelled out, and not the project directory: an explicit argument
-  # replaces `testpaths`, so naming the directory would also collect
-  # `benchmarks`, which is a measurement run rather than a gate -- and whose
-  # `_bench_utils` writes a dump directory beside itself at import time, in
-  # what is a read-only store path here.
-  grpclib-transports = mkCheck "grpclib-transports" [
-    grpclibEnv
-  ] "python -m pytest -p no:cacheprovider grpclib-transports/tests";
 
   # **`pynix` alone, and the language server must not arrive with it.** Issue
   # #107 split `pynix-lsp` out to take `pygls`, `lsprotocol` and `jsonschema`
@@ -270,9 +228,9 @@ in
   #
   # **The gate asks two questions, and `jsonschema` is why there are two.**
   # `pygls`, `lsprotocol` and `pynix_lsp` must not be installed at all: no
-  # other project here needs them. `jsonschema` is a dependency of
-  # `nanopynix`, which ships `jsonschema_primops()`, so it is installed and
-  # correct -- what must not happen is `import pynix` loading it. The second
+  # other project here needs them. `jsonschema` may arrive as a dependency of
+  # another package, so it can be installed -- what must not happen is
+  # `import pynix` loading it. The second
   # question is therefore about `sys.modules` after the import, which is also
   # the cost that issue #107 measured. Issue #123 tracks that cost.
   #
@@ -473,17 +431,8 @@ in
   # moved it to `pynix/tests/`, and the two gates above exist because a moved
   # suite would otherwise run nowhere. That suite is different: it drives a
   # real store, a real evaluator and `nix-build`, so it runs in the CI matrix
-  # against every supported Nix version and both backends. The repository
-  # `pytest.ini` names it in `testpaths`, which is what the packaged runner
-  # reads. A derivation here would check one version inside a sandbox with no
-  # network, so it would be strictly weaker than what already runs.
-  #
-  # No drift gate here either, although issue #22 asks for one. Both
-  # `check_all_settings_model_drift(include_optional=True)` and
-  # `check_all_store_model_drift()` already run inside the test suite
-  # (nanopynix/tests/bindings/test_util.py, nanopynix/tests/test_stores.py),
-  # and CI runs that suite against every supported Nix version on both
-  # backends. A derivation here would check one version, so it would be
-  # strictly weaker than what already runs, and slower to build than the four
-  # above because it needs a working store and evaluator.
+  # against every supported Nix version. The repository `pytest.ini` names it
+  # in `testpaths`, which is what the packaged runner reads. A derivation here
+  # would check one version inside a sandbox with no network, so it would be
+  # strictly weaker than what already runs.
 }

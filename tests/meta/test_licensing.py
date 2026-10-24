@@ -52,7 +52,7 @@ IDS = [name for name, _, _ in PROJECTS]
 
 def test_the_scan_finds_every_project() -> None:
     """A scan that finds nothing passes every check below without looking."""
-    assert len(PROJECTS) >= 11, f"only {len(PROJECTS)} projects found: {IDS}. The scan is wrong, not the repository."
+    assert len(PROJECTS) >= 7, f"only {len(PROJECTS)} projects found: {IDS}. The scan is wrong, not the repository."
 
 
 @pytest.mark.parametrize(("name", "path", "project"), PROJECTS, ids=IDS)

@@ -25,7 +25,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # `pytest.ini`: the repository's own, and one per project since issue #130.
 SUITE_ROOTS = (
     REPO_ROOT / "tests",
-    REPO_ROOT / "nanopynix" / "tests",
     REPO_ROOT / "test-support" / "tests",
     # The CLI layer, which issue #222 moved out of `pynix/src/pynix/_cli.py`
     # so that a second Nix CLI in Python does not have to copy it.

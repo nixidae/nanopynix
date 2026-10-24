@@ -44,7 +44,8 @@ import argparse
 import importlib.metadata
 import pathlib
 import sys
-from typing import TYPE_CHECKING
+from collections.abc import Iterator
+from typing import Any
 
 import huggorm
 
@@ -60,10 +61,6 @@ from argparse_manpage.manpage import Manpage
 
 from libpynix import build_parser
 from pynix import Pynix
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-    from typing import Any
 
 #: The NAME text of the root page. The parser's own description is the group
 #: help, "pynix — nanopynix CLI", which would read "pynix - pynix — ...". One

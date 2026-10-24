@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import sys
 from collections.abc import Sequence
 
 import deferimport  # pyright: ignore[reportMissingTypeStubs] -- deferimport ships no py.typed
 
 # Every module that loads after this line imports lazily, so a plain import
-# at the top of a module costs nothing until a name is used. beartype.claw
-# rewrites each module as it loads too, and a runtime type checker needs real
-# objects, so under beartype the imports stay eager.
-if "beartype.claw" not in sys.modules:
-    deferimport.install()  # pyright: ignore[reportUnknownMemberType] -- see the import
+# at the top of a module costs nothing until a name is used. A runtime type
+# checker needs real objects, and `DEFERIMPORT=eager` makes this a no-op.
+deferimport.install()  # pyright: ignore[reportUnknownMemberType] -- see the import
 
 from libpynix import Command, build_parser, complete, dispatch, group, parse_args
 from pynix import _impl

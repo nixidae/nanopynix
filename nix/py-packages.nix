@@ -6,8 +6,6 @@
 # one is present in the other and they cannot drift.
 {
   lib,
-  callPackage,
-  runCommand,
   ps,
   python,
   root,
@@ -26,17 +24,14 @@ let
       name = "${lib.replaceStrings [ "/" ] [ "-" ] dir}-source";
     };
 
-  protoSrc = callPackage (root + "/nanopynix-proto/generated.nix") { inherit python; };
-  greeterSrc = callPackage (root + "/greeter-proto/generated.nix") { inherit python; };
-
-  # Every project that reaches huggorm-bindings -- directly, or through
-  # `nanopynix` -- is built against one specific Nix version's C++ components
+  # Every project that reaches huggorm-bindings is built against one specific
+  # Nix version's C++ components
   # and is not interchangeable with the same source built against another, so
   # the version says which one. A PEP 440 local segment (`+nix...`), because
   # a plain suffix would read as a newer release of the same package.
   #
-  # nanopynix-proto, greeter-proto, grpclib-transports and pytest-agent
-  # deliberately don't get it: none of them reaches the bindings, so each
+  # libpynix, test-support, nanopynix-testing and pytest-agent deliberately
+  # don't get it: none of them reaches the bindings, so each
   # really is the same package whatever Nix is linked, and suffixing them
   # would rebuild them once per version for nothing.
   nixLinked = rendered: { version = "${rendered.version}+nix${version}"; };
@@ -44,110 +39,10 @@ let
   # Applied to both the built and the editable form of a project, so a build
   # input added for one is present in the other.
   extraFor = {
-    nanopynix-proto = pySelf: rendered: {
-      # Built from the generated tree rather than the checkout: this
-      # project's entire `src/` comes out of protoc, and generated.nix
-      # emits a complete project (pyproject.toml included) precisely so
-      # this can be an ordinary `src` and not a codegen step wedged into
-      # someone else's build. `projectRoot` still points at the checkout,
-      # which is where the pyproject.toml that Nix *reads* at eval time
-      # lives -- generated.nix copies that same file into `$out`, so the
-      # metadata and the build cannot disagree.
-      src = protoSrc;
-
-      # The builders have no `pythonImportsCheck` equivalent, and this is
-      # the project that most needs one: its entire contents come from a
-      # code generator, so a `.proto` renamed or dropped from
-      # generated.nix's file list produces a package that installs
-      # perfectly and is missing a module. Checking through a venv (rather
-      # than `$out` directly) is what makes the imports resolvable at all,
-      # since a builders package propagates nothing.
-      passthru = rendered.passthru // {
-        tests.imports =
-          runCommand "nanopynix-proto-imports"
-            {
-              nativeBuildInputs = [
-                (pySelf.mkVirtualEnv "nanopynix-proto-check-env" { nanopynix-proto = [ ]; })
-              ];
-            }
-            ''
-              python -c 'import nanopynix_proto, nanopynix_proto.nix.common, nanopynix_proto.google.rpc'
-              touch "$out"
-            '';
-      };
-
-      meta = rendered.meta // {
-        license = lib.licenses.asl20;
-        platforms = lib.platforms.unix;
-      };
-    };
-
-    # The same three moves as nanopynix-proto above, for the same three
-    # reasons -- generated `src`, an imports check the builders otherwise
-    # cannot express, and `meta`. Read that entry for the argument.
-    greeter-proto = pySelf: rendered: {
-      src = greeterSrc;
-
-      passthru = rendered.passthru // {
-        tests.imports =
-          runCommand "greeter-proto-imports"
-            {
-              nativeBuildInputs = [
-                (pySelf.mkVirtualEnv "greeter-proto-check-env" { greeter-proto = [ ]; })
-              ];
-            }
-            ''
-              python -c 'import greeter.greeter.common, greeter.greeter.server, greeter.greeter.worker'
-              touch "$out"
-            '';
-      };
-
-      meta = rendered.meta // {
-        license = lib.licenses.asl20;
-        platforms = lib.platforms.unix;
-      };
-    };
-
-    grpclib-transports = _pySelf: rendered: {
-      meta = rendered.meta // {
-        license = lib.licenses.asl20;
-        platforms = lib.platforms.unix;
-      };
-    };
-
-    nanopynix =
-      _pySelf: rendered:
-      nixLinked rendered
-      // {
-        # No LD_PRELOAD of the TSAN runtime here, deliberately. It used to be
-        # set, reasoning that the bindings get dlopen()ed into whatever process
-        # imports nanopynix -- but a derivation's `env` is its *build*
-        # environment and reaches no consumer, so it never served that purpose.
-        # What it did do was preload libtsan into every process this build runs,
-        # `uv` included, and TSAN then reported data races inside uv's own Rust
-        # code and failed the build with exit 66 -- before a single test ran.
-        # That is the whole reason all three test-tsan-* jobs were red.
-        #
-        # Nothing here needs it: this is the pure-Python distribution, the
-        # builders have no `pythonImportsCheck` equivalent (see the comment on
-        # nanopynix-proto above), so no phase of this build ever imports
-        # nanopynix and nothing dlopens the instrumented .so.
-        #
-        # The two places that genuinely need the preload still have it, both
-        # scoped to a process that really does load the extension: the
-        # huggorm-bindings override in default.nix (its import check) and
-        # nanopynix/tests.nix's runner script (the pytest process itself).
-        meta = rendered.meta // {
-          license = lib.licenses.asl20;
-          platforms = lib.platforms.unix;
-        };
-      };
-
     # No `nixLinked`, although this project declares `--file`, `--flake` and
     # `--attr`. It declares those three and reads none of them, so it reaches
     # `huggorm-bindings` through nothing and really is the same package
-    # whatever Nix is linked. `grpclib-transports` and `pytest-agent` are here
-    # for the same reason.
+    # whatever Nix is linked. `pytest-agent` is here for the same reason.
     libpynix = _pySelf: rendered: {
       meta = rendered.meta // {
         platforms = lib.platforms.unix;
@@ -163,8 +58,8 @@ let
         };
       };
 
-    # `nixLinked`, for the same reason as `pynix`: this project imports pynix
-    # and nanopynix, so it reaches the bindings, and a build against one Nix
+    # `nixLinked`, for the same reason as `pynix`: this project imports pynix,
+    # so it reaches the bindings, and a build against one Nix
     # version does not fit another.
     pynix-lsp =
       _pySelf: rendered:
@@ -187,18 +82,12 @@ let
       };
     };
 
-    # `nixLinked`, because this project imports nanopynix and therefore reaches
-    # the bindings. A fixture built against one Nix version does not fit
-    # another, exactly as the library it tests does not.
-    nanopynix-testing =
-      _pySelf: rendered:
-      nixLinked rendered
-      // {
-        meta = rendered.meta // {
-          license = lib.licenses.asl20;
-          platforms = lib.platforms.unix;
-        };
+    nanopynix-testing = _pySelf: rendered: {
+      meta = rendered.meta // {
+        license = lib.licenses.asl20;
+        platforms = lib.platforms.unix;
       };
+    };
   };
 
   # Per-project options. No `extras` here on purpose: the renderer's `extras`
@@ -208,31 +97,11 @@ let
   # which is where it belongs: the same `pynix` is a release application
   # without its test extra and a dev install with it.
   projects = {
-    # `editable = false`: this project has no working-tree source to point an
-    # editable install at -- every module is generated (generated.nix), so
-    # `src/` does not exist in the checkout. Editing it means editing a
-    # `.proto` and rebuilding, which is what the built form already does.
-    nanopynix-proto = {
-      editable = false;
-    };
-    # `editable = false` for the same reason as nanopynix-proto: there is no
-    # `src/` in the checkout to point an editable install at. Every module
-    # comes out of protoc (greeter-proto/generated.nix).
-    greeter-proto = {
-      editable = false;
-    };
-    # Vendored, and a first-class project of this repo rather than a
-    # third-party dependency -- nanopynix is its only consumer, and it is
-    # meant to be changed for that consumer. Editable like the rest, so a
-    # change to a transport is live in the dev shell without a rebuild.
-    grpclib-transports = { };
-    nanopynix = { };
     # The command-line layer, which issue #222 moved out of
     # `pynix/src/pynix/_cli.py`. `easykubenix` had copied the same 359 lines
     # to get a second Nix CLI, and the two diverged in six days. A separate
-    # project and not a module of `pynix`: this one depends on no
-    # part of nanopynix, and a consumer that takes it should not have to take
-    # the evaluator with it.
+    # project and not a module of `pynix`: a consumer that takes it should not
+    # have to take the evaluator with it.
     libpynix = { };
     pynix = { };
     # The language server, and every dialect it understands. Separate from
@@ -247,9 +116,7 @@ let
     # The helpers that every suite here shares. Editable like the rest, so a
     # change to a helper is live in the dev shell without a rebuild.
     test-support = { };
-    # The half of those helpers that names a Nix concept. Separate from
-    # `test-support` so that a project which never loads Nix can still take
-    # the other half.
+    # The beartype hook that every suite loads first.
     nanopynix-testing = { };
     # In the set so the dev shell can install it editable -- pytest-agent is
     # developed here alongside everything else. Deliberately *not* in the
@@ -302,7 +169,7 @@ in
         # and the install would stop being live. That also makes this set
         # local-checkout-only -- under flake evaluation `root` *is* a store
         # path and the renderer rejects it outright -- which is why only the
-        # dev shell uses it. See nanopynix/tests.nix.
+        # dev shell uses it. See nix/tests.nix.
         root = toString (root + "/${dirOf name opts}");
         inherit python;
         extra = extraFor.${name} pySelf;

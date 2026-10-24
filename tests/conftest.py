@@ -2,9 +2,8 @@
 
 **Everything reusable moved out in issue #130.** A conftest reaches its own
 directory and below, so a suite that moves into its own project loses every
-fixture declared here. The Nix session fixtures are now
-``nanopynix_testing.fixtures``, and the deadline and the ``agent_notes``
-stand-in are ``test_support.plugin``.
+fixture declared here. The deadline and the ``agent_notes`` stand-in are
+``test_support.plugin``.
 
 **This file registers no plugin.** ``pytest.ini`` names every one of them
 with ``-p``, and that file gives the reason: ``pytest_plugins`` is legal
@@ -15,9 +14,8 @@ from the repository root and from a project alike.
 What stays is what belongs to *this* run and to no project: the hard exit
 that ends the session.
 
-The order that collection must take moved to ``test_support.plugin`` with
-the suites. It was here, and here it reached ``tests/`` alone, so the
-``forked`` tests of ``nanopynix/tests/`` ran unordered and the run wedged.
+The order that collection must take is in ``test_support.plugin``, so it
+reaches every suite of the run and not ``tests/`` alone.
 """
 
 from __future__ import annotations
@@ -33,9 +31,8 @@ import pytest
 # global plugins now that `pytest.ini` registers ours with `-p`, and anyio
 # wins that tie -- every session-scoped fixture that requests it then fails
 # with `ScopeMismatch`. A conftest beats any plugin, so importing the fixture
-# here settles it. `nanopynix/tests/conftest.py` carries the same import and
-# the full account.
-from nanopynix_testing.nix_environment import anyio_backend as anyio_backend
+# here settles it. `pynix/tests/conftest.py` carries the same import.
+from huggorm.testing.environment import anyio_backend as anyio_backend
 
 
 def _save_coverage_before_hard_exit() -> None:

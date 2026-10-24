@@ -78,9 +78,7 @@
         system:
         lib.filterAttrs (_: value: lib.meta.availableOn each.${system}.pkgs.stdenv.hostPlatform value) {
           inherit (each.${system})
-            nanopynix
             huggorm-bindings
-            nanopynix-proto
             nanopynix-docs
             libpynix
             pynix
@@ -89,7 +87,7 @@
             storeExecTool
             tofuCoreSchemaTool
             ;
-          default = each.${system}.nanopynix;
+          default = each.${system}.pynix;
         }
       );
 

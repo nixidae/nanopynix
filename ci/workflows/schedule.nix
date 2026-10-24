@@ -49,7 +49,6 @@ let
     test-regular =
       workflow.mkRegularTestJob {
         version = "\${{ matrix.version }}";
-        backend = "\${{ matrix.backend }}";
         ref = branch;
         needs = [ matrixJob ];
       }
@@ -58,7 +57,6 @@ let
           fail-fast = false;
           matrix = {
             version = versionExpression "regular_versions";
-            backend = workflow.regularBackends;
           };
         };
       };

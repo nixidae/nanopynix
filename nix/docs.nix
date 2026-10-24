@@ -24,12 +24,9 @@ stdenvNoCC.mkDerivation {
     fileset = lib.fileset.unions [
       ../docs
       ../.assets
-      ../grpclib-transports/docs/examples
       ../libpynix/examples
-      (lib.fileset.fileFilter (file: file.hasExt "py") ../nanopynix/src)
       (lib.fileset.fileFilter (file: file.hasExt "py") ../pynix/src)
       (lib.fileset.fileFilter (file: file.hasExt "py") ../pynix-lsp/src)
-      (lib.fileset.fileFilter (file: file.hasExt "py") ../grpclib-transports/src)
     ];
   };
 

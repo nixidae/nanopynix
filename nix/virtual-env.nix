@@ -19,7 +19,7 @@
 # `pynix` into their own devShell or direnv without rebuilding on every
 # edit here: each project's editable root is this checkout's own absolute
 # path, so the generated path hooks resolve straight back here at import time
-# with nothing for the consumer to export. Does not include nanopynix's own
+# with nothing for the consumer to export. Does not include this repository's
 # devtools (pyright/ruff/...) -- see nix/shell.nix for the full shell.
 {
   pythonSet,
@@ -31,7 +31,6 @@
 
 pythonSet.mkVirtualEnv "nanopynix-dev-env" (
   {
-    nanopynix = [ "test" ];
     # The CLI layer, which issue #222 moved out of `pynix`. Already in the
     # venv as a dependency of `pynix`; named here for its `test` extra, so
     # `pytest libpynix` runs from the dev shell.
@@ -43,10 +42,6 @@ pythonSet.mkVirtualEnv "nanopynix-dev-env" (
     # subcommand. Issue #107.
     pynix-lsp = [ "test" ];
     pytest-agent = [ ];
-    # Already in the venv as a dependency of `nanopynix`; named here for its
-    # `test` extra, which is what puts `greeter-proto`, `asyncssh` and `rich`
-    # in reach so `pytest grpclib-transports` runs from the dev shell.
-    grpclib-transports = [ "test" ];
     # The two dependencies of `completion-spike`. That subproject is a nixpkgs
     # `buildPythonApplication` rather than a package of this set, so it cannot
     # be named here -- but `pyright` and `pytest` run over its tree from the

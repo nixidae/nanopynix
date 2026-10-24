@@ -27,7 +27,6 @@ license-files = [ "LICENSE" ]
 dependencies = [
   "pynix",
   "huggorm",
-  "nanopynix",
   "jsonschema",
   "pydantic",
   "pygls",

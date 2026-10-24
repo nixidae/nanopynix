@@ -15,13 +15,11 @@ let
   # `ci/workflows/lib.nix` gives the measurement that earns each slot.
   nogcTestJobs = workflow.mkStaticNoGCTestJobs { };
   asanTestJobs = workflow.mkStaticAsanTestJobs { };
-  # One macOS job, on the floor version and the local backend. `lib.nix` says
-  # why this one, why the backend is `local` and not `daemon`, and why it
-  # carries `continue-on-error`. Issues #143 and #210.
+  # One macOS job, on the floor version. `lib.nix` says why this one, and why
+  # it carries `continue-on-error`. Issues #143 and #210.
   darwinTestJob = {
     test-darwin-nix_2_34 = workflow.mkDarwinTestJob {
       version = "nix_2_34";
-      backend = "local";
     };
   };
   # Named alongside the test jobs so the `jobs` dispatch input can select it,

@@ -27,17 +27,10 @@ import pytest
 from tests.support.suite_roots import REPO_ROOT, SUITE_ROOTS, check_roster, is_skipped
 
 # Subprojects whose suites this repository's scanners deliberately do not read.
-# Each has its own rootdir, its own gate in `nix/checks.nix`, and its own
-# conventions, so a scanner that enforces a nanopynix rule over them would
-# report a finding that is not a defect.
-#
-# `grpclib-transports` is the case that names the reason: `ruff-strict.toml`
-# gives it its own per-file ignores, because the ban on the raw `asyncio`
-# primitives is right for nanopynix and wrong for a library whose subject is
-# `asyncio.Protocol` callbacks.
-EXEMPT_INIS = {
-    "grpclib-transports/pytest.ini",
-}
+# Each would have its own rootdir, its own gate in `nix/checks.nix`, and its
+# own conventions, so a scanner that enforces a rule of this repository over
+# it would report a finding that is not a defect.
+EXEMPT_INIS: frozenset[str] = frozenset()
 
 
 def _declared_suites() -> dict[str, list[Path]]:

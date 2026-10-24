@@ -35,12 +35,8 @@ known-first-party = [
   # `__init__.py`, so they are importable by bare name and isort cannot
   # tell them from a third-party package without being told.
   "_shared_sessions",
-  "nanopynix",
-  "nanopynix_fetchers",
-  "nanopynix_store",
-  "nanopynix_util",
   "support",
-  # Named here, unlike `nanopynix`, which ruff finds by itself: with no `src`
+  # Named here because ruff does not find them by itself: with no `src`
   # setting it looks for a directory of the same name beside this file, and
   # these are at `test-support/src/test_support`,
   # `nanopynix-testing/src/nanopynix_testing` and `pynix-lsp/src/pynix_lsp`.
@@ -62,7 +58,6 @@ known-first-party = [
   "lsp_support",
   # The startup shim of a spawned interpreter. `nanopynix-testing` puts its
   # directory on PYTHONPATH rather than making it a package, so ruff sorted it
-  # with the third-party imports. `nanopynix/tests/test_beartype_instrumentation.py`
-  # reads `PACKAGES` out of it.
+  # with the third-party imports.
   "beartype_bootstrap",
 ]

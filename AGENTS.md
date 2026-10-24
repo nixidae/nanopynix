@@ -364,8 +364,9 @@ Follow these rules:
   a plain import.
 - Do not write an `if TYPE_CHECKING:` block. Import at the top of the module.
   `pynix` installs deferimport, which makes each import lazy, and a runtime
-  type checker needs every name an annotation uses to be real. Under beartype,
-  `pynix` leaves deferimport off, so the imports are eager. The strict ruff
+  type checker needs every name an annotation uses to be real. The beartype
+  hook sets `DEFERIMPORT=eager`, which leaves deferimport off, so the imports
+  are eager. The strict ruff
   configuration bans `typing.TYPE_CHECKING`.
 - Keep the imports at the top of the file. Do not write a lazy import in a
   function or in a method. A lazy import is permitted only when it is necessary

@@ -12,7 +12,6 @@ license-files = [ "LICENSE" ]
 dependencies = [
   "deferimport",
   "huggorm",
-  "nanopynix",
   # The command-line layer, which issue #222 moved out of this project so that
   # a second Nix CLI in Python does not have to copy 359 lines to exist. It
   # depends on no part of nanopynix, which is why it is a project beside this
@@ -35,7 +34,22 @@ pynix = "pynix:main"
 # `cyclonedx-python-lib` and `spdx-tools` validate what `pynix sbom` writes.
 # `jsonschema` is the `json-validation` extra of the first, which pyproject.nix
 # cannot select on a package from nixpkgs.
-test = ["nanopynix[test]", "pytest-lsp", "cyclonedx-python-lib", "jsonschema", "spdx-tools"]
+test = [
+  # The helpers that name no Nix concept, and the beartype hook every suite
+  # loads first.
+  "test-support",
+  "nanopynix-testing",
+  "pytest",
+  "pytest-dependency",
+  "pytest-cov",
+  "pytest-forked",
+  "pytest-xdist",
+  "beartype",
+  "pytest-lsp",
+  "cyclonedx-python-lib",
+  "jsonschema",
+  "spdx-tools",
+]
 # The documentation toolchain. Declared here rather than wired into the Nix
 # build because sphinx has to import what it documents, so it belongs in the
 # same environment as pynix and everything pynix depends on.

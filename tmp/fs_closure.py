@@ -13,11 +13,8 @@ Schema assumed (from ``src/libstore/schema.sql``)::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import sqlite3
-    from collections.abc import Callable
+import sqlite3
+from collections.abc import Callable
 
 
 def _q_forward_refs() -> str:

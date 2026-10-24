@@ -11,13 +11,13 @@ The two alternatives are both worse, and one of them does not work at all:
 * pytest-beartype's own ``beartype_packages`` ini option applies the hook from
   its ``pytest_configure`` hookimpl. Every plugin's ``pytest_configure`` runs
   *after* initial-conftest collection, which is what imports conftest.py and
-  therefore nanopynix. By then the target packages are imported and
+  therefore pynix. By then the target packages are imported and
   unhookable, and it silently no-ops with a "not checkable by beartype"
   warning.
 * An ``importlib.import_module`` call at the top of a ``conftest.py`` is early
   enough, and every suite took that route until issue #130. It leaves the
   ordering fragile in one specific way: ``ruff check --fix`` alphabetizes an
-  import block, and ``nanopynix`` sorts before this module -- exactly
+  import block, and ``libpynix`` sorts before this module -- exactly
   backwards. It also cannot serve a conftest that imports the instrumented
   package at its own top, which ``pynix/tests/conftest.py`` does.
 
@@ -30,7 +30,7 @@ installed package is importable from the first line of the run.
 
 **A suite that loses the hook still reports every test as passed.** The
 failure is silent, which is why the registration is one line in one file per
-project rather than a convention. ``nanopynix/tests/test_beartype_instrumentation.py``
+project rather than a convention. ``pynix/tests/test_beartype_instrumentation.py``
 is what catches its absence.
 
 This module also puts ``_subprocess_startup`` beside it on ``PYTHONPATH`` so

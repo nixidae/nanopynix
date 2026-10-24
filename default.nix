@@ -71,21 +71,6 @@ let
         __darwinAllowLocalNetworking = true;
       });
 
-      # The protobuf runtime, and the protoc plugin that writes the modules
-      # `nanopynix-proto` and `greeter-proto` are made of. Neither is in
-      # nixpkgs. Both used to arrive through the `grpclib-transports` flake
-      # input; that input is gone and the project it named is vendored, so
-      # its two private dependencies are vendored here beside it.
-      #
-      # These stay in the interpreter's own set rather than moving to the
-      # builders set with `grpclib-transports` itself, because both are
-      # reached the nixpkgs way: `python.withPackages` builds the protoc
-      # plugin environment in each `generated.nix`, and pyproject.nix's
-      # builders deliberately do not propagate, which is the whole reason
-      # that generation happens outside the package.
-      betterproto2 = pySelf.callPackage ./nix/betterproto2.nix { };
-      betterproto2-compiler = pySelf.callPackage ./nix/betterproto2-compiler.nix { };
-
       kr8s = pySelf.callPackage ./nix/kr8s.nix { src = sources.kr8s; };
 
       deferimport = pySelf.callPackage "${sources.deferimport}/nix/python-package.nix" { };
@@ -285,7 +270,6 @@ let
         editablePythonSet = final.pythonSet.overrideScope final.pyPackages.editable;
 
         inherit (final.pythonSet)
-          nanopynix-proto
           # The command-line layer that issue #222 moved out of
           # `pynix`. Exported so that a second Nix CLI in Python can
           # take it instead of copying it, which is the whole reason it
@@ -298,24 +282,23 @@ let
           pytest-agent
           ;
 
-        nanopynix = final.pythonSet.nanopynix // {
-          test = final.callPackage ./nanopynix/tests.nix {
-            inherit (final.nanopynix) version;
-            inherit (sources) nixpkgs;
-            inherit (final) sanitizer;
-            inherit (final) pythonSet;
-            # The one list that the dev shell also takes, so a tool the
-            # suite needs cannot reach only one of them. See
-            # nix/suite-runtime.nix.
-            inherit (final) suiteRuntime;
-          };
+        # The suite runner that CI executes, one per Nix version.
+        testRunner = final.callPackage ./nix/tests.nix {
+          inherit (final.pythonSet.pynix) version;
+          inherit (sources) nixpkgs;
+          inherit (final) sanitizer;
+          inherit (final) pythonSet;
+          # The one list that the dev shell also takes, so a tool the
+          # suite needs cannot reach only one of them. See
+          # nix/suite-runtime.nix.
+          inherit (final) suiteRuntime;
         };
 
         pynix = mkApp {
           name = "pynix";
           inherit (final) pythonSet;
-          # `pynix develop` calls `nanopynix.store_exec_prefix`, which
-          # resolves this off PATH. The prefix runs a program out of a
+          # `pynix develop` resolves `store-exec` off PATH
+          # (`pynix._store_layout`). The prefix runs a program out of a
           # store that is relocated, which is every store that pynix
           # opens away from the root one.
           #
@@ -394,7 +377,7 @@ let
   # Per-version test runners, exposed individually as `nanopynix-tests-<name>`
   # flake packages so CI can build/run each Nix version in its own job.
   tests = lib.mapAttrs' (
-    name: value: lib.nameValuePair "nanopynix-tests-${name}" value.nanopynix.test
+    name: value: lib.nameValuePair "nanopynix-tests-${name}" value.testRunner
   ) lanes;
 
   # Every suffix that huggorm's `lanes` give a variant scope.
@@ -488,10 +471,8 @@ lib.throwIf (unlistedVariants != [ ])
     inherit (pkgs) lib;
 
     inherit (nanopynixVersions.stable)
-      nanopynix
       # The engine: huggorm's generated bindings, linked against this Nix.
       huggorm-bindings
-      nanopynix-proto
       # The command-line layer of issue #222. It reaches
       # `huggorm-bindings` through nothing, so this one attribute is the
       # same package for every Nix version -- see `nixLinked` in

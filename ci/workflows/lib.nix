@@ -63,16 +63,6 @@ let
   # are functions that `nix build` cannot realise.
   checkAttrs = builtins.attrNames (lib.filterAttrs (_: lib.isDerivation) repo.checks);
 
-  # Coverage-collecting backends run as separate matrix jobs (test-daemon-*,
-  # test-local-*) rather than serially inside one job, so covering both stays
-  # roughly free in wall-clock: they run in parallel. TSAN already exercises
-  # local+daemon together in its own repeated stress runs, but deliberately
-  # without coverage instrumentation (see mkTsanTestJob).
-  regularBackends = [
-    "daemon"
-    "local"
-  ];
-
   # A cap for each step that this file writes, in minutes. ghanix's
   # `steps.nix` carries the caps of the steps that it builds.
   #
@@ -158,13 +148,8 @@ let
     # selection is about 600 tests, and the passing rate of run 30895974566
     # puts that inside 60 minutes. This is the measurement that confirms it.
     asanSuite = 60;
-    # One run of the concurrency soak, in the jobs that are not TSAN. It took
-    # 45 seconds in the TSAN jobs of run 30930842932, which is the slow build.
-    soak = 15;
-    # Five runs of the concurrency soak, one per seed. Each run deals every
-    # eligible test into eight overlapping lanes -- see nanopynix_testing.soak.
-    tsanStress = 25;
-    tsanBroad = 20;
+    # The suite under ThreadSanitizer, which is the slow build.
+    tsanSuite = 45;
     # `nix build` of every gate, which takes about a minute between them.
     staticChecks = 20;
     # Three `sysctl` calls, behind one evaluation.
@@ -320,39 +305,23 @@ let
       run = "./result/bin/nanopynix-ci ${subcommand}";
     };
 
-  # The concurrency soak, as a step of its own. `ci/steps.nix` says why it
-  # must not share a process with the rest of the suite.
-  mkSoakStep =
-    { label }:
-    mkRunStep {
-      name = "Run the concurrency soak (${label})";
-      subcommand = "soak";
-      cap = caps.soak;
-    };
-
-  # The job-level environment of a test job: which step package to build, and
-  # for a regular build, which backend to drive.
+  # The job-level environment of a test job: which step package to build.
   testJobEnv =
-    {
-      version,
-      backend ? null,
-    }:
+    { version }:
     {
       CI_STEP = "ciSteps.${version}";
-    }
-    // lib.optionalAttrs (backend != null) { BACKEND = backend; };
+    };
 
   mkRegularTestJob =
     {
       version,
-      backend,
       ref ? null,
       needs ? [ ],
     }:
     mkJob (
       lib.optionalAttrs (needs != [ ]) { inherit needs; }
       // {
-        env = testJobEnv { inherit version backend; };
+        env = testJobEnv { inherit version; };
         steps = mkTestSetup { inherit ref; } ++ [
           (mkBuildStep {
             name = "Build the CI step package for Nix ${version}";
@@ -361,14 +330,13 @@ let
           (steps.verifyClosure { name = "Verify test runner closure after build"; })
           (mkSandboxStep { })
           (mkRunStep {
-            name = "Test nanopynix against Nix ${version} (full suite, ${backend} backend)";
+            name = "Test nanopynix against Nix ${version} (full suite)";
             subcommand = "suite";
             cap = caps.suite;
           })
-          (mkSoakStep { label = "${version}, ${backend} backend"; })
           (steps.uploadArtifact {
             name = "Upload test output";
-            artifactName = "test-output-${backend}-${version}";
+            artifactName = "test-output-${version}";
             path = "\${{ github.workspace }}/test-gdb-output.log";
           })
           # Uploaded on every run, not just a crash. The suite step inlines
@@ -380,7 +348,7 @@ let
           # against. As an artifact it costs no log space.
           (steps.uploadArtifact {
             name = "Upload Boehm GC thread registration log";
-            artifactName = "gc-thread-debug-${backend}-${version}";
+            artifactName = "gc-thread-debug-${version}";
             path = "\${{ github.workspace }}/gc-thread-debug.log";
           })
           # **This is the only copy of a hang report that survives.**
@@ -393,7 +361,7 @@ let
           # Issue #271 ran on CI many times and produced no report at all.
           (steps.uploadArtifact {
             name = "Upload hang reports";
-            artifactName = "hang-report-${backend}-${version}";
+            artifactName = "hang-report-${version}";
             path = "\${{ github.workspace }}/hang-report.log";
           })
           (withCond "\${{ !cancelled() }}" (
@@ -403,7 +371,7 @@ let
               "with" = {
                 token = "\${{ secrets.CODECOV_TOKEN }}";
                 files = "\${{ github.workspace }}/coverage.xml";
-                flags = "${backend}-${version}";
+                flags = version;
               };
             }
           ))
@@ -414,7 +382,7 @@ let
               "with" = {
                 token = "\${{ secrets.CODECOV_TOKEN }}";
                 files = "\${{ github.workspace }}/junit.xml";
-                flags = "${backend}-${version}";
+                flags = version;
                 report_type = "test_results";
               };
             }
@@ -445,11 +413,9 @@ let
   # null `dynamic_cast`, and the second is a *wrong answer* rather than an
   # error.
   #
-  # Three steps of a Linux test job are absent, and each for a reason:
+  # Two steps of a Linux test job are absent, and each for a reason:
   #
   # - the sandbox step unshares a user namespace, which is Linux;
-  # - the soak, which is the ThreadSanitizer workload, and this job runs no
-  #   sanitizer;
   # - the coverage upload and the collector-thread log, which answer questions
   #   about a job that is already understood.
   #
@@ -467,7 +433,6 @@ let
   mkDarwinTestJob =
     {
       version,
-      backend,
       ref ? null,
       needs ? [ ],
     }:
@@ -493,13 +458,7 @@ let
         # it was hiding: a build refuses when
         # `storeDir != realStoreDir` and the platform is not Linux.
         #
-        # **The backend is `local`, because the stores are our own again.**
-        # `daemon` was the pair of the system store: the runner takes the
-        # multi-user installer, so `/nix/var/nix/db` belongs to root and only
-        # the daemon may write it. A store under the temporary directory of
-        # the suite belongs to the user who runs the job, so a direct
-        # `local://` store opens and writes without a daemon in the middle.
-        env = testJobEnv { inherit version backend; } // {
+        env = testJobEnv { inherit version; } // {
           # **This runner is short of compute and of I/O, and the deadline has
           # to allow for it.** A GitHub runner for Linux is a VM among many; a
           # runner for macOS is a real Apple machine from a much smaller pool.
@@ -529,27 +488,26 @@ let
             })
             (steps.verifyClosure { name = "Verify test runner closure after build"; })
             (mkRunStep {
-              name = "Test nanopynix against Nix ${version} (full suite, ${backend} backend)";
+              name = "Test nanopynix against Nix ${version} (full suite)";
               subcommand = "suite";
               cap = caps.darwinSuite;
             })
             (steps.uploadArtifact {
               name = "Upload test output";
-              artifactName = "test-output-darwin-${backend}-${version}";
+              artifactName = "test-output-darwin-${version}";
               path = "\${{ github.workspace }}/test-gdb-output.log";
             })
             (steps.uploadArtifact {
               name = "Upload the JUnit report";
-              artifactName = "junit-darwin-${backend}-${version}";
+              artifactName = "junit-darwin-${version}";
               path = "\${{ github.workspace }}/junit.xml";
             })
           ];
       }
     );
 
-  # The concurrency soak and the concurrency tests, under ThreadSanitizer.
-  # `ci/steps.nix` carries the collector reasoning, the seed loop and the
-  # forensics that issue #69 asks for.
+  # The suite under ThreadSanitizer. `ci/steps.nix` reads its log for a data
+  # race.
   mkTsanTestJob =
     {
       version,
@@ -570,22 +528,14 @@ let
           })
           (mkSandboxStep { })
           (mkRunStep {
-            name = "Run TSAN-instrumented concurrency soak (five seeds, local+daemon backends)";
-            subcommand = "soak-seeds";
-            cap = caps.tsanStress;
-          })
-          (mkRunStep {
-            name = "Run TSAN-instrumented concurrency tests (single pass, local+daemon backends)";
-            subcommand = "broad";
-            cap = caps.tsanBroad;
+            name = "Run TSAN-instrumented suite (${bareVersion})";
+            subcommand = "suite";
+            cap = caps.tsanSuite;
           })
           (steps.uploadArtifact {
             name = "Upload TSAN output (${bareVersion})";
             artifactName = "tsan-race-report-${bareVersion}";
-            # The soak manifests travel with the log. The log says which tests
-            # were in flight when a race fired; a manifest replays that exact
-            # composition with `--soak-manifest`.
-            path = "\${{ github.workspace }}/tsan-output-${bareVersion}.log\n\${{ github.workspace }}/tsan-output-broad-${bareVersion}.log\n\${{ github.workspace }}/soak-${bareVersion}-run*.json\n";
+            path = "\${{ github.workspace }}/tsan-output-${bareVersion}.log";
           })
         ];
       }
@@ -620,11 +570,10 @@ let
           })
           (mkSandboxStep { })
           (mkRunStep {
-            name = "Run UBSAN-instrumented suite (${bareVersion}, local backend)";
+            name = "Run UBSAN-instrumented suite (${bareVersion})";
             subcommand = "suite";
             cap = caps.suite;
           })
-          (mkSoakStep { label = "UBSAN, ${bareVersion}"; })
           (steps.uploadArtifact {
             name = "Upload UBSAN output (${bareVersion})";
             artifactName = "ubsan-report-${bareVersion}";
@@ -683,11 +632,10 @@ let
           })
           (mkSandboxStep { })
           (mkRunStep {
-            name = "Run the suite without a collector (${bareVersion}, local backend)";
+            name = "Run the suite without a collector (${bareVersion})";
             subcommand = "suite";
             cap = caps.suite;
           })
-          (mkSoakStep { label = "no collector, ${bareVersion}"; })
         ];
       }
     );
@@ -736,11 +684,10 @@ let
           })
           (mkSandboxStep { })
           (mkRunStep {
-            name = "Run ASAN-instrumented suite (${bareVersion}, local backend)";
+            name = "Run ASAN-instrumented suite (${bareVersion})";
             subcommand = "suite";
             cap = caps.asanSuite;
           })
-          (mkSoakStep { label = "ASAN, ${bareVersion}"; })
           (steps.uploadArtifact {
             name = "Upload ASAN output (${bareVersion})";
             artifactName = "asan-report-${bareVersion}";
@@ -971,7 +918,6 @@ in
     mkJob
     mkNixRunStep
     mkSandboxStep
-    regularBackends
     versionMatrixOutputs
     mkRegularTestJob
     mkDarwinTestJob
@@ -1021,20 +967,16 @@ in
       needs ? [ ],
     }:
     builtins.listToAttrs (
-      builtins.concatMap (
-        backend:
-        map (version: {
-          name = "test-${backend}-${version}";
-          value = mkRegularTestJob {
-            inherit
-              version
-              backend
-              ref
-              needs
-              ;
-          };
-        }) regular
-      ) regularBackends
+      map (version: {
+        name = "test-${version}";
+        value = mkRegularTestJob {
+          inherit
+            version
+            ref
+            needs
+            ;
+        };
+      }) regular
     );
 
   mkStaticUbsanTestJobs =

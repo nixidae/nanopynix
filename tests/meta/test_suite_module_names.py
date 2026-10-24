@@ -54,7 +54,7 @@ def test_the_scanner_reads_the_real_roster() -> None:
     assert len(paths) > 3, f"only {len(paths)} testpath(s) read from pytest.ini"
     missing = [str(p) for p in paths if not p.is_dir()]
     assert not missing, f"pytest.ini names {missing}, and no such directory exists"
-    assert len(_modules()) > 100, "the glob found almost no test module; the pattern is wrong"
+    assert len(_modules()) > 60, "the glob found almost no test module; the pattern is wrong"
 
 
 def test_no_two_collected_test_modules_share_a_name() -> None:

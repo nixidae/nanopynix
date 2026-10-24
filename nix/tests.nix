@@ -10,7 +10,7 @@
 let
   # The tree this runner `cd`s into. `nix/source.nix` says why it is filtered
   # and what a bare `../.` cost.
-  source = import ../nix/source.nix { inherit lib; };
+  source = import ./source.nix { inherit lib; };
 
   # A venv over the whole repo, with every project's test extra enabled.
   #
@@ -32,7 +32,6 @@ let
   # `pytest-agent` is deliberately absent: it auto-activates on import, and
   # this runner is what CI executes.
   pythonEnv = pythonSet.mkVirtualEnv "nanopynix-test-env" {
-    nanopynix = [ "test" ];
     pynix = [ "test" ];
     # `testpaths` in the repository `pytest.ini` names `pynix-lsp/tests`, so
     # the runner collects that suite and needs the server and `pytest-lsp`.

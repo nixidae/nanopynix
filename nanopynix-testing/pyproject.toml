@@ -5,28 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "nanopynix-testing"
 version = "0.1.0"
-description = "Test fixtures and pytest markers that know about Nix"
+description = "The beartype instrumentation of the pynix suites"
 authors = [{ name = "nanopynix contributors" }]
 requires-python = ">=3.13"
-# `nanopynix`, because every module here names a concept of the library: a
-# store, an evaluator, a linked Nix version, a worker process. That dependency
-# is what separates this project from `test-support`, and it is why the two
-# are separate at all.
-#
-# `pytest` is a runtime dependency here and not a test extra. These modules
-# declare fixtures and markers, so a consumer imports them through pytest and
-# there is nothing to import without it.
-# `test-support` for the subprocess runner that `nixpkgs_path` calls. The two
-# projects split by whether a module names a Nix concept, and a dependency in
-# this direction is what that split expects: the Nix-aware half may use the
-# generic half, and never the reverse.
-#
 # `beartype` and `coverage` for `beartype_hook` and the `sitecustomize.py`
-# beside it. Both are real imports of this project now: issue #130 moved the
-# instrumentation here, so that a suite in its own rootdir keeps it. A suite
-# that silently loses the hook still passes, which is why the dependency is
-# declared and not left to whatever the runner happens to install.
-dependencies = ["nanopynix", "test-support", "pytest", "anyio", "beartype", "coverage"]
+# beside it. A suite that silently loses the hook still passes, which is why
+# the dependency is declared and not left to whatever the runner installs.
+dependencies = ["pytest", "beartype", "coverage"]
 
 # The same PEP 639 fields as `nanopynix/pyproject.toml`, and the same reason.
 license = "Apache-2.0"

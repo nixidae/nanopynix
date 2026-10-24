@@ -1,16 +1,14 @@
 # nanopynix
 
-nanobind-based Python bindings for Nix (`nanopynix`), and a CLI built on top
-of them (`pynix`).
+A Nix CLI in Python (`pynix`), its command-line layer (`libpynix`), and its
+language server (`pynix-lsp`), built on huggorm's bindings.
 
 ```{toctree}
 :maxdepth: 2
 :caption: Contents
 
-nanopynix/index
 pynix/index
 libpynix/index
-grpclib-transports/index
 nix-misconceptions
 collector-and-threads
 ```
