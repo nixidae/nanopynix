@@ -8,21 +8,17 @@ on every start, and none of these imports is needed to list an option.
 from __future__ import annotations
 
 import difflib
-import functools
-import tempfile
 import time
-from collections.abc import AsyncGenerator, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import anyio
-import anyio.to_thread
 import huggorm
 import structlog
 from anyio import Path as AnyioPath
 from huggorm import (
+    TEMPORARY,
     AsyncEvalState,
     AsyncRemoteSession,
     AsyncSession,
@@ -43,7 +39,7 @@ from huggorm.fod import (
     mismatch_is_target_fod,
     replace_fod_hash,
 )
-from huggorm.namespace import remove_layers
+from huggorm.namespace import Temporary
 
 from pynix import _evaluate
 from pynix._build_monitor import BuildPlan, MonitorState
@@ -73,26 +69,8 @@ _MAX_FOD_UPDATES = 10
 _CAUSE_LEVEL = int(huggorm.Verbosity.WARN)
 
 
-@asynccontextmanager
-async def _overlay_root(overlay_dir: Path | None) -> AsyncGenerator[str]:
-    """The directory this build's overlay layers live under.
-
-    A directory the user named survives, which is the point of naming one. An
-    unnamed one is temporary and goes away with the build.
-    """
-    if overlay_dir is not None:
-        await AnyioPath(overlay_dir).mkdir(parents=True, exist_ok=True)
-        yield str(overlay_dir)
-        return
-    root = await anyio.to_thread.run_sync(functools.partial(tempfile.mkdtemp, prefix="pynix-overlay-"))
-    try:
-        yield root
-    finally:
-        await anyio.to_thread.run_sync(remove_layers, root)
-
-
-def _server_options(root: str, settings: Mapping[str, str], sandbox_paths: list[str]) -> ServerOptions:
-    """The huggorm worker's setup for a build in an overlay under *root*.
+def _server_options(overlay: Path | Temporary, settings: Mapping[str, str], sandbox_paths: list[str]) -> ServerOptions:
+    """The huggorm worker's setup for a build in an overlay under *overlay*.
 
     The server reads nix.conf, then *settings*. A sandbox path goes to
     ``extra-sandbox-paths``, which appends: nix.conf carries
@@ -104,7 +82,7 @@ def _server_options(root: str, settings: Mapping[str, str], sandbox_paths: list[
     if sandbox_paths:
         given = [options["extra-sandbox-paths"]] if "extra-sandbox-paths" in options else []
         options["extra-sandbox-paths"] = " ".join([*given, *sandbox_paths])
-    return ServerOptions(settings=options, load_config=True, overlay=root)
+    return ServerOptions(settings=options, load_config=True, overlay=overlay)
 
 
 async def _copy_outputs(
@@ -401,43 +379,41 @@ async def _build_namespaced(
     """
     monitor = MonitorState(started=time.monotonic(), print_build_logs=command.print_build_logs) if command.nom else None
     copied: dict[str, Any] | None = None
-    async with _overlay_root(command.overlay_dir) as root:
-        options = _server_options(root, settings, command.sandbox_path or [])
-        layout = options.overlay_namespace()
-        if layout is None:
-            raise RuntimeError("a namespaced build's worker has no overlay")
-        async with worker(options) as session:
-            build_store = await session.store(layout.store_uri())
-            if command.eval_store is None:
-                eval_store = build_store
-                state = await session.eval(eval_store)
-            else:
-                eval_store = await session.store(command.eval_store)
-                state = await session.eval(eval_store, None, build_store)
-            async with forward_state_logs(
-                session,
-                state,
-                verbosity=command.verbosity,
-                print_build_logs=command.print_build_logs,
+    # A directory the user named survives, which is the point of naming one.
+    overlay = command.overlay_dir if command.overlay_dir is not None else TEMPORARY
+    options = _server_options(overlay, settings, command.sandbox_path or [])
+    async with worker(options) as session:
+        build_store = await session.store()
+        if command.eval_store is None:
+            eval_store = build_store
+            state = await session.eval(eval_store)
+        else:
+            eval_store = await session.store(command.eval_store)
+            state = await session.eval(eval_store, None, build_store)
+        async with forward_state_logs(
+            session,
+            state,
+            verbosity=command.verbosity,
+            print_build_logs=command.print_build_logs,
+            monitor=monitor,
+        ):
+            logger.info("pynix build evaluating target")
+            outputs, updates = await _build_target(
+                target,
+                BuildSession(session, build_store, eval_store, state),
+                update_fod=command.update_fod,
+                dry_run=command.dry_run,
                 monitor=monitor,
-            ):
-                logger.info("pynix build evaluating target")
-                outputs, updates = await _build_target(
-                    target,
-                    BuildSession(session, build_store, eval_store, state),
-                    update_fod=command.update_fod,
-                    dry_run=command.dry_run,
-                    monitor=monitor,
-                )
-                logger.info("pynix build finished")
-                # The host store by name: in the namespace the server is root,
-                # so "auto" would open the overlay at /nix/store instead.
-                if command.copy_back and outputs:
-                    host = await session.store(_HOST_STORE_URI)
-                    await _copy_outputs(build_store, host, outputs, _HOST_STORE_URI)
-                if command.copy is not None and outputs:
-                    destination = await session.store(command.copy)
-                    copied = await _copy_outputs(build_store, destination, outputs, command.copy)
+            )
+            logger.info("pynix build finished")
+            # The host store by name: in the namespace the server is root,
+            # so "auto" would open the overlay at /nix/store instead.
+            if command.copy_back and outputs:
+                host = await session.store(_HOST_STORE_URI)
+                await _copy_outputs(build_store, host, outputs, _HOST_STORE_URI)
+            if command.copy is not None and outputs:
+                destination = await session.store(command.copy)
+                copied = await _copy_outputs(build_store, destination, outputs, command.copy)
     return outputs, updates, copied
 
 

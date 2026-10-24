@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -79,7 +80,11 @@ async def _derivation(tmp_path: Path, unique: str, script: str) -> Path:
 
 
 async def _build(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], *extra: str, script: str = READ_EXTRA
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    *extra: str,
+    script: str = READ_EXTRA,
+    overlay_dir: bool = True,
 ) -> tuple[str, str, Path]:
     if reason := await _unsupported(tmp_path):
         pytest.skip(reason)
@@ -92,8 +97,7 @@ async def _build(
         [
             "build",
             "--namespaced",
-            "--overlay-dir",
-            str(root),
+            *(["--overlay-dir", str(root)] if overlay_dir else []),
             "--sandbox-path",
             f"/extra={marker}",
             "--file",
@@ -118,6 +122,23 @@ async def test_a_namespaced_build_writes_its_upper_layer_alone(
         name = anyio.Path(out).name
         assert await anyio.Path(root / "upper" / name).read_text() == f"{unique}\n"
         assert not await anyio.Path(out).exists()
+    finally:
+        await anyio.to_thread.run_sync(remove_layers, tmp_path)
+
+
+async def test_a_build_without_an_overlay_dir_leaves_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The worker makes the layers in the temporary directory, and removes
+    them when the build ends (nixidae/nixidae#1066)."""
+    temporary = tmp_path / "tmp"
+    await anyio.Path(temporary).mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temporary))
+    monkeypatch.setenv("TMPDIR", str(temporary))
+    try:
+        out, _, _ = await _build(tmp_path, capsys, "--no-copy-back", overlay_dir=False)
+        assert not await anyio.Path(out).exists()
+        assert [path async for path in anyio.Path(temporary).iterdir()] == []
     finally:
         await anyio.to_thread.run_sync(remove_layers, tmp_path)
 

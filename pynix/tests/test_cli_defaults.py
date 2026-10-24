@@ -23,7 +23,7 @@ from subprocess import CompletedProcess
 import anyio
 import huggorm
 import pytest
-from huggorm import ServerOptions
+from huggorm import TEMPORARY, ServerOptions
 
 from pynix import parse
 from pynix._impl.build import (
@@ -174,12 +174,12 @@ def test_a_sandbox_path_adds_to_what_nix_conf_set() -> None:
     """Replacing the list took ``/bin/sh`` out of every such build, so a
     sandbox path goes to the ``extra-`` setting, after nix.conf and the
     configured settings."""
-    options = _server_options("/r", {"cores": "2"}, ["/ccache=/home/me/cc", "/run/binfmt"])
+    options = _server_options(TEMPORARY, {"cores": "2"}, ["/ccache=/home/me/cc", "/run/binfmt"])
 
     assert options == ServerOptions(
         settings={"cores": "2", "extra-sandbox-paths": "/ccache=/home/me/cc /run/binfmt"},
         load_config=True,
-        overlay="/r",
+        overlay=TEMPORARY,
     )
 
 
