@@ -46,6 +46,8 @@ import pathlib
 import sys
 from typing import TYPE_CHECKING
 
+import huggorm
+
 # pyright: reportMissingImports=false
 # argparse-manpage is only in the build-time venv of nix/mk-app.nix, so
 # neither pyright's pythonEnv nor the dev shell resolves it. The build fails
@@ -57,7 +59,6 @@ from typing import TYPE_CHECKING
 from argparse_manpage.manpage import Manpage
 
 from libpynix import build_parser
-from nanopynix import strip_ansi
 from pynix import Pynix
 
 if TYPE_CHECKING:
@@ -98,7 +99,7 @@ def _sanitize(text: str) -> str:
     runs after `Manpage` has mixed requests and content, so it cannot tell
     one `.PP` from one `.profile`. It leaves `.` lines alone.
     """
-    plain = strip_ansi(text)
+    plain = huggorm.filter_ansi_escapes(text, filter_all=True)
     return "\n".join(f"\\&{line}" if line.startswith("'") else line for line in _unfilled_usage(plain.split("\n")))
 
 
