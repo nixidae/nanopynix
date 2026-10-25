@@ -135,7 +135,7 @@ async def test_hover_inside_a_tfref_string_resolves_the_cross_resource_reference
         _LOCAL_NIX.read_text(),
         [
             GoTo("1"),
-            ExpectHover(contains="generated random string"),
+            ExpectHover(contains="generated random password"),
         ],
     )
     await scenario.run(terranix_driver)
