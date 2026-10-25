@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
+import huggorm
 import pytest
 from huggorm.errors import NixError
 from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, force_rmtree, with_nixpkgs
@@ -199,6 +200,7 @@ import sys
 
 import anyio
 import huggorm
+from huggorm.errors import NixError
 
 from pynix import parse
 from pynix._util import init_nix
@@ -215,6 +217,9 @@ async def main() -> None:
         await command.run()
     except SystemExit as exit_request:
         print(json.dumps({"exit": exit_request.code}))
+        return
+    except NixError as raised:
+        print(json.dumps({"exit": 1, "raised": str(raised)}))
         return
     print(json.dumps({"exit": 0}))
 
@@ -255,7 +260,15 @@ async def test_a_copy_that_writes_nothing_is_not_reported_as_a_copy(
         ],
     )
 
-    assert json.loads(result.stdout.strip().splitlines()[-1])["exit"] == 1, result.describe()
+    lines = result.stdout.strip().splitlines()
+    assert lines, result.describe()
+    answer = json.loads(lines[-1])
+    assert answer["exit"] == 1, result.describe()
+    if hasattr(huggorm, "determinate_nix_version"):
+        # Determinate Nix raises from a `keep-going` copy, so it is not quiet.
+        assert "lacks a signature by a trusted key" in answer["raised"], result.describe()
+        return
+    assert "raised" not in answer, result.describe()
     # `error_console` wraps for a terminal, and the wrap point moves with the
     # width and with the length of each store path. `test_why_depends.py`
     # carries the full account of why the match ignores every run of space.

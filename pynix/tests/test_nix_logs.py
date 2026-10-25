@@ -28,8 +28,9 @@ def _record(action: str, *, level: int = 0, kind: int = 0, text: str = "", field
         )
         for f in fields
     ]
-    # action, level, id, parent, type, request, text, fields, error info.
-    return _LogRecord._from_parts(action, level, 7, 0, kind, 0, text.encode(), parts, None)
+    # action, level, id, parent, type, request, text, fields, error info,
+    # payload.
+    return _LogRecord._from_parts(action, level, 7, 0, kind, 0, text.encode(), parts, None, "")
 
 
 def _start(level: int, text: str) -> Any:

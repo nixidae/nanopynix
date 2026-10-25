@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 import anyio
+import huggorm
 import pytest
 from huggorm.testing.environment import NixTestEnvironment
 
@@ -315,7 +316,9 @@ async def test_the_list_survives_an_unreachable_global_layer(
 
     listing = await _list_in_a_subprocess()
 
-    assert listing["globalLayer"] == "unavailable"
+    # Determinate Nix reads a builtin registry when the download fails.
+    fallback = hasattr(huggorm, "determinate_nix_version")
+    assert listing["globalLayer"] == ("read" if fallback else "unavailable")
     assert [entry["from"] for entry in _user_entries(listing)] == [f"flake:{PROBE}"]
 
 
