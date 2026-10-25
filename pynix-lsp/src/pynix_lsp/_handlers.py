@@ -86,8 +86,10 @@ class PynixLanguageServer(LanguageServer):
         """
         if self.nix_session is None or self.store is None:
             apply_nix_settings()
+            # A Nix that made one stable refuses to enable it.
             for feature in ("flakes", "nix-command"):
-                huggorm.enable_experimental_feature(feature)
+                if huggorm.is_experimental_feature(feature):
+                    huggorm.enable_experimental_feature(feature)
             self.nix_session = huggorm.AsyncSession()
             self.store = self.nix_session.store()
         if self.shared_evals is None:

@@ -930,8 +930,10 @@ async def run_repl(command: Repl) -> None:
         raise SystemExit(1) from exc
 
     apply_nix_settings()
+    # A Nix that made one stable refuses to enable it.
     for feature in _FEATURES:
-        huggorm.enable_experimental_feature(feature)
+        if huggorm.is_experimental_feature(feature):
+            huggorm.enable_experimental_feature(feature)
     async with huggorm.AsyncSession(command.store) as session:
         store = session.store()
         state = session.eval(store)

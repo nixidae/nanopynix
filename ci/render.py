@@ -201,8 +201,10 @@ async def render_workflows() -> dict[Path, str]:
 
 async def _render_workflows() -> dict[Path, str]:
     # `nix/compat.nix` reads the lock through `builtins.fetchTree`.
+    # A Nix that made one stable refuses to enable it.
     for feature in ("nix-command", "flakes", "fetch-tree"):
-        huggorm.enable_experimental_feature(feature)
+        if huggorm.is_experimental_feature(feature):
+            huggorm.enable_experimental_feature(feature)
     async with huggorm.AsyncSession() as session:
         state = session.eval(session.store())
         rendered: dict[Path, str] = {}
