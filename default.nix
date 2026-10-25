@@ -401,7 +401,7 @@ let
   # per-commit matrix as a slow build that collects no coverage. Nothing else
   # notices, because "not a variant" is the default.
   unlistedVariants = builtins.filter (
-    name: builtins.match "^(nix_[0-9_]+|git)$" name == null && !hasKnownSuffix name
+    name: builtins.match "^(nix_[0-9_]+|git|determinate)$" name == null && !hasKnownSuffix name
   ) (builtins.attrNames lanes);
   hasKnownSuffix = name: lib.any (suffix: lib.hasSuffix suffix name) variantSuffixes;
 
