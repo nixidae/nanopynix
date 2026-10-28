@@ -33,12 +33,7 @@ let
   # take last-green with it. That shape cost a docs deploy once already. Move
   # the job in here when it is green and `continue-on-error` comes off.
   gatingTestJobs =
-    staticChecksJob
-    // testJobs
-    // tsanTestJobs
-    // ubsanTestJobs
-    // nogcTestJobs
-    // asanTestJobs;
+    staticChecksJob // testJobs // tsanTestJobs // ubsanTestJobs // nogcTestJobs // asanTestJobs;
   # Everything the `jobs` dispatch input can name, which does include macOS.
   allTestJobs = gatingTestJobs // darwinTestJob;
   selectedTestJobs = builtins.mapAttrs (

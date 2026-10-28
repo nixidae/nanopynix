@@ -1,5 +1,5 @@
 let
-  drv = builtins.derivation {};
+  drv = builtins.derivation { };
 in
 {
   # pynix build --file ./tmp/autocomplete.nix#nixo<tab> should resolve to nixos

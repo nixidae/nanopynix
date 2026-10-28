@@ -347,31 +347,34 @@ in
   # the shell that is running the script and reads no such variable. Issue
   # #214. Keeping the variable unset here is what would catch a return to
   # anything that needs it.
-  completions = mkCheck "completions" [
-    completionsEnv
-    bashInteractive
-    fish
-    zsh
-    ncurses
-    nix
-  ] ''
-    unset SHELL
-    export PYNIX_INSTALLED_PREFIX="${pynix}"
-    export TERMINFO_DIRS="${ncurses}/share/terminfo"
-    # **`nix` is here as a baseline, and not as a tool.**
-    # `tests/test_nix_equivalence.py` asks `nix` what it would offer, through
-    # `NIX_GET_COMPLETIONS`, and asserts that `pynix` offers the same. So the
-    # expectation is a running program rather than a table this repository
-    # wrote, and it moves when Nix moves.
-    #
-    # Both programs need a store before they can evaluate, and the sandbox has
-    # no daemon to talk to. `NIX_REMOTE` points each of them at a local store
-    # under the build directory, which is writable and empty.
-    export NIX_REMOTE="$TMPDIR/completion-store"
-    # `-p no:cacheprovider`, because the source is a read-only store path.
-    cd pynix/completions
-    pytest . -p no:cacheprovider
-  '';
+  completions =
+    mkCheck "completions"
+      [
+        completionsEnv
+        bashInteractive
+        fish
+        zsh
+        ncurses
+        nix
+      ]
+      ''
+        unset SHELL
+        export PYNIX_INSTALLED_PREFIX="${pynix}"
+        export TERMINFO_DIRS="${ncurses}/share/terminfo"
+        # **`nix` is here as a baseline, and not as a tool.**
+        # `tests/test_nix_equivalence.py` asks `nix` what it would offer, through
+        # `NIX_GET_COMPLETIONS`, and asserts that `pynix` offers the same. So the
+        # expectation is a running program rather than a table this repository
+        # wrote, and it moves when Nix moves.
+        #
+        # Both programs need a store before they can evaluate, and the sandbox has
+        # no daemon to talk to. `NIX_REMOTE` points each of them at a local store
+        # under the build directory, which is writable and empty.
+        export NIX_REMOTE="$TMPDIR/completion-store"
+        # `-p no:cacheprovider`, because the source is a read-only store path.
+        cd pynix/completions
+        pytest . -p no:cacheprovider
+      '';
 
   # **The manual pages `pynix` installs, rendered and read back.**
   #
