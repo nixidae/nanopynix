@@ -76,19 +76,14 @@
       # elsewhere rather than an attribute that throws when forced.
       packages = forAllSystems (
         system:
-        lib.filterAttrs (_: value: lib.meta.availableOn each.${system}.pkgs.stdenv.hostPlatform value) {
-          inherit (each.${system})
-            huggorm-bindings
-            nanopynix-docs
-            libpynix
-            pynix
-            pynix-lsp
-            pytest-agent
-            storeExecTool
-            tofuCoreSchemaTool
-            ;
-          default = each.${system}.pynix;
-        }
+        lib.filterAttrs
+          (_: value: lib.meta.availableOn each.${system}.internal.pkgs.stdenv.hostPlatform value)
+          (
+            each.${system}.packages
+            // {
+              nanopynix-docs = each.${system}.docs.default;
+            }
+          )
       );
 
       # The gates, filtered twice.
