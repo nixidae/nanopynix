@@ -36,7 +36,7 @@ def cty_type_to_json_schema(cty_type: Any) -> dict[str, Any]:  # noqa: PLR0911 -
         return {"type": "number"}
     if cty_type == "bool":
         return {"type": "boolean"}
-    if isinstance(cty_type, list) and len(cast("list[Any]", cty_type)) == _CTY_COMPOUND_TYPE_ARITY:
+    if isinstance(cty_type, list) and len(cty_type) == _CTY_COMPOUND_TYPE_ARITY:
         kind, arg = cast("tuple[Any, Any]", cty_type)
         if kind in ("list", "set"):
             return {"type": "array", "items": cty_type_to_json_schema(arg)}
@@ -47,8 +47,7 @@ def cty_type_to_json_schema(cty_type: Any) -> dict[str, Any]:  # noqa: PLR0911 -
             properties = {name: cty_type_to_json_schema(member_type) for name, member_type in arg_dict.items()}
             return {"type": "object", "properties": properties, "additionalProperties": False}
         if kind == "tuple" and isinstance(arg, list):
-            arg_list = cast("list[Any]", arg)
-            return {"type": "array", "prefixItems": [cty_type_to_json_schema(member_type) for member_type in arg_list]}
+            return {"type": "array", "prefixItems": [cty_type_to_json_schema(member_type) for member_type in arg]}
     # "dynamic" or any other unrecognized shape: unconstrained, matching
     # cty's own "any" semantics rather than under- or over-flagging.
     return {}

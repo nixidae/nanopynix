@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, cast
 
-import jsonschema
 import jsonschema.validators
 
 
@@ -54,7 +53,7 @@ class _RawError:
 
     ``jsonschema`` ships no ``py.typed`` marker, so every attribute access on
     a raw ``ValidationError`` resolves to ``Unknown`` under this repo's
-    strict pyright config. Extracting them here, once, via explicit
+    strict type-check config. Extracting them here, once, via explicit
     ``cast``s (not a blanket suppression) means every other function in this
     module works against ordinary, fully-typed values.
     """
@@ -81,7 +80,7 @@ def _extract(error: jsonschema.ValidationError) -> _RawError:
 def _as_str_keyed_dict(value: Any) -> dict[str, Any]:
     # isinstance(value, dict) narrows to the bare, generic-less `dict[Unknown,
     # Unknown]` (isinstance can't check generic parameters at runtime, and
-    # pyright reflects that) -- re-declaring the checked value's type here via
+    # the type checker reflects that) -- re-declaring the checked value's type here via
     # cast (not a suppression -- a normal, honest type assertion once the
     # isinstance check has actually verified it's a dict at runtime) is what
     # stops that Unknown from then propagating into every caller that
@@ -91,7 +90,7 @@ def _as_str_keyed_dict(value: Any) -> dict[str, Any]:
 
 def _as_list(value: Any) -> list[Any]:
     # Same isinstance-narrowing-loses-generics issue as _as_str_keyed_dict, for lists.
-    return cast("list[Any]", value) if isinstance(value, list) else []
+    return value if isinstance(value, list) else []
 
 
 def _unknown_property_findings(error: _RawError) -> list[Finding]:
@@ -144,14 +143,14 @@ def validate(schema: dict[str, Any], value: object) -> list[Finding]:
     """
     # jsonschema ships no py.typed marker, so validator_for's return type
     # (and the resulting validator instance) resolve to Unknown.
-    validator_cls = cast("Any", jsonschema.validators.validator_for)(schema)  # type: ignore[reportUnknownMemberType]  # jsonschema ships no py.typed marker
+    validator_cls = cast("Any", jsonschema.validators.validator_for)(schema)
     validator = validator_cls(schema)
     findings: list[Finding] = []
-    # jsonschema ships no py.typed marker, so pyright can't verify
+    # jsonschema ships no py.typed marker, so the type checker can't verify
     # iter_errors' overloads even though the library's own source has inline
     # type hints -- this is a real external-library limitation, not
     # something a cast on our own argument can resolve.
-    iter_errors = cast("Any", validator.iter_errors)  # type: ignore[reportUnknownMemberType]  # jsonschema ships no py.typed marker
+    iter_errors = cast("Any", validator.iter_errors)
     for raw_error in iter_errors(value):
         error = _extract(raw_error)
         if error.validator == "additionalProperties":

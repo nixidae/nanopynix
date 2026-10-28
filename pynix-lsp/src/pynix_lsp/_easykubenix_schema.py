@@ -91,7 +91,7 @@ def _gvk_index(schema: dict[str, Any]) -> dict[tuple[str, str, str], str]:
             gvks = value.get("x-kubernetes-group-version-kind")
             if not isinstance(gvks, list):
                 continue
-            for gvk in cast("list[Any]", gvks):
+            for gvk in gvks:
                 if not isinstance(gvk, dict):
                     continue
                 gvk = cast("dict[str, Any]", gvk)

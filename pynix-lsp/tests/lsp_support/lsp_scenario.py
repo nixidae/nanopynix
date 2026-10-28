@@ -457,14 +457,14 @@ class Scenario:
                     raise AssertionError(f"{contains!r} not in document text: {self._text!r}")
             case ExpectDocumentHighlightCount(count):
                 highlights = await driver.document_highlight(self.uri, self._cursor)
-                actual = len(highlights) if highlights is not None else 0
-                if actual != count:
-                    raise AssertionError(f"expected {count} document highlights, got {actual}")
+                highlight_count = len(highlights) if highlights is not None else 0
+                if highlight_count != count:
+                    raise AssertionError(f"expected {count} document highlights, got {highlight_count}")
             case ExpectReferencesCount(count, include_declaration):
                 references = await driver.references(self.uri, self._cursor, include_declaration=include_declaration)
-                actual = len(references) if references is not None else 0
-                if actual != count:
-                    raise AssertionError(f"expected {count} references, got {actual}")
+                reference_count = len(references) if references is not None else 0
+                if reference_count != count:
+                    raise AssertionError(f"expected {count} references, got {reference_count}")
 
     async def _edit(self, driver: LspDriver, edit_range: types.Range, text: str) -> None:
         new_cursor = _end_position(edit_range.start, text)

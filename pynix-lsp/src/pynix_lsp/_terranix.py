@@ -394,10 +394,10 @@ class TerranixDialect(Dialect):
         block = await self._block_for(context, prefix[0], prefix[1])
         if block is None:
             return None
-        names = list_block_attributes(block, prefix[3:])
-        if names is None:
+        attribute_names = list_block_attributes(block, prefix[3:])
+        if attribute_names is None:
             return None
-        return [types.CompletionItem(label=name) for name in names if name.startswith(partial)]
+        return [types.CompletionItem(label=name) for name in attribute_names if name.startswith(partial)]
 
     async def diagnostics(self, context: FileContext, source: str) -> list[types.Diagnostic] | None:  # noqa: C901, PLR0912 -- tracked complexity/arg-count debt, see TODO.md
         """Flag unknown attributes/nested-block types on every resource/data instance declared in *source*.

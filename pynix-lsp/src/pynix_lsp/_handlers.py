@@ -58,7 +58,7 @@ class PynixLanguageServer(LanguageServer):
     """
 
     def __init__(self) -> None:
-        super().__init__(_SERVER_NAME, _SERVER_VERSION)  # type: ignore[reportUnknownMemberType]  # pygls' LanguageServer.__init__ forwards *args/**kwargs, so pyright can't fully resolve its composed signature
+        super().__init__(_SERVER_NAME, _SERVER_VERSION)
         self.nix_session: huggorm.AsyncSession | None = None
         self.store: huggorm.AsyncStore | None = None
         self.shared_evals: SharedEvalCache | None = None
@@ -135,7 +135,7 @@ class PynixLanguageServer(LanguageServer):
         except BrokenPipeError:
             _logger.exception("connection to the client was lost")
         finally:
-            self.shutdown()
+            self.shutdown()  # type: ignore[no-untyped-call]  # pygls' LanguageServer.shutdown has no annotations
 
 
 def _byte_offset(source: str, position: types.Position, ls: PynixLanguageServer, uri: str) -> int:
@@ -477,9 +477,9 @@ async def _definition(
     if context is None:
         return None
     for dialect in DIALECTS:
-        location = await dialect.definition(context, source, byte_offset, DIALECTS)
-        if location is not None:
-            return location
+        found = await dialect.definition(context, source, byte_offset, DIALECTS)
+        if found is not None:
+            return found
     return None
 
 

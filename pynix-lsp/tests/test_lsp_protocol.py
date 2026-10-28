@@ -122,7 +122,7 @@ async def test_go_to_definition_on_a_nixos_option_reference_lands_on_its_declara
     result = await definition_at(wire_client, uri, position)
 
     assert result is not None
-    locations = [result] if isinstance(result, types.Location) else list(result)
+    locations: list[types.Location | types.LocationLink] = [result] if isinstance(result, types.Location) else [*result]
     assert any(
         isinstance(location, types.Location)
         and location.uri.endswith("mod3.nix")

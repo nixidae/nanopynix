@@ -22,7 +22,7 @@ is what the test is about.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -34,7 +34,7 @@ from pytest_lsp import ClientServerConfig, LanguageClient, client_capabilities
 _MODULE_SYSTEM = (Path(__file__).parent / "test_lsp" / "module_system").resolve()
 
 
-@pytest_lsp.fixture(  # type: ignore[reportUnknownMemberType]  # pytest_lsp.fixture's decorator-factory return type isn't fully resolvable by pyright
+@pytest_lsp.fixture(  # type: ignore[untyped-decorator]  # pytest_lsp.fixture is unannotated, so it has no typed form
     scope="module",
     config=ClientServerConfig(server_command=["pynix-lsp"]),
 )
@@ -88,9 +88,9 @@ def _report_server_stderr(lsp_client: LanguageClient) -> None:
 async def test_completion_advertises_dot_as_a_trigger_character(client: LanguageClient) -> None:
     """Without this, a client has no reason to re-request completions right after typing `.`."""
     capabilities: types.ServerCapabilities = client.server_capabilities  # type: ignore[attr-defined]  # see `client` fixture
-    provider = capabilities.completion_provider  # type: ignore[reportUnknownVariableType]  # lsprotocol's generated CompletionOptions union type isn't fully resolvable by pyright
+    provider = capabilities.completion_provider
     assert provider is not None
-    trigger_characters: list[str] | None = provider.trigger_characters  # type: ignore[reportUnknownMemberType]  # see above
+    trigger_characters: Sequence[str] | None = provider.trigger_characters
     assert trigger_characters is not None
     assert "." in trigger_characters
 
@@ -101,7 +101,7 @@ async def test_server_advertises_definition_rename_highlight_and_references_capa
 ) -> None:
     """Without these, a real client has no reason to ever send the corresponding requests at all."""
     capabilities: types.ServerCapabilities = client.server_capabilities  # type: ignore[attr-defined]  # see `client` fixture
-    assert capabilities.definition_provider  # type: ignore[reportUnknownMemberType]  # lsprotocol's generated *Options union types aren't fully resolvable by pyright
-    assert capabilities.rename_provider  # type: ignore[reportUnknownMemberType]  # see above
-    assert capabilities.document_highlight_provider  # type: ignore[reportUnknownMemberType]  # see above
-    assert capabilities.references_provider  # type: ignore[reportUnknownMemberType]  # see above
+    assert capabilities.definition_provider
+    assert capabilities.rename_provider
+    assert capabilities.document_highlight_provider
+    assert capabilities.references_provider

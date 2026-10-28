@@ -7,7 +7,7 @@ name = "pynix-lsp"
 version = "0.1.0"
 description = "The Nix language server of pynix, and the dialects it understands"
 authors = [{ name = "nanopynix contributors" }]
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 # PEP 639. The repository is Apache-2.0. The file is a copy of the one at the
 # root, because the source root of this project is this directory and a path
 # above it is not in the sdist.

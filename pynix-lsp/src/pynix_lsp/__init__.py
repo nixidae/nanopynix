@@ -7,4 +7,4 @@ one name it runs under: the ``pynix-lsp`` program. Issue #123 removed the
 
 from __future__ import annotations
 
-import pynix  # noqa: F401  # pyright: ignore[reportUnusedImport] -- pynix installs deferimport, and this package's modules load after it
+import pynix  # noqa: F401 -- pynix installs deferimport, and this package's modules load after it
