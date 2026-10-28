@@ -18,7 +18,7 @@
 # the suite here, and neither consumer can forget it.
 #
 # **Only what the suite needs at run time belongs here.** The development
-# tooling -- ruff, pyright, treefmt and the rest -- is the dev shell's own
+# tooling -- ruff, zuban, treefmt and the rest -- is the dev shell's own
 # business, and the runner must not carry it. The Python environment is not
 # here either, because the two differ on purpose: the runner takes the
 # non-editable `nanopynix-test-env`, and the shell takes the editable one.

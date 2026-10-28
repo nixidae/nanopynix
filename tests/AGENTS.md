@@ -110,7 +110,7 @@ needs its own test, beside the helper: `hang_report.py` and
 **A gate test runs a tool that CI already runs, and it never fails the run.**
 
 A meta test reads the repository and finishes in milliseconds, and `ruff` and
-`pyright` are subprocesses that take seconds, so they cannot go in
+`zuban` are subprocesses that take seconds, so they cannot go in
 `tests/meta/` without taking that property away from every test in it.
 
 Three things hold for each test here:

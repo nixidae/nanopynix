@@ -20,7 +20,7 @@
 # edit here: each project's editable root is this checkout's own absolute
 # path, so the generated path hooks resolve straight back here at import time
 # with nothing for the consumer to export. Does not include this repository's
-# devtools (pyright/ruff/...) -- see nix/shell.nix for the full shell.
+# devtools (zuban/ruff/...) -- see nix/shell.nix for the full shell.
 {
   pythonSet,
   # Merged over the spec below, replacing the entry for any project it names.
@@ -44,7 +44,7 @@ pythonSet.mkVirtualEnv "nanopynix-dev-env" (
     pytest-agent = [ ];
     # The two dependencies of `completion-spike`. That subproject is a nixpkgs
     # `buildPythonApplication` rather than a package of this set, so it cannot
-    # be named here -- but `pyright` and `pytest` run over its tree from the
+    # be named here -- but `zuban` and `pytest` run over its tree from the
     # dev shell, and without these two the dev shell would report errors that
     # the CI gate does not. See nix/checks.nix, which names the same two for
     # the same reason.

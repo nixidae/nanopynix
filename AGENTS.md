@@ -18,7 +18,7 @@ make a conclusion about coverage from the terminal alone. Do not run the tests
 again with a different reporter to get the table. To print the table to the
 terminal, pass `--agent-max-summary-lines=0`.
 
-- direnv exec . pyright
+- direnv exec . zuban mypy --python-executable "$(command -v python)" # from the directory of each `mypy.ini`; `checks.types` runs them all
 - direnv exec . ruff check --fix
 - direnv exec . ruff check --config ruff-strict.toml --fix # This configuration reports zero findings now. Keep it at zero. A new finding comes from your change.
 

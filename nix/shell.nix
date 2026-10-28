@@ -1,6 +1,6 @@
 {
   mkShell,
-  pyright,
+  zuban,
   ruff,
   nixfmt,
   clang-tools,
@@ -52,7 +52,7 @@ mkShell {
   ]
   ++ suiteRuntime
   ++ [
-    pyright
+    zuban
     ruff
     nixfmt
     clang-tools

@@ -6,7 +6,7 @@
 # existed the only thing keeping it at zero was habit.
 #
 # One derivation each rather than one that runs all of them, so a failing run
-# names the gate that failed, and so the cheap ones still report when pyright
+# names the gate that failed, and so the cheap ones still report when zuban
 # is the slow one.
 #
 # `pytest-agent` is a gate here that runs tests rather than a static tool,
@@ -19,7 +19,7 @@
   lib,
   runCommand,
   ruff,
-  pyright,
+  zuban,
   shellcheck,
   pythonSet,
   pynix,
@@ -40,14 +40,15 @@ let
   source = lib.fileset.toSource {
     root = ../.;
     fileset = lib.fileset.unions [
-      # `pyproject.toml` carries the pyright configuration, and `ruff.toml`
-      # carries the default ruff one. Omitting `ruff.toml` does not fail the
-      # build -- ruff silently falls back to its own defaults, which select
+      # `mypy.ini` carries the zuban configuration of the files outside every
+      # project, and `ruff.toml` carries the default ruff one. Omitting
+      # `ruff.toml` does not fail the build -- ruff silently falls back to its own defaults, which select
       # fewer rules and assume an older Python. Measured: the first build of
       # this file reported three `F821 Undefined name BaseExceptionGroup`,
       # because the fallback target is older than the `py313` that
       # `ruff.toml` sets.
       ../pyproject.toml
+      ../mypy.ini
       ../ruff.toml
       ../ruff-strict.toml
       # The shared base that `ruff.toml` extends. Without it ruff fails to
@@ -98,34 +99,34 @@ let
 
   # Not editable, and the same reasoning as the test runner: an editable
   # install bakes in an absolute path outside the store, which is exactly what
-  # a sandbox does not have. pyright reads first-party code through the
-  # `extraPaths` in pyproject.toml, so what this env is really for is the
-  # third-party stubs.
+  # a sandbox does not have. zuban reads first-party code through the
+  # `mypy_path` of each `mypy.ini`, so what this env is really for is the
+  # third-party packages and their types.
   #
   # The spec matches the dev shell's, `docs` extra included, because
-  # `extraPaths` lists `docs` and `docs/conf.py` imports sphinx.
+  # `docs/conf.py` imports sphinx.
   pythonEnv = pythonSet.mkVirtualEnv "nanopynix-check-env" {
-    # pyright reads `libpynix/src` and `libpynix/tests`, and that suite
+    # zuban reads `libpynix/src` and `libpynix/tests`, and that suite
     # imports `argcomplete` and `pytest` directly.
     libpynix = [ "test" ];
     pynix = [
       "test"
       "docs"
     ];
-    # The language server, which issue #107 moved out of `pynix`. pyright
+    # The language server, which issue #107 moved out of `pynix`. zuban
     # reads `pynix-lsp/src` and `pynix-lsp/tests`, so the env has to carry
     # `pygls`, `lsprotocol`, `jsonschema` and `pytest-lsp`.
     pynix-lsp = [ "test" ];
     pytest-agent = [ ];
     # `huggorm_bindings-stubs`, the engine's PEP 561 stubs. They are
-    # `partial`, so pyright reads `huggorm_bindings` beside them for what no
+    # `partial`, so zuban reads `huggorm_bindings` beside them for what no
     # stub describes, such as the words of `words.py`.
     huggorm-generated = [ ];
     test-support = [ "test" ];
     nanopynix-testing = [ ];
     # `completion-spike` itself is not a package of this set -- it is a nixpkgs
     # `buildPythonApplication`. Its two dependencies are named directly, so
-    # that pyright can read its source and its tests. Without them pyright
+    # that zuban can read its source and its tests. Without them a checker
     # reported 56 errors on that tree, every one of them an unknown type
     # reached through `cyclopts` or `pexpect`.
     cyclopts = [ ];
@@ -182,6 +183,19 @@ let
     libpynix = [ ];
   };
 
+  # Every directory that holds a `mypy.ini`.
+  typedProjects = [
+    "."
+    "libpynix"
+    "pynix"
+    "pynix/completions"
+    "pynix-lsp"
+    "completion-spike"
+    "nanopynix-testing"
+    "pytest-agent"
+    "test-support"
+  ];
+
   mkCheck =
     name: nativeBuildInputs: command:
     runCommand "nanopynix-check-${name}" { inherit nativeBuildInputs; } ''
@@ -206,10 +220,17 @@ in
   # command covers the same files as treefmt's python formatter, and no more.
   format = mkCheck "format" [ ruff ] "ruff format --no-cache --check .";
 
-  types = mkCheck "types" [
-    pyright
-    pythonEnv
-  ] "pyright --pythonpath ${pythonEnv}/bin/python";
+  # One zuban run for each `mypy.ini`. Each project has its own Python floor,
+  # and three `tests/` trees each hold a `conftest.py`, which one run would
+  # read as the same module.
+  types = mkCheck "types" [ zuban ] ''
+    failed=0
+    for project in ${lib.escapeShellArgs typedProjects}; do
+      echo "zuban: $project"
+      (cd "$project" && env -u PYTHONPATH zuban mypy --python-executable ${pythonEnv}/bin/python) || failed=1
+    done
+    test "$failed" = 0
+  '';
 
   # `scripts/` was covered by nothing. `writeShellApplication` runs shellcheck
   # over the script it builds, which covers the test runner of

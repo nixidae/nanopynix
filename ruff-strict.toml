@@ -255,7 +255,7 @@ ignorelist = ["eval"]
 # `asyncio.X` / aliased `aio.X` at the call, so neither spelling escapes.
 # What it cannot see is a call laundered through a local binding
 # (`fn = asyncio.gather; fn(...)`) -- that needs whole-program inference, which
-# pyright already provides and which this table is not trying to replicate.
+# zuban already provides and which this table is not trying to replicate.
 [lint.flake8-tidy-imports.banned-api]
 
 # Imports go at the top of the module, as plain imports. pynix installs
@@ -293,8 +293,8 @@ ignorelist = ["eval"]
 # runtime. Wrap it: `run_sync(functools.partial(fn, x, flag=True))`.
 #
 # Also import the submodule (`import anyio.to_thread`). A bare `import anyio`
-# reaches it at runtime but pyright will not resolve the attribute, and the
-# resulting Unknown silently disables type checking of the whole call.
+# reaches it at runtime but a type checker does not resolve the attribute,
+# and the resulting unknown type silently disables checks of the whole call.
 "asyncio.to_thread".msg = "Use anyio.to_thread.run_sync(fn, *args) -- bounded by a CapacityLimiter, unlike asyncio's unbounded spawn. It does NOT forward **kwargs: wrap keyword args in functools.partial."
 
 # Bridging a concurrent.futures.Future into the running loop. Banned so the
