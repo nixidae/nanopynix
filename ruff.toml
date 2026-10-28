@@ -1,17 +1,4 @@
-target-version = "py313"
-line-length = 120
-
-[lint]
-select = [
-  "E",
-  "W", # pycodestyle
-  "F", # pyflakes (real bugs)
-  "I", # isort
-]
-
-ignore = [
-  "E501", # line length handled by line-length setting
-]
+extend = "nix/shared/ruff.toml"
 
 [lint.flake8-builtins]
 ignorelist = ["eval"]
@@ -28,7 +15,6 @@ ignorelist = ["eval"]
 "pynix/src/pynix/__init__.py" = ["E402"]
 
 [lint.isort]
-combine-as-imports = true
 known-first-party = [
   # `support` and `_shared_sessions` are `pynix/tests/`'s own modules.
   # pytest puts that directory on `sys.path` because the suite has no

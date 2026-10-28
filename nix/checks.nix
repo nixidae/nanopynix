@@ -50,6 +50,9 @@ let
       ../pyproject.toml
       ../ruff.toml
       ../ruff-strict.toml
+      # The shared base that `ruff.toml` extends. Without it ruff fails to
+      # read the configuration.
+      ../nix/shared
       # The CLI layer, which issue #222 moved out of `../pynix`. Without it
       # `check-lint`, `check-format` and `check-types` read a smaller tree
       # than `ruff check .` in the dev shell reads.
