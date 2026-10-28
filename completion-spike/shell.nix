@@ -17,7 +17,7 @@
 let
   sources = import ../nix/sources.nix;
   repo = import ../. { inherit sources; };
-  inherit (repo) pkgs;
+  inherit (repo.internal) pkgs;
   inherit (import sources.nixvenv { inherit pkgs; }) nixvenv;
 
   # `src` and `test-support/src` are editable, and there is no install step:

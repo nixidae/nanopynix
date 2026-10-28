@@ -2,4 +2,4 @@
 # one, and package search still answers. `path` and `stdenv` are the two
 # markers that say so.
 { }:
-(import ../../../. { }).pkgs
+(import ../../../. { }).internal.pkgs

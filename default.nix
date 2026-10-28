@@ -468,8 +468,48 @@ lib.throwIf (unlistedVariants != [ ])
     Add the suffix to ci/variants.nix.
   ''
   {
-    inherit (pkgs) lib;
+    packages = {
+      inherit (nanopynixVersions.stable)
+        pynix
+        pynix-lsp
+        libpynix
+        pytest-agent
+        huggorm-bindings
+        ;
+      inherit tofuCoreSchemaTool storeExecTool;
+      default = nanopynixVersions.stable.pynix;
+    };
+    lib = {
+      inherit (nanopynixVersions.stable) pythonSet pythonSetWith;
+      inherit mkApp;
+    };
+    nixosModules = { };
+    easykubenixModules = { };
+    docs.default = nanopynixVersions.stable.nanopynix-docs;
 
+    # Not public: the names may change without notice.
+    internal = {
+      inherit
+        sources
+        pkgs
+        nanopynixVersions
+        pyproject-nix
+        tests
+        experiments
+        ciSteps
+        ciVersionMatrix
+        storeExecTools
+        ;
+      inherit (nanopynixVersions.stable)
+        pynixDevEnv
+        pynixNonEditableDevEnv
+        nonEditableShell
+        ;
+    };
+
+    # Except `checks`, `shell`, `ciTestWorkflows` and `lanes`, the names below
+    # are the old interface. Sources, croshome and solid-kubernetes read them.
+    # nixidae/nixidae#1103.
     inherit (nanopynixVersions.stable)
       # The engine: huggorm's generated bindings, linked against this Nix.
       huggorm-bindings

@@ -12,7 +12,8 @@
 { }:
 let
   default = import ../../../. { };
-  inherit (default) pkgs lib;
+  inherit (default.internal) pkgs;
+  inherit (pkgs) lib;
 in
 {
   inherit lib;

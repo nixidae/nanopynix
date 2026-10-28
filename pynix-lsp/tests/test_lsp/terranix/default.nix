@@ -11,7 +11,7 @@
 { }:
 let
   default = import ../../../../. { };
-  inherit (default) pkgs;
+  inherit (default.internal) pkgs;
   inherit (pkgs) lib;
 
   providerNames = [

@@ -23,12 +23,12 @@
 { }:
 let
   default = import ../../../../. { };
-  inherit (default) pkgs;
+  inherit (default.internal) pkgs;
 
   # The umbrella owns every source, and this repository re-exports the set it
   # was given. So this is the easykubenix the rest of the collection builds
   # against, whether that is a working copy or the revision in the lock.
-  easykubenixSrc = default.sources.easykubenix;
+  easykubenixSrc = default.internal.sources.easykubenix;
 
   testModules = [
     ./modules/demo.nix

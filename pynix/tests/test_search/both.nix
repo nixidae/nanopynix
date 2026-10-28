@@ -8,10 +8,10 @@
 { }:
 let
   default = import ../../../. { };
-  inherit (default) lib;
+  inherit (default.internal.pkgs) lib;
   small = import ../test_packages/pkgset.nix { };
   evaluated = lib.evalModules {
-    specialArgs.pkgs = default.pkgs;
+    specialArgs.pkgs = default.internal.pkgs;
     modules = [ ./module.nix ];
   };
 in

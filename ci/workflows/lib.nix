@@ -20,7 +20,8 @@ let
   # no longer necessary: `nix build --file . <attrpath>` reaches any attribute,
   # so CI names `ciSteps.nix_2_34-tsan` directly and this file reads the same
   # attributes CI builds. The marker is gone with it.
-  inherit (repo) lib ciVersionMatrix sources;
+  inherit (repo.internal.pkgs) lib;
+  inherit (repo.internal) ciVersionMatrix sources;
 
   # ghanix is a source of its own in nixidae, because nixkube wants it and
   # has no nanopynix dependency to reach it through. It takes `lib` and

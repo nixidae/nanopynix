@@ -1,7 +1,8 @@
 { extraModules ? [ ] }:
 let
   default = import ../../../../. { };
-  inherit (default) pkgs lib;
+  inherit (default.internal) pkgs;
+  inherit (pkgs) lib;
 in
 lib.evalModules {
   specialArgs.pkgs = pkgs;

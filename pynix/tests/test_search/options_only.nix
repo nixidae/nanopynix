@@ -7,9 +7,9 @@
 { }:
 let
   default = import ../../../. { };
-  inherit (default) lib;
+  inherit (default.internal.pkgs) lib;
   evaluated = lib.evalModules {
-    specialArgs.pkgs = default.pkgs;
+    specialArgs.pkgs = default.internal.pkgs;
     modules = [ ./module.nix ];
   };
 in
