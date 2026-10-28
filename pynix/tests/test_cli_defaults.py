@@ -27,8 +27,8 @@ from huggorm import TEMPORARY, ServerOptions
 
 from pynix import parse
 from pynix._impl.build import (
-    _resolve_namespaced,  # pyright: ignore[reportPrivateUsage] -- the refusal under test is inside this function
-    _server_options,  # pyright: ignore[reportPrivateUsage] -- the worker setup under test is private
+    _resolve_namespaced,
+    _server_options,
 )
 from pynix._impl.settings import (
     DEFAULT_STORE,

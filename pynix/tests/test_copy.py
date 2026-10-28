@@ -99,7 +99,8 @@ async def _copy(
 ) -> dict[str, object]:
     command = parse(["copy", *arguments])
     await command.run()
-    return json.loads(capsys.readouterr().out)
+    copied: dict[str, object] = json.loads(capsys.readouterr().out)
+    return copied
 
 
 @LINUX_CHROOT_BUILD
@@ -346,7 +347,8 @@ async def _build_and_copy(
         ],
     )
     await command.run()
-    return json.loads(capsys.readouterr().out)
+    listed: dict[str, Any] = json.loads(capsys.readouterr().out)
+    return listed
 
 
 @LINUX_CHROOT_BUILD

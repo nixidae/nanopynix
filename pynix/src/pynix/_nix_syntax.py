@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol, cast
 
-import tree_sitter_nix  # type: ignore[reportMissingTypeStubs]  # tree-sitter-nix does not ship type stubs
+import tree_sitter_nix
 from tree_sitter import Language, Parser, Tree
 
 
@@ -16,14 +16,20 @@ class _GrammarConfig(Protocol):
     grammars: list[_Grammar]
 
 
-NIX_LANGUAGE = Language(cast("int", tree_sitter_nix.language()))  # type: ignore[reportDeprecated, reportUnknownMemberType]  # tree-sitter-nix 0.3 exposes the legacy integer language pointer
-_NIX_GRAMMAR_CONFIG = cast("_GrammarConfig | None", tree_sitter_nix.config())  # type: ignore[reportUnknownMemberType]  # tree-sitter-nix has no type stubs
-if _NIX_GRAMMAR_CONFIG is None:
-    raise RuntimeError("tree-sitter-nix did not provide its grammar configuration")
-_grammar_path = _NIX_GRAMMAR_CONFIG.grammars[0].path
-if _grammar_path is None:
-    raise RuntimeError("tree-sitter-nix did not provide its grammar path")
-NIX_GRAMMAR_PATH: str = _grammar_path
+NIX_LANGUAGE = Language(cast("int", tree_sitter_nix.language()))
+
+
+def _grammar_directory() -> str:
+    config: _GrammarConfig | None = tree_sitter_nix.config()
+    if config is None:
+        raise RuntimeError("tree-sitter-nix did not provide its grammar configuration")
+    path: str | None = config.grammars[0].path
+    if path is None:
+        raise RuntimeError("tree-sitter-nix did not provide its grammar path")
+    return path
+
+
+NIX_GRAMMAR_PATH: str = _grammar_directory()
 
 
 def parse_nix(source: str) -> Tree:

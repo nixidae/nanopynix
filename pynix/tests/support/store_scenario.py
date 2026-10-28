@@ -1,6 +1,3 @@
-# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportPrivateUsage=false, reportUnknownLambdaType=false, reportUnknownArgumentType=false
-# structlog and the huggorm test environment give untyped values, and the
-# scenario reads private pynix state on purpose, as conftest.py does.
 """The store scenario of the pynix suite, and the log it writes.
 
 ``conftest.py`` builds these as fixtures; a test imports the types from here.

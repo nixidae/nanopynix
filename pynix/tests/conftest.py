@@ -1,8 +1,3 @@
-# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportPrivateUsage=false, reportUnknownLambdaType=false, reportUnknownArgumentType=false
-# conftest.py interacts heavily with nanopynix/pynix C++ nanobind extensions
-# that lack type stubs.  Member types, variable types, private imports,
-# unknown argument types, and lambdas without type context are inherent to the
-# test infrastructure.
 """What this suite needs, and the scenario objects that only it uses.
 
 The stores come from ``huggorm.testing``. This file adds what only this suite
@@ -76,7 +71,7 @@ def pynix_live_log(
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _host_nix_conf_stays_out() -> Iterator[None]:  # type: ignore[reportUnusedFunction]  # pytest autouse fixture, wired by pytest
+def _host_nix_conf_stays_out() -> Iterator[None]:
     """Keep the host's ``nix.conf`` out of the pytest process.
 
     Every pynix command loads it, and these tests run the commands in this
@@ -90,7 +85,7 @@ def _host_nix_conf_stays_out() -> Iterator[None]:  # type: ignore[reportUnusedFu
 
 
 @pytest.fixture(scope="module", autouse=True)
-async def _shared_pynix_sessions(  # type: ignore[reportUnusedFunction]  # pytest autouse fixture, wired by pytest
+async def _shared_pynix_sessions(
     anyio_backend: str,  # noqa: ARG001 -- see below; requested for its side effect on the fixture closure
 ) -> AsyncIterator[None]:
     """Share one Nix session/store/evaluator across pynix commands, unless CI
@@ -123,7 +118,7 @@ async def _shared_pynix_sessions(  # type: ignore[reportUnusedFunction]  # pytes
 
 
 @pytest.fixture(autouse=True)
-def _capture_pynix_test_structlog(  # type: ignore[reportUnusedFunction]  # pytest autouse fixture, wired by pytest
+def _capture_pynix_test_structlog(
     request: pytest.FixtureRequest,
     pynix_live_log: PynixLiveLog,
 ) -> Iterator[None]:

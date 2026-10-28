@@ -127,25 +127,29 @@ class ConfiguredCommand(PynixCommand):
 # Issue #123.
 @no_runtime_type_check  # see option
 def store_option(help: str = "Store URI to use.") -> str:  # noqa: A002 -- see option
-    return option(help)
+    value: str = option(help)
+    return value
 
 
 @no_runtime_type_check  # see option
 def eval_store_option() -> str | None:
-    return option("Store URI to evaluate with. Defaults to --store.")
+    value: str | None = option("Store URI to evaluate with. Defaults to --store.")
+    return value
 
 
 @no_runtime_type_check  # see option
 def verbosity_option() -> str | None:
-    return option("Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7.")
+    value: str | None = option("Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7.")
+    return value
 
 
 @no_runtime_type_check  # see option
 def print_build_logs_option() -> bool:
-    return option(
+    value: bool = option(
         "Print build log lines to stderr.",
         # The negative exists because the default can be true, and an option
         # that a configuration file turns on must stay possible to turn off.
         # `argparse.BooleanOptionalAction` writes both halves.
         negatable=True,
     )
+    return value

@@ -13,7 +13,7 @@ from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, 
 
 from pynix import _util, parse
 from pynix._impl import build as build_impl
-from pynix._impl.build import (  # pyright: ignore[reportPrivateUsage] -- test drives the private build step directly to exercise FOD-update/dry-run paths
+from pynix._impl.build import (
     BuildSession,
     BuildTargetError,
     _build_target,

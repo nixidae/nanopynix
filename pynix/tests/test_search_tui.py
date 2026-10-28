@@ -16,6 +16,7 @@ import anyio
 import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.data_structures import Size
+from prompt_toolkit.formatted_text import StyleAndTextTuples
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.styles.defaults import PROMPT_TOOLKIT_STYLE, WIDGETS_STYLE
@@ -621,11 +622,16 @@ async def test_the_detail_pane_is_drawn_at_its_real_width() -> None:
     assertion against it then passes whether the measurement runs or not.
     """
     widths: list[int] = []
+
+    def detail(_fruit: object, width: int, _query: str) -> StyleAndTextTuples:
+        widths.append(width)
+        return [("", str(width))]
+
     source = SearchSource(
         items=_FRUIT,
         rank=lambda _query: _FRUIT,
         row=lambda fruit: fruit.name,
-        detail=lambda _fruit, width, _query: [("", str(widths.append(width) or width))],
+        detail=detail,
         noun="fruit",
     )
     with create_pipe_input() as pipe:

@@ -1,8 +1,5 @@
 """Tests for the interactive pynix REPL loop."""
 
-# pyright: reportPrivateUsage=false
-# Tests intentionally access private symbols from pynix._impl.repl
-
 from __future__ import annotations
 
 import signal
@@ -20,7 +17,7 @@ from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import ANSI, FormattedText
 
 from pynix import _util as util_module, parse
-from pynix._impl.repl import (  # type: ignore[reportPrivateUsage]  # tests intentionally access private symbols
+from pynix._impl.repl import (
     _HELP,
     ReplRunError,
     _AttrDoc,
@@ -216,28 +213,36 @@ class _Repl(_ReplEngine):
         return await value.as_python()
 
     async def type_name(self, value: Any) -> str:
-        return await value.type_name()
+        name: str = await value.type_name()
+        return name
 
     async def attr(self, value: Any, name: str) -> AsyncValue | None:
-        return value.attr(name)
+        found: AsyncValue | None = value.attr(name)
+        return found
 
     async def build(self, value: Any) -> dict[str, str]:
-        return await value.build()
+        built: dict[str, str] = await value.build()
+        return built
 
     async def doc(self, value: Any) -> _ValueDoc | None:
-        return value.value_doc
+        doc: _ValueDoc | None = value.value_doc
+        return doc
 
     async def attr_doc(self, value: Any, name: str) -> _AttrDoc | None:
-        return value.found
+        attr: _AttrDoc | None = value.found
+        return attr
 
     async def edit_location(self, value: Any) -> tuple[str, int]:
-        return await value.location()
+        location: tuple[str, int] = await value.location()
+        return location
 
     async def realise_argv(self, value: Any) -> list[str]:
-        return await value.realise_argv()
+        argv: list[str] = await value.realise_argv()
+        return argv
 
     async def realise_string(self, value: Any) -> str:
-        return await value.realise_string()
+        realised: str = await value.realise_string()
+        return realised
 
 
 class _CompletionValue(AsyncValue):
@@ -260,7 +265,8 @@ class _CompletionRepl(_ReplEngine):
         return self.value
 
     async def attr_names(self, value: Any) -> list[str]:
-        return value.attr_names
+        names: list[str] = value.attr_names
+        return names
 
     async def release(self, value: Any) -> None:
         value.released = True
@@ -463,7 +469,8 @@ async def test_repl_completion_uses_commands_scope_and_attrsets() -> None:
     assert await complete(":e p") == ["pkgs"]
     assert await complete(":e pkgs.") == ["hello", "hello-unfree", "world"]
     assert await complete(":e pkgs.hel") == ["hello", "hello-unfree"]
-    assert completer._repl.value.released  # type: ignore[reportPrivateUsage]  # verifies temporary value lifetime
+    assert isinstance(completer._repl, _CompletionRepl)
+    assert completer._repl.value.released
 
 
 async def test_repl_completion_on_an_empty_line_waits_for_a_keypress() -> None:

@@ -15,7 +15,7 @@ def _store_path_basename(path: str) -> str:
 
 
 @LINUX_CHROOT_BUILD
-async def test_print_roots(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]):
+async def test_print_roots(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
     cmd = parse(["store", "gc", "print-roots", "--store", populated_store["store_url"]])
     await cmd.run()
     captured = capsys.readouterr()
@@ -29,7 +29,7 @@ async def test_print_roots(populated_store: dict[str, str], capsys: pytest.Captu
 
 
 @LINUX_CHROOT_BUILD
-async def test_print_alive(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]):
+async def test_print_alive(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
     cmd = parse(["store", "gc", "print-alive", "--store", populated_store["store_url"]])
     await cmd.run()
     captured = capsys.readouterr()
@@ -41,7 +41,7 @@ async def test_print_alive(populated_store: dict[str, str], capsys: pytest.Captu
 
 
 @LINUX_CHROOT_BUILD
-async def test_print_dead_dry_run(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]):
+async def test_print_dead_dry_run(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
     cmd = parse(["store", "gc", "print-dead", "--store", populated_store["store_url"]])
     await cmd.run()
     captured = capsys.readouterr()
@@ -52,7 +52,7 @@ async def test_print_dead_dry_run(populated_store: dict[str, str], capsys: pytes
     assert isinstance(data["bytesFreed"], int)
 
 
-def test_print_dead_help(capsys: pytest.CaptureFixture[str]):
+def test_print_dead_help(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exc_info:
         parse(["store", "gc", "print-dead", "--help"])
 
@@ -62,7 +62,7 @@ def test_print_dead_help(capsys: pytest.CaptureFixture[str]):
 
 
 @LINUX_CHROOT_BUILD
-async def test_path_from_hash_part(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]):
+async def test_path_from_hash_part(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
     store_path = _store_path_basename(populated_store["hello_path"])
     hash_part = store_path.split("-", 1)[0]
     cmd = parse(["store", "path-from-hash-part", hash_part, "--store", populated_store["store_url"]])
@@ -77,7 +77,7 @@ async def test_store_info(
     populated_store: dict[str, str],
     nix_backend: str,
     capsys: pytest.CaptureFixture[str],
-):
+) -> None:
     cmd = parse(["store", "info", "--store", populated_store["store_url"]])
     await cmd.run()
     captured = capsys.readouterr()
@@ -93,7 +93,7 @@ async def test_store_info(
 
 
 @LINUX_CHROOT_BUILD
-async def test_is_valid_path(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]):
+async def test_is_valid_path(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
     store_path = populated_store["hello_path"]
     cmd = parse(["store", "is-valid-path", store_path, "--store", populated_store["store_url"]])
     await cmd.run()
@@ -103,7 +103,7 @@ async def test_is_valid_path(populated_store: dict[str, str], capsys: pytest.Cap
 
 
 @LINUX_CHROOT_BUILD
-async def test_follow_links_to_store_path(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]):
+async def test_follow_links_to_store_path(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
     cmd = parse(
         ["store", "follow-links-to-store-path", populated_store["hello_path"], "--store", populated_store["store_url"]],
     )
@@ -114,7 +114,7 @@ async def test_follow_links_to_store_path(populated_store: dict[str, str], capsy
 
 
 @LINUX_CHROOT_BUILD
-async def test_compute_fs_closure(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]):
+async def test_compute_fs_closure(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
     store_path = populated_store["hello_path"]
     cmd = parse(["store", "compute-fs-closure", store_path, "--store", populated_store["store_url"]])
     await cmd.run()
@@ -124,7 +124,7 @@ async def test_compute_fs_closure(populated_store: dict[str, str], capsys: pytes
 
 
 @LINUX_CHROOT_BUILD
-async def test_query_missing(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]):
+async def test_query_missing(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
     cmd = parse(
         ["store", "query-missing", populated_store["hello_path"], "--store", populated_store["store_url"]],
     )
@@ -180,7 +180,7 @@ async def test_query_derivation_outputs(
 
 
 @LINUX_CHROOT_BUILD
-async def test_query_valid_derivers(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]):
+async def test_query_valid_derivers(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
     store_path = populated_store["hello_path"]
     cmd = parse(["store", "query-valid-derivers", store_path, "--store", populated_store["store_url"]])
     await cmd.run()
@@ -190,7 +190,7 @@ async def test_query_valid_derivers(populated_store: dict[str, str], capsys: pyt
 
 
 @LINUX_CHROOT_BUILD
-async def test_list_valid_paths(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]):
+async def test_list_valid_paths(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
     cmd = parse(["store", "list-valid-paths", "--store", populated_store["store_url"]])
     await cmd.run()
     captured = capsys.readouterr()
@@ -199,7 +199,7 @@ async def test_list_valid_paths(populated_store: dict[str, str], capsys: pytest.
 
 
 @LINUX_CHROOT_BUILD
-async def test_query_referrers(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]):
+async def test_query_referrers(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
     store_path = populated_store["hello_path"]
     cmd = parse(["store", "query-referrers", store_path, "--store", populated_store["store_url"]])
     await cmd.run()
@@ -209,7 +209,7 @@ async def test_query_referrers(populated_store: dict[str, str], capsys: pytest.C
 
 
 @LINUX_CHROOT_BUILD
-async def test_query_substitutable_paths(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]):
+async def test_query_substitutable_paths(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
     cmd = parse(
         ["store", "query-substitutable-paths", populated_store["hello_path"], "--store", populated_store["store_url"]],
     )
@@ -220,7 +220,7 @@ async def test_query_substitutable_paths(populated_store: dict[str, str], capsys
 
 
 @LINUX_CHROOT_BUILD
-async def test_add_temp_root(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]):
+async def test_add_temp_root(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
     cmd = parse(
         ["store", "add-temp-root", populated_store["hello_path"], "--store", populated_store["store_url"]],
     )
@@ -233,7 +233,7 @@ async def test_add_temp_root(populated_store: dict[str, str], capsys: pytest.Cap
 @LINUX_CHROOT_BUILD
 async def test_add_perm_root_and_indirect_root(
     populated_store: dict[str, str], tmp_path: Path, capsys: pytest.CaptureFixture[str]
-):
+) -> None:
     root_path = tmp_path / "pynix-gc-root"
     cmd = parse(
         [
@@ -259,7 +259,7 @@ async def test_add_perm_root_and_indirect_root(
 
 
 @LINUX_CHROOT_BUILD
-async def test_ensure_path(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]):
+async def test_ensure_path(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
     store_path = populated_store["hello_path"]
     cmd = parse(["store", "ensure-path", store_path, "--store", populated_store["store_url"]])
     await cmd.run()
@@ -271,7 +271,7 @@ async def test_ensure_path(populated_store: dict[str, str], capsys: pytest.Captu
 @LINUX_CHROOT_BUILD
 async def test_store_cat_reads_file_from_populated_store(
     populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]
-):
+) -> None:
     cmd = parse(["store", "cat", populated_store["text_path"], "--store", populated_store["store_url"]])
     await cmd.run()
     captured = capsys.readouterr()
@@ -279,7 +279,9 @@ async def test_store_cat_reads_file_from_populated_store(
 
 
 @LINUX_CHROOT_BUILD
-async def test_store_ls_lists_populated_store_path(populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]):
+async def test_store_ls_lists_populated_store_path(
+    populated_store: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
     cmd = parse(["store", "ls", populated_store["hello_path"], "--store", populated_store["store_url"]])
     await cmd.run()
     captured = capsys.readouterr()
@@ -294,12 +296,13 @@ async def test_store_ls_lists_populated_store_path(populated_store: dict[str, st
 
 async def _add_tree(environment: NixTestEnvironment, tree: Path, capsys: pytest.CaptureFixture[str]) -> str:
     await parse(["store", "add-path", str(tree), *environment.pynix_store_args()]).run()
-    return json.loads(capsys.readouterr().out)["path"]
+    added: dict[str, str] = json.loads(capsys.readouterr().out)
+    return added["path"]
 
 
 async def test_store_cat_reads_through_a_relocated_store(
     isolated_nix_environment: NixTestEnvironment, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-):
+) -> None:
     tree = tmp_path / "pynix-store-cat-test"
     (tree / "share").mkdir(parents=True)
     (tree / "share" / "message").write_text("cat-output\n")
@@ -313,7 +316,7 @@ async def test_store_cat_reads_through_a_relocated_store(
 
 async def test_store_ls_reads_through_a_relocated_store(
     isolated_nix_environment: NixTestEnvironment, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-):
+) -> None:
     tree = tmp_path / "pynix-store-ls-test"
     (tree / "bin").mkdir(parents=True)
     (tree / "share").mkdir()
@@ -340,7 +343,7 @@ async def test_store_ls_reads_through_a_relocated_store(
 
 async def test_store_diff_closures_reports_added_removed_and_size_delta(
     isolated_nix_environment: NixTestEnvironment, capsys: pytest.CaptureFixture[str]
-):
+) -> None:
     async with util_module.huggorm_store_session(isolated_nix_environment.store_uri) as (_session, store):
         common = await store.add_to_store("common", b"common")
         old = await store.add_to_store("old", b"old")

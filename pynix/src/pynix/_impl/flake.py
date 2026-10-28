@@ -120,8 +120,8 @@ async def _print_flake_metadata(flake_ref: str, *, store_uri: str) -> None:
 
 async def run_show(command: Show) -> None:
     """The body of :meth:`pynix.flake.Show.run`."""
-    base_ref, _, flake_attr = command.flake_ref.partition("#")
-    flake_attr = flake_attr or None
+    base_ref, _, raw_attr = command.flake_ref.partition("#")
+    flake_attr: str | None = raw_attr or None
 
     async with huggorm_eval_session(command.store) as (_session, _store, state):
         locked = await state.lock_flake(huggorm.parse_flake_ref(base_ref), write_lock_file=False)

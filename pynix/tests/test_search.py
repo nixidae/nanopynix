@@ -21,6 +21,7 @@ import pynix._impl.search as search_module
 from pynix import parse
 from pynix._impl import options_tui
 from pynix._impl._search_tui import SearchTui
+from pynix._option_search import rank
 from pynix._option_values import EvaluatorUnavailableError, OptionValues, Rendered, Trees, Value
 from pynix._options import OptionRecord
 from pynix._programs import ProgramIndex
@@ -325,7 +326,7 @@ def test_the_ranking_puts_the_options_in_order_for_an_empty_query(
     indexed_options: list[OptionRecord],
 ) -> None:
     """An empty query has nothing to rank against, so the names are sorted."""
-    ranked = options_tui.rank(indexed_options)("")
+    ranked = rank(indexed_options)("")
     names = [record.name for record in ranked]
     assert names == sorted(names)
     assert len(names) == len(indexed_options)
@@ -334,7 +335,7 @@ def test_the_ranking_puts_the_options_in_order_for_an_empty_query(
 def test_the_ranking_finds_an_option_by_a_part_of_its_name(
     indexed_options: list[OptionRecord],
 ) -> None:
-    ranked = options_tui.rank(indexed_options)("configFiles")
+    ranked = rank(indexed_options)("configFiles")
     assert ranked[0].name == "services.example-daemon.configFiles"
 
 
@@ -348,7 +349,7 @@ def test_the_ranking_narrows_and_does_not_keep_every_option(
     order and the footer counted all of them. The score cutoff is what makes
     the interface narrow.
     """
-    ranked = options_tui.rank(indexed_options)("configFiles")
+    ranked = rank(indexed_options)("configFiles")
     assert len(ranked) < len(indexed_options)
     assert all("onfig" in record.name for record in ranked)
 
@@ -360,12 +361,12 @@ def _named(*names: str) -> list[OptionRecord]:
 def test_the_ranking_finds_a_short_query_inside_a_long_option_name() -> None:
     """A caller who is still typing gives a query far shorter than the name."""
     long_name = "services.nginx.virtualHosts.<name>.locations.<name>.proxyWebsockets"
-    ranked = options_tui.rank(_named(long_name, "boot.loader.grub.enable"))("websock")
+    ranked = rank(_named(long_name, "boot.loader.grub.enable"))("websock")
     assert [record.name for record in ranked] == [long_name]
 
 
 def test_the_ranking_ignores_the_case_of_the_query() -> None:
-    assert len(options_tui.rank(_named("services.a.proxyWebsockets"))("WEBSOCKETS")) == 1
+    assert len(rank(_named("services.a.proxyWebsockets"))("WEBSOCKETS")) == 1
 
 
 def test_one_more_letter_never_gives_more_options() -> None:
@@ -387,7 +388,7 @@ def test_one_more_letter_never_gives_more_options() -> None:
         "services.openssh.enable",
         "networking.firewall.allowPing",
     )
-    rank_query = options_tui.rank(records)
+    rank_query = rank(records)
     counts = [len(rank_query(query)) for query in ("v", "vs", "vsc", "vsco", "vscod", "vscode")]
     assert counts == sorted(counts, reverse=True), counts
 
@@ -399,7 +400,7 @@ def test_every_word_of_the_query_must_appear() -> None:
         "programs.vscode.package",
         "services.openssh.enable",
     )
-    rank_query = options_tui.rank(records)
+    rank_query = rank(records)
     assert len(rank_query("vscode")) == 2
     assert [record.name for record in rank_query("vscode enable")] == ["programs.vscode.enable"]
 
@@ -409,7 +410,7 @@ def test_the_shorter_and_more_specific_option_ranks_first() -> None:
         "programs.vscode.profiles.<name>.userSettings.editorAssociations",
         "programs.vscode.enable",
     )
-    ranked = options_tui.rank(records)("vscode")
+    ranked = rank(records)("vscode")
     assert ranked[0].name == "programs.vscode.enable"
 
 
@@ -420,14 +421,14 @@ def test_a_typo_falls_back_to_a_near_match() -> None:
     interface useful while the caller corrects the spelling.
     """
     records = _named("programs.vscode.enable", "networking.firewall.allowPing")
-    ranked = options_tui.rank(records)("vscodee")
+    ranked = rank(records)("vscodee")
     assert [record.name for record in ranked] == ["programs.vscode.enable"]
 
 
 def test_the_ranking_finds_nothing_for_a_query_that_matches_nothing(
     indexed_options: list[OptionRecord],
 ) -> None:
-    assert options_tui.rank(indexed_options)("zzzzzzzz") == []
+    assert rank(indexed_options)("zzzzzzzz") == []
 
 
 def test_the_detail_pane_renders_a_real_myst_description(
@@ -820,10 +821,10 @@ def test_a_sub_option_is_searchable(
     indexed_options: list[OptionRecord],
 ) -> None:
     """The whole point: the interface finds the option, by its own name."""
-    ranked = options_tui.rank(indexed_options)("brokenSubDefault")
+    ranked = rank(indexed_options)("brokenSubDefault")
     assert [record.name for record in ranked] == ["services.example-daemon.vhosts.<name>.brokenSubDefault"]
 
-    ranked = options_tui.rank(indexed_options)("vhosts port")
+    ranked = rank(indexed_options)("vhosts port")
     assert [record.name for record in ranked] == ["services.example-daemon.vhosts.<name>.port"]
 
 

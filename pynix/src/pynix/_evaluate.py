@@ -261,7 +261,8 @@ type JsonValue = bool | int | float | str | list[JsonValue] | dict[str, JsonValu
 
 async def to_python(value: AsyncValue) -> JsonValue:
     """*value*, forced all the way down, as JSON data. A path stays a path."""
-    return json.loads(await value.to_json())
+    parsed: JsonValue = json.loads(await value.to_json())
+    return parsed
 
 
 async def call(function: AsyncValue, *arguments: AsyncValue) -> AsyncValue:

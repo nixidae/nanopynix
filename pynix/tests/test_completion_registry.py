@@ -103,14 +103,16 @@ async def _complete(prefix: str) -> list[str]:
     """
     result = await run_process([sys.executable, "-c", _COMPLETE_SCRIPT, prefix])
     assert result.returncode == 0, result.describe()
-    return json.loads(result.stdout.strip().splitlines()[-1])
+    names: list[str] = json.loads(result.stdout.strip().splitlines()[-1])
+    return names
 
 
 async def _read_layers() -> list[list[str]]:
     """The registry layers that need no network, as ``[type, from]`` pairs."""
     result = await run_process([sys.executable, "-c", _LAYERS_SCRIPT])
     assert result.returncode == 0, result.describe()
-    return json.loads(result.stdout.strip().splitlines()[-1])
+    layers: list[list[str]] = json.loads(result.stdout.strip().splitlines()[-1])
+    return layers
 
 
 @pytest.mark.usefixtures("user_registry")

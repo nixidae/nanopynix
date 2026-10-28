@@ -98,7 +98,7 @@ def source(
     def draw(hit: SearchHit, width: int, query: str) -> StyleAndTextTuples:
         return detail(hit, width, query, values)
 
-    return SearchSource(
+    return SearchSource[SearchHit](
         items=[*options, *packages],
         rank=make_merged_ranker(options, packages),
         row=row,

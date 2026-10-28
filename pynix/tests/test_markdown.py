@@ -8,12 +8,12 @@ description rather than from an invented string.
 from __future__ import annotations
 
 import os
+import shutil
 
 import pytest
 from prompt_toolkit.formatted_text import FormattedText, StyleAndTextTuples
 from prompt_toolkit.styles import Attrs, Style
 
-import pynix._markdown as markdown_module
 from pynix._markdown import MEASURE, NixMarkdown, render_markdown
 
 
@@ -188,7 +188,7 @@ def test_the_renderer_reads_the_terminal_when_it_is_given_no_width(monkeypatch: 
         del fallback  # the point of the patch is that the fallback is not used
         return os.terminal_size((narrow, 24))
 
-    monkeypatch.setattr(markdown_module.shutil, "get_terminal_size", _size)
+    monkeypatch.setattr(shutil, "get_terminal_size", _size)
     drawn = "".join(fragment[1] for fragment in render_markdown("plain text"))
     assert max(len(line) for line in drawn.splitlines()) == narrow
 

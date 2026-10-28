@@ -109,14 +109,16 @@ async def _run(arguments: list[str], capsys: pytest.CaptureFixture[str]) -> dict
     """One pynix command in this process, and its JSON answer."""
     command = parse(arguments)
     await command.run()
-    return json.loads(capsys.readouterr().out)
+    listed: dict[str, Any] = json.loads(capsys.readouterr().out)
+    return listed
 
 
 async def _list_in_a_subprocess() -> dict[str, Any]:
     """``pynix registry list`` in a process that has read no layer yet."""
     result = await run_process([sys.executable, "-c", _CLI_SCRIPT, "registry", "list"])
     assert result.returncode == 0, result.describe()
-    return json.loads(result.stdout)
+    listed: dict[str, Any] = json.loads(result.stdout)
+    return listed
 
 
 def _user_entries(listing: dict[str, Any]) -> list[dict[str, Any]]:

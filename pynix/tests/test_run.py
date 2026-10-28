@@ -7,8 +7,6 @@ replace the pytest interpreter.
 
 from __future__ import annotations
 
-# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
-# nanopynix.current_system comes from a C++ nanobind extension without type stubs.
 import os
 import subprocess
 import sys

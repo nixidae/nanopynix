@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-import deferimport  # pyright: ignore[reportMissingTypeStubs] -- deferimport ships no py.typed
+import deferimport
 
 # Every module that loads after this line imports lazily, so a plain import
 # at the top of a module costs nothing until a name is used. A runtime type
 # checker needs real objects, and `DEFERIMPORT=eager` makes this a no-op.
-deferimport.install()  # pyright: ignore[reportUnknownMemberType] -- see the import
+deferimport.install()
 
 from libpynix import Command, build_parser, complete, dispatch, group, parse_args
 from pynix import _impl

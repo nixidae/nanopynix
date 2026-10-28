@@ -34,7 +34,7 @@ def test_default_outputs_follow_nix(
 
 
 async def test_propagated_packages_follow_their_roots_once() -> None:
-    graph = {"/s/a": ["/s/c"], "/s/b": ["/s/c", "/s/a"], "/s/c": []}
+    graph: dict[str, list[str]] = {"/s/a": ["/s/c"], "/s/b": ["/s/c", "/s/a"], "/s/c": []}
 
     async def read(path: str) -> list[str]:
         return graph[path]

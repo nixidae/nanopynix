@@ -135,8 +135,8 @@ async def resolve_file_reference(raw: str) -> FileReference:  # noqa: PLR0911 --
         expression = await _read_stdin()
         if not expression.strip():
             raise EvaluationTargetError("--file - read no expression from standard input")
-        _, _, fragment = raw.partition("#")
-        return FileReference(arguments=(), fragment=fragment or None, local_path=None, expression=expression)
+        _, _, stdin_fragment = raw.partition("#")
+        return FileReference(arguments=(), fragment=stdin_fragment or None, local_path=None, expression=expression)
 
     # A path that exists exactly as written wins, '#' and all. A file name that
     # holds a '#' is rare, and the caller who has one wrote it deliberately.

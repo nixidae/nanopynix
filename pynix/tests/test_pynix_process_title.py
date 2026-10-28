@@ -6,6 +6,7 @@ import sys
 from unittest.mock import MagicMock
 
 import pytest
+import rich.traceback
 
 import pynix
 from pynix._impl import main as impl_main
@@ -26,14 +27,14 @@ def test_main_sets_up_after_it_parses(monkeypatch: pytest.MonkeyPatch) -> None:
     def _record_traceback_install(**_kwargs: object) -> None:
         calls.append(("traceback", None))
 
-    monkeypatch.setattr(impl_main.rich.traceback, "install", _record_traceback_install)
+    monkeypatch.setattr(rich.traceback, "install", _record_traceback_install)
 
     def _record_dispatch(_parser: object, _namespace: object) -> object:
         calls.append(("parse", None))
         return command
 
     monkeypatch.setattr(pynix, "dispatch", _record_dispatch)
-    monkeypatch.setattr(impl_main, "run", lambda _body: calls.append(("run", None)))  # type: ignore[reportUnknownLambdaType]  # lambda receives Any from setattr
+    monkeypatch.setattr(impl_main, "run", lambda _body: calls.append(("run", None)))
     monkeypatch.setattr(sys, "argv", ["pynix", "build"])
 
     pynix.main()

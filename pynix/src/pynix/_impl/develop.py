@@ -14,6 +14,7 @@ import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -380,7 +381,7 @@ async def run_develop(command: Develop) -> None:
     # mkdtemp rather than TemporaryDirectory: execvp replaces this process,
     # so nothing of ours ever cleans up. The script removes the directory
     # itself, which is what develop.cc:599 does for the same reason.
-    directory = await anyio.to_thread.run_sync(tempfile.mkdtemp, "", "pynix-develop-")
+    directory = await anyio.to_thread.run_sync(partial(tempfile.mkdtemp, suffix="", prefix="pynix-develop-"))
     script = compose_shell_script(
         environment,
         command=words,

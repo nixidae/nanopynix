@@ -12,7 +12,7 @@ from huggorm.testing.environment import NixTestEnvironment
 from rich.tree import Tree
 
 import pynix._util as util_module
-from pynix._impl.flake import (  # pyright: ignore[reportPrivateUsage] -- test unit-tests the private rendering helpers directly, see module docstring
+from pynix._impl.flake import (
     _build_tree,
     _format_attr,
     _TreeBudget,

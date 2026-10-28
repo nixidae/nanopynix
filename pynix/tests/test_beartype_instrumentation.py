@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 
-import deferimport  # pyright: ignore[reportMissingTypeStubs] -- deferimport ships no py.typed
+import deferimport
 import pytest
 from beartype.roar import BeartypeCallHintParamViolation
 
@@ -26,4 +26,4 @@ def test_a_wrong_argument_raises() -> None:
 
 
 def test_imports_are_eager_under_beartype() -> None:
-    assert deferimport.installed() is None  # pyright: ignore[reportUnknownMemberType] -- see the import
+    assert deferimport.installed() is None

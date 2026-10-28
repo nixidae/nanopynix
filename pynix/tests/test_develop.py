@@ -23,7 +23,7 @@ from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, 
 
 from pynix import parse
 from pynix._dev_env import BuildEnvironment, make_rc_script, quote
-from pynix._impl.develop import (  # pyright: ignore[reportPrivateUsage] -- the ref-selection decision is unit-tested directly; the end-to-end path builds bashInteractive
+from pynix._impl.develop import (
     InteractiveShell,
     _nixpkgs_flake_ref,
     compose_shell_script,
@@ -165,7 +165,8 @@ async def _nix_print_dev_env(nix_file: Path, store_uri: str) -> dict[str, Any]:
     )
     if result.returncode != 0:
         pytest.fail(f"the oracle failed: nix print-dev-env exited {result.returncode}\n{result.stderr.decode()}")
-    return json.loads(result.stdout)
+    environment: dict[str, Any] = json.loads(result.stdout)
+    return environment
 
 
 def _compare(mine: dict[str, Any], theirs: dict[str, Any]) -> None:
@@ -480,7 +481,7 @@ def test_develop_reports_the_exit_status_of_its_command(
 
 
 def _environment(**variables: str) -> BuildEnvironment:
-    document = {
+    document: dict[str, object] = {
         "variables": {
             "outputs": {"type": "var", "value": "out"},
             "out": {"type": "var", "value": "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-thing"},

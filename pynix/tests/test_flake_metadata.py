@@ -55,7 +55,8 @@ async def _nix_flake_metadata(flake: Path, store_uri: str) -> dict[str, Any]:
     )
     if result.returncode != 0:
         pytest.fail(f"the oracle failed: nix flake metadata {result.describe()}")
-    return json.loads(result.stdout)
+    metadata: dict[str, Any] = json.loads(result.stdout)
+    return metadata
 
 
 async def _pynix_flake_metadata(
@@ -65,7 +66,8 @@ async def _pynix_flake_metadata(
 ) -> dict[str, Any]:
     cmd = parse(["flake", "metadata", str(flake), *environment.pynix_store_args()])
     await cmd.run()
-    return json.loads(capsys.readouterr().out)
+    metadata: dict[str, Any] = json.loads(capsys.readouterr().out)
+    return metadata
 
 
 async def test_flake_metadata_matches_nix(

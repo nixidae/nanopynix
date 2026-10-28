@@ -38,12 +38,14 @@ async def _pynix(environment: NixTestEnvironment, *argv: str) -> None:
 
 
 def _locks(flakes: LinkedFlakes) -> dict[str, Any]:
-    return json.loads((flakes.root / "flake.lock").read_text(encoding="utf-8"))
+    locks: dict[str, Any] = json.loads((flakes.root / "flake.lock").read_text(encoding="utf-8"))
+    return locks
 
 
 def _locked_rev(flakes: LinkedFlakes, name: str) -> str:
     nodes = _locks(flakes)["nodes"]
-    return nodes[nodes["root"]["inputs"][name]]["locked"]["rev"]
+    rev: str = nodes[nodes["root"]["inputs"][name]]["locked"]["rev"]
+    return rev
 
 
 def _new_commit(repo_dir: Path, marker: str) -> str:

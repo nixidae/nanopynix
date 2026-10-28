@@ -13,7 +13,7 @@ async def test_pynix_store_add_file_imports_and_can_be_read(
     shared_nix_environment: NixTestEnvironment,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
-):
+) -> None:
     source = tmp_path / "message.txt"
     source.write_text("pynix-add-file\n")
 

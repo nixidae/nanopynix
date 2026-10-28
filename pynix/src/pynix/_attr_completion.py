@@ -198,9 +198,9 @@ def _impatient_nix() -> Generator[None]:
         yield
     finally:
         huggorm.set_default_verbosity(previous_verbosity)
-        for name, value in previous.items():
-            if value is not None:
-                huggorm.set_setting(name, value)
+        for name, old in previous.items():
+            if old is not None:
+                huggorm.set_setting(name, old)
 
 
 @contextlib.asynccontextmanager
@@ -268,11 +268,11 @@ def _impatient_git() -> Generator[None]:
     try:
         yield
     finally:
-        for name, value in previous.items():
-            if value is None:
+        for name, old in previous.items():
+            if old is None:
                 os.environ.pop(name, None)
             else:
-                os.environ[name] = value
+                os.environ[name] = old
 
 
 def _guarded(work: Callable[[], Awaitable[list[str]]]) -> list[str]:

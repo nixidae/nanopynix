@@ -13,6 +13,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import pytest
 from cyclonedx.schema import SchemaVersion
@@ -115,13 +116,13 @@ def test_an_edge_to_a_merged_output_goes_to_the_output_that_stays() -> None:
 def test_every_dependency_names_an_object_of_the_document() -> None:
     listed = inventory(_records(), _APP, {_APP: (_LIB,), _LIB: ()}, buildtime=True)
     bom = document(listed, serial_number=serial_uuid("x").urn, tool_version="0", patches={})
-    components: list[dict[str, object]] = bom["components"]  # pyright: ignore[reportAssignmentType] -- the document holds this shape
+    components = _objects(bom["components"])
     refs = {str(c["bom-ref"]) for c in components} | {"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-app-1.0"}
     assert "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-app-1.0" not in {str(c["bom-ref"]) for c in components}
-    dependencies: list[dict[str, object]] = bom["dependencies"]  # pyright: ignore[reportAssignmentType] -- as above
+    dependencies = _objects(bom["dependencies"])
     for dependency in dependencies:
         assert dependency["ref"] in refs
-        assert set(dependency["dependsOn"]) <= refs  # pyright: ignore[reportArgumentType] -- a list of strings
+        assert set(_strings(dependency["dependsOn"])) <= refs
 
 
 def test_an_spdx_id_keeps_only_the_allowed_characters() -> None:
@@ -229,8 +230,22 @@ def packages(tmp_path: Path, nixpkgs_path: str) -> Path:
     return path
 
 
+def _objects(value: object) -> list[dict[str, object]]:
+    """A parsed JSON array of objects, which the document holds by its shape."""
+    assert isinstance(value, list)
+    assert all(isinstance(item, dict) for item in value)
+    return cast("list[dict[str, object]]", value)
+
+
+def _strings(value: object) -> list[str]:
+    """A parsed JSON array of strings, which the document holds by its shape."""
+    assert isinstance(value, list)
+    assert all(isinstance(item, str) for item in value)
+    return cast("list[str]", value)
+
+
 def _components(bom: dict[str, object]) -> dict[str, dict[str, object]]:
-    listed: list[dict[str, object]] = bom["components"]  # pyright: ignore[reportAssignmentType] -- the CycloneDX shape
+    listed = _objects(bom["components"])
     return {str(component["name"]): component for component in listed}
 
 
