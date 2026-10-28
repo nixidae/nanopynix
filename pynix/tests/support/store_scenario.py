@@ -275,7 +275,7 @@ class PynixStoreScenario:
             build_attrpath = attrpath
         else:
             pkgs_nix_file = self.repo_root / "default.nix"
-            build_attrpath = f"pkgs.{attrpath}"
+            build_attrpath = f"internal.pkgs.{attrpath}"
         data = await self.run_pynix_json(
             [
                 "build",

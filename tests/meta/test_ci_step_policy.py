@@ -9,7 +9,7 @@ render and a diff of the whole generated matrix.
 
 So a step body belongs in ``ci/steps.nix``, where ``writeShellApplication``
 shellchecks it, ``runtimeInputs`` frees it from whatever the runner image
-happens to ship, and ``nix run --file . ciSteps.<name>`` runs the identical
+happens to ship, and ``nix run --file . internal.ciSteps.<name>`` runs the identical
 thing here. This module keeps the two rules that make that hold.
 
 **Rule 1 -- a ``run:`` body is one line.** One line is a command, and a command
@@ -93,7 +93,7 @@ def test_a_run_body_is_one_line(workflow: str, job: str, label: str, run: str) -
         f"{workflow}: job '{job}', step '{label}' has a {len(lines)}-line `run:` body.\n"
         f"A workflow step runs one command. Move the body to ci/steps.nix as a "
         f"writeShellApplication and call it, so shellcheck reads it and so it runs "
-        f"locally with `nix run --file . ciSteps.<name>`.\n"
+        f"locally with `nix run --file . internal.ciSteps.<name>`.\n"
         f"The body was:\n{run}"
     )
 

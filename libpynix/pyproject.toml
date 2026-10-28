@@ -32,8 +32,8 @@ license-files = [ "LICENSE" ]
 # extension linked against one Nix version. Two things follow. A consumer that
 # has not built the bindings can still take this project and build its parser,
 # and this project is one package for every Nix version rather than one for
-# each -- measured: `nanopynixVersions.stable.libpynix` and
-# `nanopynixVersions.nix_2_35.libpynix` are the same store path. See
+# each -- measured: `lanes.stable.libpynix` and
+# `lanes.nix_2_35.libpynix` are the same store path. See
 # `nixLinked` in `nix/py-packages.nix`.
 dependencies = ["argcomplete"]
 

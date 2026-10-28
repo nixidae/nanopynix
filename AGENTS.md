@@ -41,7 +41,7 @@ question is whether the binding carries the name you expect:
 
 - direnv exec . python -c "import huggorm; print('pure-eval' in huggorm.list_settings())"
 
-Reach for `nix develop --file . nanopynixVersions.<version>.shell` only when
+Reach for `nix develop --file . lanes.<version>.shell` only when
 you need a *different* Nix version, and not merely a current one.
 
 Never run either ruff configuration with `--unsafe-fixes`. It applies a
@@ -88,7 +88,7 @@ Put the body in `ci/steps.nix`, which builds each one as a
 
 ```yaml
 env:
-  CI_STEP: ciSteps.nix_2_34-tsan
+  CI_STEP: internal.ciSteps.nix_2_34-tsan
 run: nix build --file . "$CI_STEP" --out-link result --print-build-logs
 run: ./result/bin/nanopynix-ci suite
 ```
@@ -101,7 +101,7 @@ cannot do:
   a Nix file is not a script to any tool.
 - **A script runs here, and against one Nix version.** This is the command
   that CI runs:
-  - `nix build --file . ciSteps.nix_2_34 --out-link result`, and then
+  - `nix build --file . internal.ciSteps.nix_2_34 --out-link result`, and then
     `./result/bin/nanopynix-ci suite`
 - **`runtimeInputs` names each tool.** A step that declares `jq`, `git` and
   `unshare` does not depend on the tools of the runner image, so the step also
@@ -199,7 +199,7 @@ consumer takes the parser without taking the evaluator, which is the whole
 reason it is a project beside `pynix` rather than a module of it. Two
 things follow. `nix/py-packages.nix` gives it no
 `nixLinked` suffix, so it is one package for every Nix version -- measured:
-`nanopynixVersions.stable.libpynix` and `nanopynixVersions.nix_2_35.libpynix`
+`lanes.stable.libpynix` and `lanes.nix_2_35.libpynix`
 are the same store path. And `libpynix/src/libpynix/_typecheck.py` holds
 `no_runtime_type_check`, which `pynix` imports from there.
 

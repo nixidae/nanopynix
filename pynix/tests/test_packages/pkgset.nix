@@ -81,5 +81,5 @@ in
     some = "attrset";
   };
 
-  inherit (default) pkgs;
+  inherit (default.internal) pkgs;
 }

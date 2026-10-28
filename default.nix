@@ -469,6 +469,9 @@ lib.throwIf (unlistedVariants != [ ])
   ''
   {
     packages = {
+      # `pytest-agent` is built in this repository's `pythonSet`. A
+      # consumer venv names it in its own spec (`pytest-agent = [ ];`)
+      # instead: a package of one builders set does not resolve in another.
       inherit (nanopynixVersions.stable)
         pynix
         pynix-lsp
@@ -480,7 +483,11 @@ lib.throwIf (unlistedVariants != [ ])
       default = nanopynixVersions.stable.pynix;
     };
     lib = {
+      # `pythonSetWith` seeds the set from the consumer's pyproject.toml too,
+      # the only point at which a nixpkgs package can enter.
       inherit (nanopynixVersions.stable) pythonSet pythonSetWith;
+      # Its `caBundle` wrapper lets a program that initialises OpenSSL at
+      # import start in a build sandbox, which has no trust store. Issue #62.
       inherit mkApp;
     };
     nixosModules = { };
@@ -507,49 +514,7 @@ lib.throwIf (unlistedVariants != [ ])
         ;
     };
 
-    # Except `checks`, `shell`, `ciTestWorkflows` and `lanes`, the names below
-    # are the old interface. Sources, croshome and solid-kubernetes read them.
-    # nixidae/nixidae#1103.
-    inherit (nanopynixVersions.stable)
-      # The engine: huggorm's generated bindings, linked against this Nix.
-      huggorm-bindings
-      # The command-line layer of issue #222. It reaches
-      # `huggorm-bindings` through nothing, so this one attribute is the
-      # same package for every Nix version -- see `nixLinked` in
-      # `nix/py-packages.nix`. It is under `stable` for consistency with its
-      # neighbours here, and not because the version means anything to it.
-      libpynix
-      # `nanopynix.pytest-agent` is the *package*, built in this repo's
-      # `pythonSet`. A consumer that assembles its own venv should not add it
-      # from here -- mixing a package built in one builders set into another
-      # set's venv does not resolve. Name it in that venv's own spec instead
-      # (`pytest-agent = [ ];`), which works because `pythonSetWith` composes
-      # this repo's project overlay into the consumer's set.
-      pytest-agent
-      pynix
-      # The language server of `pynix-lsp/`, which issue #107 split out of
-      # `pynix`. It is a second application, and not a variant of the first
-      # one: an editor names one command, and `pynix-lsp` is the name that
-      # every other Nix language server uses.
-      pynix-lsp
-      pynixDevEnv
-      pynixNonEditableDevEnv
-      shell
-      nonEditableShell
-      nanopynix-docs
-      checks
-      # For a consumer that builds one of *its own* projects against this
-      # repo's Python closure. easykubenix owns `ekn`'s source and renders it
-      # on its own side, using `ps` and `mkApp` below.
-      #
-      # `pythonSetWith` is the one to reach for when that project has a
-      # dependency this repo does not declare -- it seeds the set from the
-      # consumer's pyproject.toml as well as ours, which is the only point at
-      # which a nixpkgs package can enter. `pythonSet` is `pythonSetWith { }`,
-      # for consumers that just want the closure as it stands.
-      pythonSet
-      pythonSetWith
-      ;
+    inherit (nanopynixVersions.stable) shell checks;
 
     # The workflows that run the tests. nixidae renders each one to
     # `.github/workflows/nanopynix-<name>.yml`. They read this repository
@@ -569,27 +534,4 @@ lib.throwIf (unlistedVariants != [ ])
     # names. Every huggorm dependant in nixidae keys its own `lanes` on these
     # names (nixidae/nixidae#1108). `nanopynixVersions` is the same set.
     lanes = nanopynixVersions;
-
-    inherit
-      sources
-      pkgs
-      nanopynixVersions
-      pyproject-nix
-      tests
-      experiments
-      ciSteps
-      ciVersionMatrix
-      tofuCoreSchemaTool
-      storeExecTool
-      storeExecTools
-      # `mkApp` turns a project of `ps` (nixvenv) into a release application.
-      #
-      # `mkApp` is the part a consumer cannot do without. Its `caBundle`
-      # wrapper is the fix for issue #62: a program that initialises OpenSSL
-      # at import (anything pulling in pygit2) cannot start inside a Nix build
-      # sandbox, which has no trust store. easykubenix runs its `ekn` CLI in
-      # exactly that position from three derivations, and gates it on its own
-      # side. See nix/mk-app.nix.
-      mkApp
-      ;
   }

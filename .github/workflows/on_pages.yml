@@ -36,14 +36,13 @@ jobs:
         useDaemon: false
       timeout-minutes: 15
     - name: Build documentation
-      run: nix build --file . nanopynix-docs --out-link result --print-build-logs
-        --print-out-paths
+      run: nix build --file . docs.default --out-link result --print-build-logs --print-out-paths
       timeout-minutes: 30
     - name: Verify docs closure
       run: nix store verify --recursive --no-trust "$(readlink -f result)"
       timeout-minutes: 15
     - name: Prepare Pages artifact
-      run: nix run --file . ciSteps.prepare-pages
+      run: nix run --file . internal.ciSteps.prepare-pages
       timeout-minutes: 10
     - uses: actions/upload-pages-artifact@main
       with:

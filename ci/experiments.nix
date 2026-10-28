@@ -12,7 +12,7 @@
 #
 # Run one the way CI runs it:
 #
-#   MATRIX_JSON='{"arm":"control"}' nix run --file . experiments.<name>
+#   MATRIX_JSON='{"arm":"control"}' nix run --file . internal.experiments.<name>
 #
 # None is defined now. The last one, `gc-soak`, measured a collector defect of
 # the nanopynix library, and went with that library.

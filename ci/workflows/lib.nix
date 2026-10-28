@@ -18,7 +18,7 @@ let
   # out of it by a `passthru.addToMatrix` marker, because a flake output set is
   # flat and the version names had to survive being flattened into it. That is
   # no longer necessary: `nix build --file . <attrpath>` reaches any attribute,
-  # so CI names `ciSteps.nix_2_34-tsan` directly and this file reads the same
+  # so CI names `internal.ciSteps.nix_2_34-tsan` directly and this file reads the same
   # attributes CI builds. The marker is gone with it.
   inherit (repo.internal.pkgs) lib;
   inherit (repo.internal) ciVersionMatrix sources;
@@ -265,7 +265,7 @@ let
     {
       inherit name;
       timeout-minutes = cap;
-      run = "nix run --file . ciSteps.${attr}";
+      run = "nix run --file . internal.ciSteps.${attr}";
     }
     // lib.optionalAttrs (env != null) { inherit env; };
 
@@ -310,7 +310,7 @@ let
   testJobEnv =
     { version }:
     {
-      CI_STEP = "ciSteps.${version}";
+      CI_STEP = "internal.ciSteps.${version}";
     };
 
   mkRegularTestJob =
@@ -823,7 +823,7 @@ let
           {
             name = "Build documentation";
             timeout-minutes = caps.docsBuild;
-            run = "nix build --file . nanopynix-docs --out-link result --print-build-logs --print-out-paths";
+            run = "nix build --file . docs.default --out-link result --print-build-logs --print-out-paths";
           }
           (steps.verifyClosure { name = "Verify docs closure"; })
           (mkNixRunStep {

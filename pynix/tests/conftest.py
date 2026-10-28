@@ -148,7 +148,7 @@ def repo_root(pytestconfig: pytest.Config) -> Path:
 @pytest.fixture(scope="module")
 async def nixpkgs_path(repo_root: Path) -> str:
     """The pinned nixpkgs, realised once per module."""
-    result = await run_process(["nix", "eval", "--impure", "--raw", "--file", str(repo_root), "pkgs.path"])
+    result = await run_process(["nix", "eval", "--impure", "--raw", "--file", str(repo_root), "internal.pkgs.path"])
     if result.returncode != 0:
         raise RuntimeError(f"nix eval of pkgs.path {result.describe()}")
     return result.stdout.strip()

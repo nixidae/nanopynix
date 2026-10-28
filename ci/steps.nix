@@ -12,7 +12,7 @@
 # 3. **It runs locally, against one Nix version.** That is the whole reason
 #    these live beside `tests`, and CI runs the identical command:
 #
-#        nix build --file . ciSteps.nix_2_34 --out-link result
+#        nix build --file . internal.ciSteps.nix_2_34 --out-link result
 #        ./result/bin/nanopynix-ci suite
 #
 # 4. **Changing it costs no re-render.** A `run:` body reaches CI only through

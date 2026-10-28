@@ -121,7 +121,7 @@ workflow.evalWorkflow {
             EXPERIMENT = "\${{ inputs.experiment }}";
             MATRIX_JSON = "\${{ toJSON(matrix) }}";
           };
-          run = ''nix run --file . "experiments.$EXPERIMENT"'';
+          run = ''nix run --file . "internal.experiments.$EXPERIMENT"'';
         }
         (steps.uploadArtifact {
           name = "Keep the evidence of a failed cell";
