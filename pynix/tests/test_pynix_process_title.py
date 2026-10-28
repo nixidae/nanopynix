@@ -33,7 +33,7 @@ def test_main_sets_up_after_it_parses(monkeypatch: pytest.MonkeyPatch) -> None:
         return command
 
     monkeypatch.setattr(pynix, "dispatch", _record_dispatch)
-    monkeypatch.setattr(impl_main, "run", lambda _body: calls.append(("run", None)))  # type: ignore[reportUnknownLambdaType] -- lambda receives Any from setattr
+    monkeypatch.setattr(impl_main, "run", lambda _body: calls.append(("run", None)))  # type: ignore[reportUnknownLambdaType]  # lambda receives Any from setattr
     monkeypatch.setattr(sys, "argv", ["pynix", "build"])
 
     pynix.main()

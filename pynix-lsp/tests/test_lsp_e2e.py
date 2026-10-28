@@ -34,7 +34,7 @@ from pytest_lsp import ClientServerConfig, LanguageClient, client_capabilities
 _MODULE_SYSTEM = (Path(__file__).parent / "test_lsp" / "module_system").resolve()
 
 
-@pytest_lsp.fixture(  # type: ignore[reportUnknownMemberType] -- pytest_lsp.fixture's decorator-factory return type isn't fully resolvable by pyright
+@pytest_lsp.fixture(  # type: ignore[reportUnknownMemberType]  # pytest_lsp.fixture's decorator-factory return type isn't fully resolvable by pyright
     scope="module",
     config=ClientServerConfig(server_command=["pynix-lsp"]),
 )
@@ -48,7 +48,7 @@ async def client(lsp_client: LanguageClient) -> AsyncIterator[None]:
     # pytest_lsp's fixture machinery injects `lsp_client` itself as the
     # `client` fixture value (the bare `yield` above is not what tests
     # receive) -- stash the server's response on it so tests can reach it.
-    lsp_client.server_capabilities = response.capabilities  # type: ignore[attr-defined] -- dynamically stashed, see comment above
+    lsp_client.server_capabilities = response.capabilities  # type: ignore[attr-defined]  # dynamically stashed, see comment above
     try:
         yield
     finally:
@@ -87,10 +87,10 @@ def _report_server_stderr(lsp_client: LanguageClient) -> None:
 @pytest.mark.asyncio(loop_scope="module")
 async def test_completion_advertises_dot_as_a_trigger_character(client: LanguageClient) -> None:
     """Without this, a client has no reason to re-request completions right after typing `.`."""
-    capabilities: types.ServerCapabilities = client.server_capabilities  # type: ignore[attr-defined] -- see `client` fixture
-    provider = capabilities.completion_provider  # type: ignore[reportUnknownVariableType] -- lsprotocol's generated CompletionOptions union type isn't fully resolvable by pyright
+    capabilities: types.ServerCapabilities = client.server_capabilities  # type: ignore[attr-defined]  # see `client` fixture
+    provider = capabilities.completion_provider  # type: ignore[reportUnknownVariableType]  # lsprotocol's generated CompletionOptions union type isn't fully resolvable by pyright
     assert provider is not None
-    trigger_characters: list[str] | None = provider.trigger_characters  # type: ignore[reportUnknownMemberType] -- see above
+    trigger_characters: list[str] | None = provider.trigger_characters  # type: ignore[reportUnknownMemberType]  # see above
     assert trigger_characters is not None
     assert "." in trigger_characters
 
@@ -100,8 +100,8 @@ async def test_server_advertises_definition_rename_highlight_and_references_capa
     client: LanguageClient,
 ) -> None:
     """Without these, a real client has no reason to ever send the corresponding requests at all."""
-    capabilities: types.ServerCapabilities = client.server_capabilities  # type: ignore[attr-defined] -- see `client` fixture
-    assert capabilities.definition_provider  # type: ignore[reportUnknownMemberType] -- lsprotocol's generated *Options union types aren't fully resolvable by pyright
-    assert capabilities.rename_provider  # type: ignore[reportUnknownMemberType] -- see above
-    assert capabilities.document_highlight_provider  # type: ignore[reportUnknownMemberType] -- see above
-    assert capabilities.references_provider  # type: ignore[reportUnknownMemberType] -- see above
+    capabilities: types.ServerCapabilities = client.server_capabilities  # type: ignore[attr-defined]  # see `client` fixture
+    assert capabilities.definition_provider  # type: ignore[reportUnknownMemberType]  # lsprotocol's generated *Options union types aren't fully resolvable by pyright
+    assert capabilities.rename_provider  # type: ignore[reportUnknownMemberType]  # see above
+    assert capabilities.document_highlight_provider  # type: ignore[reportUnknownMemberType]  # see above
+    assert capabilities.references_provider  # type: ignore[reportUnknownMemberType]  # see above

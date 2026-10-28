@@ -131,12 +131,12 @@ def _child_parsers(parser: argparse.ArgumentParser) -> Iterator[argparse.Argumen
     reads `_actions` and `choices` in one place.
     """
     for action in parser._actions:  # noqa: SLF001 -- see docstring
-        if isinstance(action, argparse._SubParsersAction):  # noqa: SLF001 -- see docstring # type: ignore[reportPrivateUsage] -- see docstring
+        if isinstance(action, argparse._SubParsersAction):  # noqa: SLF001 -- see docstring # type: ignore[reportPrivateUsage]  # see docstring
             # argparse types the choices of a subparsers action loosely, and
             # this map holds None for a parser that nothing built yet, so
             # pyright cannot follow either fact. The lookup below builds the
             # parser, which is the whole point of the lazy map.
-            choices: Any = action.choices  # type: ignore[reportUnknownMemberType] -- see above
+            choices: Any = action.choices  # type: ignore[reportUnknownMemberType]  # see above
             for name in list(choices):
                 yield choices[name]
 

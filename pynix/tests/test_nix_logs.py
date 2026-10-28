@@ -53,7 +53,7 @@ class _Session:
 async def _forward(*records: Any, level: Verbosity = Verbosity.INFO, print_build_logs: bool = False) -> str:
     out = io.StringIO()
     async with forward_state_logs(
-        _Session(*records),  # type: ignore[arg-type] -- duck-typed: forward_state_logs reads only forward_process here
+        _Session(*records),  # type: ignore[arg-type]  # duck-typed: forward_state_logs reads only forward_process here
         None,
         verbosity=level,
         print_build_logs=print_build_logs,

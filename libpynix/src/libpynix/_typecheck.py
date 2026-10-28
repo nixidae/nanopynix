@@ -29,5 +29,5 @@ def no_runtime_type_check[F: Callable[..., Any]](func: F) -> F:
     """
     # `__no_type_check__` is the attribute `typing.no_type_check` sets and the
     # one `beartype` looks for; setting it directly is the whole mechanism.
-    func.__no_type_check__ = True  # type: ignore[attr-defined] -- functions accept arbitrary attributes; typeshed does not declare this one
+    func.__no_type_check__ = True  # type: ignore[attr-defined]  # functions accept arbitrary attributes; typeshed does not declare this one
     return func

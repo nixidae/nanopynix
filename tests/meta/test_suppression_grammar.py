@@ -1,6 +1,6 @@
 """Every lint/type suppression in the tree must say why it is there.
 
-CLAUDE.md's rule is ``# noqa: RULE -- reason`` / ``# type: ignore[rule] --
+CLAUDE.md's rule is ``# noqa: RULE -- reason`` / ``# type: ignore[rule]  #
 reason``. Ruff's PGH003/PGH004 enforce that codes are named; nothing enforces
 the justification, and neither rule covers ``# pyright: ignore[...]`` at all.
 The scanner in ``tests/support/suppressions.py`` is that missing half, and this
@@ -44,7 +44,7 @@ def test_every_suppression_is_justified():
     violations = scan_tree(REPO_ROOT)
     assert not violations, (
         f"{len(violations)} suppression(s) do not say why they exist.\n"
-        "Append ` -- <reason>` giving the reason the suppression is correct "
+        "Append ` -- <reason>` to a noqa, or `  # <reason>` to a type: ignore, giving the reason the suppression is correct "
         "(not a restatement of the rule). For a whole-file pragma the reason "
         "may instead go in the comment lines directly beneath it -- and for "
         "`# pyright: rule=false` it must, because pyright rejects trailing "
@@ -71,6 +71,10 @@ class TestScannerCatchesUnjustified:
         """A second directive is not a justification for the first."""
         assert scan_source("x = 1  # type: ignore[a]  # noqa: SLF001\n", Path("s.py"))
 
+    def test_type_ignore_with_a_dashed_reason(self):
+        """mypy and zuban report this form as a syntax error and drop the ignore."""
+        assert scan_source("x = 1  # type: ignore[arg-type] -- a reason\n", Path("s.py"))
+
 
 class TestScannerAcceptsJustified:
     """...and must not fire on the shapes the codebase actually uses."""
@@ -78,8 +82,11 @@ class TestScannerAcceptsJustified:
     def test_inline_reason(self):
         assert not scan_source("x = 1  # noqa: E501 -- url in a docstring\n", Path("s.py"))
 
+    def test_type_ignore_reason_in_a_second_comment(self):
+        assert not scan_source("x = 1  # type: ignore[arg-type]  # the wrong type is the point\n", Path("s.py"))
+
     def test_one_reason_covers_a_chained_pair(self):
-        source = "x = obj._p  # type: ignore[reportPrivateUsage] -- owner reaches into its own collaborator  # noqa: SLF001\n"
+        source = "x = obj._p  # type: ignore[reportPrivateUsage]  # owner reaches into its own collaborator  # noqa: SLF001\n"
         assert not scan_source(source, Path("s.py"))
 
     def test_file_level_reason_on_the_line_beneath(self):

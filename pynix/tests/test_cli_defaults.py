@@ -145,7 +145,7 @@ def test_a_configured_store_becomes_the_default_of_a_command(
 
     command = parse(["path-info", "/nix/store/x"])
 
-    assert command.store == "daemon"  # type: ignore[attr-defined] -- see test_the_flag_beats_the_environment
+    assert command.store == "daemon"  # type: ignore[attr-defined]  # see test_the_flag_beats_the_environment
 
 
 def test_a_configured_flag_that_is_true_can_still_be_turned_off(
@@ -159,15 +159,15 @@ def test_a_configured_flag_that_is_true_can_still_be_turned_off(
     """
     write_config(tmp_path, monkeypatch, "[defaults]\nprint-build-logs = true\n")
 
-    assert build_command().print_build_logs is True  # type: ignore[attr-defined] -- see above
-    assert build_command("--no-print-build-logs").print_build_logs is False  # type: ignore[attr-defined] -- see above
+    assert build_command().print_build_logs is True  # type: ignore[attr-defined]  # see above
+    assert build_command("--no-print-build-logs").print_build_logs is False  # type: ignore[attr-defined]  # see above
 
 
 def test_every_sandbox_path_is_kept() -> None:
     """``--sandbox-path`` is repeatable, so a second one adds to the first."""
     command = build_command("--namespaced", "--sandbox-path", "/a=/x", "--sandbox-path", "/b=/y")
 
-    assert command.sandbox_path == ["/a=/x", "/b=/y"]  # type: ignore[attr-defined] -- see above
+    assert command.sandbox_path == ["/a=/x", "/b=/y"]  # type: ignore[attr-defined]  # see above
 
 
 def test_a_sandbox_path_adds_to_what_nix_conf_set() -> None:
@@ -197,12 +197,12 @@ def test_a_configured_store_does_not_refuse_a_namespaced_build(
 
     command = build_command("--namespaced")
 
-    assert command.store == "daemon"  # type: ignore[attr-defined] -- see above
-    assert _resolve_namespaced(command) is True  # type: ignore[arg-type] -- build_command returns the parsed Build
+    assert command.store == "daemon"  # type: ignore[attr-defined]  # see above
+    assert _resolve_namespaced(command) is True  # type: ignore[arg-type]  # build_command returns the parsed Build
 
     named = build_command("--namespaced", "--store", "daemon")
     with pytest.raises(SystemExit):
-        _resolve_namespaced(named)  # type: ignore[arg-type] -- see above
+        _resolve_namespaced(named)  # type: ignore[arg-type]  # see above
 
 
 # ── what the command line named ──────────────────────────────────────
@@ -252,7 +252,7 @@ def test_the_nix_setting_called_store_does_not_resolve_the_option(
     no_config(tmp_path, monkeypatch)
     monkeypatch.setenv("PYNIX_NIX_STORE", "/elsewhere")
 
-    assert build_command().store == DEFAULT_STORE  # type: ignore[attr-defined] -- see above
+    assert build_command().store == DEFAULT_STORE  # type: ignore[attr-defined]  # see above
     assert nix_settings() == {"store": "/elsewhere"}
 
 
@@ -273,8 +273,8 @@ def test_pynix_build_honours_the_substituters_of_the_environment(
     command = build_command()
 
     settings = nix_settings(
-        substituters=command.substituters,  # type: ignore[attr-defined] -- see above
-        trusted_public_keys=command.trusted_public_keys,  # type: ignore[attr-defined] -- see above
+        substituters=command.substituters,  # type: ignore[attr-defined]  # see above
+        trusted_public_keys=command.trusted_public_keys,  # type: ignore[attr-defined]  # see above
     )
 
     assert settings == {"substituters": "https://env.example/"}

@@ -1,7 +1,7 @@
 """Scan the tree for lint/type suppressions that do not say why they exist.
 
 CLAUDE.md requires every suppression to name its rule *and* justify itself:
-``# type: ignore[rule] -- reason`` / ``# noqa: RULE -- reason``. Ruff's
+``# type: ignore[rule]  # reason`` / ``# noqa: RULE -- reason``. Ruff's
 PGH003/PGH004 enforce the first half -- that a bare ``# type: ignore`` or
 ``# noqa`` names codes -- and nothing enforces the second half, nor do they
 cover ``# pyright: ignore[...]`` at all. This module is that missing half.
@@ -22,11 +22,12 @@ docstring would be trained away rather than fixed.
 Two grammars, because the directives really are two different things:
 
 Inline directives suppress one line -- ``# noqa``, ``# type: ignore[...]``,
-``# pyright: ignore[...]``. Their justification must be on that line, after a
-spaced ``--``. Note that everything from the first ``#`` to end-of-line is a
+``# pyright: ignore[...]``. Their justification must be on that line: after a
+spaced ``--`` for ``noqa``, and in a second ``#`` comment for ``type: ignore``,
+which is the only trailing text mypy and zuban accept. Note that everything from the first ``#`` to end-of-line is a
 single comment token, so the common chained form
 
-    value = obj._private  # type: ignore[reportPrivateUsage] -- cross-class access  # noqa: SLF001
+    value = obj._private  # type: ignore[reportPrivateUsage]  # cross-class access  # noqa: SLF001
 
 is one token carrying one justification, and passes. That is deliberate: the
 two directives are the same suppression seen by two tools, and demanding the
@@ -103,6 +104,13 @@ _FILE_LEVEL_AT_START = re.compile(r"^#\s*(?:ruff:\s*noqa\b|mypy:|pyright:\s*(?!i
 # a `--flag` inside a documented command line is not mistaken for one.
 _JUSTIFIED = re.compile(r"\s--\s+\S")
 
+# zuban and mypy refuse any text after `type: ignore[...]` unless a second `#`
+# starts it: they report the `--` form as a syntax error and drop the ignore.
+# So a type ignore gives its reason as a second comment, and that comment must
+# be prose, not another directive.
+_TYPE_IGNORE_REASON = re.compile(r"type:\s*ignore\[[^\]]*\]\s+#\s*(?!noqa\b|type:|pyright:)\S")
+_TYPE_IGNORE_DASHES = re.compile(r"type:\s*ignore\[[^\]]*\]\s+--")
+
 
 @dataclass(frozen=True)
 class Violation:
@@ -164,7 +172,11 @@ def scan_source(source: str, path: Path) -> list[Violation]:
             continue
 
         found = _INLINE_ANYWHERE.search(text) if trails_code else _INLINE_AT_START.search(text)
-        if found and not _JUSTIFIED.search(text):
+        if not found:
+            continue
+        if _TYPE_IGNORE_DASHES.search(text):
+            violations.append(Violation(path, line, "type-ignore-dashes", text))
+        elif not (_JUSTIFIED.search(text) or _TYPE_IGNORE_REASON.search(text)):
             violations.append(Violation(path, line, "inline", text))
 
     return violations

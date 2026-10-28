@@ -58,7 +58,7 @@ class PynixLanguageServer(LanguageServer):
     """
 
     def __init__(self) -> None:
-        super().__init__(_SERVER_NAME, _SERVER_VERSION)  # type: ignore[reportUnknownMemberType] -- pygls' LanguageServer.__init__ forwards *args/**kwargs, so pyright can't fully resolve its composed signature
+        super().__init__(_SERVER_NAME, _SERVER_VERSION)  # type: ignore[reportUnknownMemberType]  # pygls' LanguageServer.__init__ forwards *args/**kwargs, so pyright can't fully resolve its composed signature
         self.nix_session: huggorm.AsyncSession | None = None
         self.store: huggorm.AsyncStore | None = None
         self.shared_evals: SharedEvalCache | None = None

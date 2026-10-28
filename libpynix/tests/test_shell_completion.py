@@ -16,7 +16,7 @@ from typing import cast
 
 import pytest
 from argcomplete.lexers import (
-    split_line,  # type: ignore[reportUnknownVariableType] -- argcomplete carries no annotations for its lexer
+    split_line,  # type: ignore[reportUnknownVariableType]  # argcomplete carries no annotations for its lexer
 )
 from argcomplete.packages import _shlex
 

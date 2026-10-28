@@ -5,7 +5,7 @@ from pytest_agent._harness_detect import HARNESS_ENV_VARS, detect_agent_harness
 
 
 @pytest.fixture(autouse=True)
-def _clear_harness_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[reportUnusedFunction] -- pytest autouse fixture, wired by pytest
+def _clear_harness_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[reportUnusedFunction]  # pytest autouse fixture, wired by pytest
     for name in HARNESS_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
 

@@ -77,7 +77,7 @@ _AGENT_ENV_VARS = (
 
 
 @pytest.fixture(autouse=True)
-def _clean_agent_env(monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[reportUnusedFunction] -- pytest autouse fixture, wired by pytest
+def _clean_agent_env(monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[reportUnusedFunction]  # pytest autouse fixture, wired by pytest
     """Give every inner process a known-empty pytest-agent environment.
 
     PYTHONPATH is set explicitly because pyproject.toml's ``pythonpath`` ini

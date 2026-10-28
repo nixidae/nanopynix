@@ -22,7 +22,7 @@ def test_the_import_hook_is_installed() -> None:
 
 def test_a_wrong_argument_raises() -> None:
     with pytest.raises(BeartypeCallHintParamViolation):
-        split_path(42)  # type: ignore[arg-type] -- the wrong type is the point of the test
+        split_path(42)  # type: ignore[arg-type]  # the wrong type is the point of the test
 
 
 def test_imports_are_eager_under_beartype() -> None:

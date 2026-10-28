@@ -409,7 +409,7 @@ async def test_hover_on_a_bare_definition_key_shows_the_declared_option(lsp_serv
 async def test_sync_document_reports_a_diagnostic_when_context_eval_fails(lsp_server: PynixLanguageServer) -> None:
     uri = asset("broken_context.nix").as_uri()
     published: list[types.PublishDiagnosticsParams] = []
-    lsp_server.text_document_publish_diagnostics = published.append  # type: ignore[method-assign] -- swap the real RPC notification for a test recorder
+    lsp_server.text_document_publish_diagnostics = published.append  # type: ignore[method-assign]  # swap the real RPC notification for a test recorder
 
     await _sync_document(lsp_server, uri)
 
@@ -424,7 +424,7 @@ async def test_sync_document_reports_a_context_diagnostic_at_the_directives_own_
     """The directive isn't on line 0 here, so a stale `(0,0)`-always diagnostic would miss it."""
     uri = asset("broken_context_second_line.nix").as_uri()
     published: list[types.PublishDiagnosticsParams] = []
-    lsp_server.text_document_publish_diagnostics = published.append  # type: ignore[method-assign] -- swap the real RPC notification for a test recorder
+    lsp_server.text_document_publish_diagnostics = published.append  # type: ignore[method-assign]  # swap the real RPC notification for a test recorder
 
     await _sync_document(lsp_server, uri)
 
@@ -448,7 +448,7 @@ async def test_sync_document_reports_a_context_that_cannot_open(
     monkeypatch.setattr(lsp_server, "ensure_nix", refuse)
     uri = asset("broken_context_second_line.nix").as_uri()
     published: list[types.PublishDiagnosticsParams] = []
-    lsp_server.text_document_publish_diagnostics = published.append  # type: ignore[method-assign] -- swap the real RPC notification for a test recorder
+    lsp_server.text_document_publish_diagnostics = published.append  # type: ignore[method-assign]  # swap the real RPC notification for a test recorder
 
     await _sync_document(lsp_server, uri)
 
@@ -462,7 +462,7 @@ async def test_sync_document_reports_a_context_that_cannot_open(
 async def test_sync_document_reports_a_diagnostic_for_broken_syntax(lsp_server: PynixLanguageServer) -> None:
     uri = asset("syntax_error.nix").as_uri()
     published: list[types.PublishDiagnosticsParams] = []
-    lsp_server.text_document_publish_diagnostics = published.append  # type: ignore[method-assign] -- swap the real RPC notification for a test recorder
+    lsp_server.text_document_publish_diagnostics = published.append  # type: ignore[method-assign]  # swap the real RPC notification for a test recorder
 
     await _sync_document(lsp_server, uri)
 

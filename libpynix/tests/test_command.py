@@ -54,8 +54,8 @@ def test_cli_name_overrides_the_class_name() -> None:
 
 
 def test_an_option_takes_its_long_and_its_short_spelling() -> None:
-    assert parse(Leaf, "--name-of-thing", "a").name_of_thing == "a"  # type: ignore[attr-defined] -- dispatch answers with Command, and this test names the subclass
-    assert parse(Leaf, "-n", "b").name_of_thing == "b"  # type: ignore[attr-defined] -- see above
+    assert parse(Leaf, "--name-of-thing", "a").name_of_thing == "a"  # type: ignore[attr-defined]  # dispatch answers with Command, and this test names the subclass
+    assert parse(Leaf, "-n", "b").name_of_thing == "b"  # type: ignore[attr-defined]  # see above
 
 
 def test_an_int_option_arrives_as_an_int() -> None:
@@ -65,17 +65,17 @@ def test_an_int_option_arrives_as_an_int() -> None:
     answered ``TypeError: an integer is required``, six frames away from the
     declaration that says ``int``.
     """
-    assert parse(Leaf, "--count", "20").count == 20  # type: ignore[attr-defined] -- see above
+    assert parse(Leaf, "--count", "20").count == 20  # type: ignore[attr-defined]  # see above
 
 
 def test_a_path_option_arrives_as_a_path() -> None:
-    assert parse(Leaf, "--where", "/nix/store").where == Path("/nix/store")  # type: ignore[attr-defined] -- see above
+    assert parse(Leaf, "--where", "/nix/store").where == Path("/nix/store")  # type: ignore[attr-defined]  # see above
 
 
 def test_a_flag_needs_no_value_and_a_negatable_flag_has_both_halves() -> None:
-    assert parse(Leaf, "--loud").loud is True  # type: ignore[attr-defined] -- see above
-    assert parse(Leaf, "--no-colour").colour is False  # type: ignore[attr-defined] -- see above
-    assert parse(Leaf, "--colour").colour is True  # type: ignore[attr-defined] -- see above
+    assert parse(Leaf, "--loud").loud is True  # type: ignore[attr-defined]  # see above
+    assert parse(Leaf, "--no-colour").colour is False  # type: ignore[attr-defined]  # see above
+    assert parse(Leaf, "--colour").colour is True  # type: ignore[attr-defined]  # see above
 
 
 def test_a_trailing_underscore_spells_a_flag_that_python_reserves() -> None:
@@ -95,9 +95,9 @@ def test_a_trailing_underscore_spells_a_flag_that_python_reserves() -> None:
 
     command = parse(Mover, "--from", "a", "--to", "b")
 
-    assert command.from_ == "a"  # type: ignore[attr-defined] -- see above
-    assert command.to == "b"  # type: ignore[attr-defined] -- see above
-    assert parse(Mover).from_ is None  # type: ignore[attr-defined] -- see above
+    assert command.from_ == "a"  # type: ignore[attr-defined]  # see above
+    assert command.to == "b"  # type: ignore[attr-defined]  # see above
+    assert parse(Mover).from_ is None  # type: ignore[attr-defined]  # see above
 
 
 def test_an_inner_underscore_still_becomes_a_dash() -> None:
@@ -109,23 +109,23 @@ def test_an_inner_underscore_still_becomes_a_dash() -> None:
 
 
 def test_a_repeated_option_collects_every_occurrence() -> None:
-    assert parse(Leaf, "--tags", "a", "--tags", "b").tags == ["a", "b"]  # type: ignore[attr-defined] -- see above
+    assert parse(Leaf, "--tags", "a", "--tags", "b").tags == ["a", "b"]  # type: ignore[attr-defined]  # see above
 
 
 def test_a_repeated_option_gets_a_new_list_for_each_command() -> None:
     """A shared default would keep what a previous run appended to it."""
     first = parse(Leaf)
     second = parse(Leaf)
-    first.tags.append("a")  # type: ignore[attr-defined] -- see above
-    assert second.tags == []  # type: ignore[attr-defined] -- see above
+    first.tags.append("a")  # type: ignore[attr-defined]  # see above
+    assert second.tags == []  # type: ignore[attr-defined]  # see above
 
 
 def test_an_option_nobody_named_takes_the_declared_default() -> None:
     command = parse(Leaf)
-    assert command.name_of_thing is None  # type: ignore[attr-defined] -- see above
-    assert command.count == 0  # type: ignore[attr-defined] -- see above
-    assert command.loud is False  # type: ignore[attr-defined] -- see above
-    assert command.colour is True  # type: ignore[attr-defined] -- see above
+    assert command.name_of_thing is None  # type: ignore[attr-defined]  # see above
+    assert command.count == 0  # type: ignore[attr-defined]  # see above
+    assert command.loud is False  # type: ignore[attr-defined]  # see above
+    assert command.colour is True  # type: ignore[attr-defined]  # see above
 
 
 def test_an_option_nobody_named_is_absent_from_the_namespace() -> None:
@@ -145,7 +145,7 @@ def test_a_configured_option_is_left_for_the_program_to_fill() -> None:
 
         store: str = opt("ignored", configured=True, help="A store.")
 
-    assert parse(Configured).store is None  # type: ignore[attr-defined] -- see above
+    assert parse(Configured).store is None  # type: ignore[attr-defined]  # see above
 
 
 class Positionals(Command):
@@ -164,15 +164,15 @@ def test_a_positional_with_no_default_is_required() -> None:
 
 def test_the_positionals_arrive_in_the_order_they_are_declared() -> None:
     command = parse(Positionals, "one", "two", "three", "four")
-    assert command.required == "one"  # type: ignore[attr-defined] -- see above
-    assert command.optional == "two"  # type: ignore[attr-defined] -- see above
-    assert command.rest == ["three", "four"]  # type: ignore[attr-defined] -- see above
+    assert command.required == "one"  # type: ignore[attr-defined]  # see above
+    assert command.optional == "two"  # type: ignore[attr-defined]  # see above
+    assert command.rest == ["three", "four"]  # type: ignore[attr-defined]  # see above
 
 
 def test_an_omitted_optional_positional_takes_its_declared_default() -> None:
     command = parse(Positionals, "one")
-    assert command.optional is None  # type: ignore[attr-defined] -- see above
-    assert command.rest == []  # type: ignore[attr-defined] -- see above
+    assert command.optional is None  # type: ignore[attr-defined]  # see above
+    assert command.rest == []  # type: ignore[attr-defined]  # see above
 
 
 def test_a_subclass_inherits_the_options_of_its_base() -> None:
@@ -190,8 +190,8 @@ def test_a_subclass_inherits_the_options_of_its_base() -> None:
 
     assert set(Child.specs) == {"store", "attr"}
     command = parse(Child, "--store", "daemon", "--attr", "hello")
-    assert command.store == "daemon"  # type: ignore[attr-defined] -- see above
-    assert command.attr == "hello"  # type: ignore[attr-defined] -- see above
+    assert command.store == "daemon"  # type: ignore[attr-defined]  # see above
+    assert command.attr == "hello"  # type: ignore[attr-defined]  # see above
 
 
 def test_an_option_that_shadows_a_name_of_this_layer_is_refused() -> None:
@@ -260,14 +260,14 @@ def test_a_positional_arrives_as_its_annotated_type() -> None:
     `easykubenix`, which has three `Path` positionals. Issue #222.
     """
     command = parse(Converted, "/nix/store", "1", "2")
-    assert command.where == Path("/nix/store")  # type: ignore[attr-defined] -- see above
-    assert command.counts == [1, 2]  # type: ignore[attr-defined] -- see above
+    assert command.where == Path("/nix/store")  # type: ignore[attr-defined]  # see above
+    assert command.counts == [1, 2]  # type: ignore[attr-defined]  # see above
 
 
 def test_a_repeated_option_converts_each_value() -> None:
     """argparse applies `type` to each value it collects."""
     command = parse(Converted, "/a", "--roots", "/x", "--roots", "/y")
-    assert command.roots == [Path("/x"), Path("/y")]  # type: ignore[attr-defined] -- see above
+    assert command.roots == [Path("/x"), Path("/y")]  # type: ignore[attr-defined]  # see above
 
 
 class Required(Command):
@@ -284,7 +284,7 @@ def test_a_required_option_must_be_named() -> None:
 
 
 def test_a_required_option_arrives_like_any_other() -> None:
-    assert parse(Required, "--to", "s3://cache").to == "s3://cache"  # type: ignore[attr-defined] -- see above
+    assert parse(Required, "--to", "s3://cache").to == "s3://cache"  # type: ignore[attr-defined]  # see above
 
 
 def test_an_option_cannot_be_both_required_and_configured() -> None:
@@ -303,8 +303,8 @@ def test_a_flag_is_not_given_a_type() -> None:
     `store_true` and `BooleanOptionalAction` set the value themselves, and a
     `type` beside either one is an argparse error rather than a silent one.
     """
-    assert parse(Leaf, "--loud").loud is True  # type: ignore[attr-defined] -- see above
-    assert parse(Leaf, "--no-colour").colour is False  # type: ignore[attr-defined] -- see above
+    assert parse(Leaf, "--loud").loud is True  # type: ignore[attr-defined]  # see above
+    assert parse(Leaf, "--no-colour").colour is False  # type: ignore[attr-defined]  # see above
 
 
 class Chosen(Command):
@@ -321,7 +321,7 @@ def test_a_literal_becomes_the_set_of_words_the_parser_checks() -> None:
     A `Literal` says the set once, so the parser refuses anything else and the
     shell offers the words. Issue #222.
     """
-    assert parse(Chosen, "one", "--style", "yaml11").style == "yaml11"  # type: ignore[attr-defined] -- see above
+    assert parse(Chosen, "one", "--style", "yaml11").style == "yaml11"  # type: ignore[attr-defined]  # see above
 
     parser = build_parser(Chosen)
     with pytest.raises(SystemExit):
@@ -329,13 +329,13 @@ def test_a_literal_becomes_the_set_of_words_the_parser_checks() -> None:
 
 
 def test_a_literal_positional_is_checked_too() -> None:
-    assert parse(Chosen, "two").which == "two"  # type: ignore[attr-defined] -- see above
+    assert parse(Chosen, "two").which == "two"  # type: ignore[attr-defined]  # see above
     with pytest.raises(SystemExit):
         build_parser(Chosen).parse_args(["three"])
 
 
 def test_a_repeated_literal_checks_each_value() -> None:
-    assert parse(Chosen, "one", "--kinds", "a", "--kinds", "b").kinds == ["a", "b"]  # type: ignore[attr-defined] -- see above
+    assert parse(Chosen, "one", "--kinds", "a", "--kinds", "b").kinds == ["a", "b"]  # type: ignore[attr-defined]  # see above
     with pytest.raises(SystemExit):
         build_parser(Chosen).parse_args(["one", "--kinds", "c"])
 
@@ -409,18 +409,18 @@ def parse_rest(*arguments: str) -> Command:
 
 def test_a_remainder_option_takes_every_argument_after_it() -> None:
     shell = parse_rest("shell", "a", "b", "--command", "jq", "--version", "-c", "x")
-    assert shell.packages == ["a", "b"]  # type: ignore[attr-defined] -- see above
-    assert shell.command == ["jq", "--version", "-c", "x"]  # type: ignore[attr-defined] -- see above
+    assert shell.packages == ["a", "b"]  # type: ignore[attr-defined]  # see above
+    assert shell.command == ["jq", "--version", "-c", "x"]  # type: ignore[attr-defined]  # see above
 
 
 def test_a_double_dash_inside_the_remainder_reaches_it() -> None:
     """argparse alone stops an option's REMAINDER at `--` and fails on the rest."""
     shell = parse_rest("shell", "a", "-c", "git", "log", "--", "--", "f")
-    assert shell.command == ["git", "log", "--", "--", "f"]  # type: ignore[attr-defined] -- see above
+    assert shell.command == ["git", "log", "--", "--", "f"]  # type: ignore[attr-defined]  # see above
 
 
 def test_an_absent_remainder_is_an_empty_list() -> None:
-    assert parse_rest("shell", "a").command == []  # type: ignore[attr-defined] -- see above
+    assert parse_rest("shell", "a").command == []  # type: ignore[attr-defined]  # see above
 
 
 def test_an_unknown_option_before_the_remainder_is_refused(capsys: pytest.CaptureFixture[str]) -> None:

@@ -115,7 +115,7 @@ class _BlockStyleDumper(yaml.CSafeDumper):
 
 
 def _represent_str(dumper: _BlockStyleDumper, data: str) -> yaml.Node:
-    return dumper.represent_scalar(  # type: ignore[reportUnknownMemberType] -- PyYAML's stubs leave `value` untyped
+    return dumper.represent_scalar(  # type: ignore[reportUnknownMemberType]  # PyYAML's stubs leave `value` untyped
         "tag:yaml.org,2002:str", data, style="|" if "\n" in data else None
     )
 

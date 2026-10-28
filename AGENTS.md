@@ -330,8 +330,9 @@ Follow these rules:
   ignore.
 - Give a specific rule name and an inline justification for each suppression of
   a lint rule or of a type-checker rule. Use the form
-  `# type: ignore[rule-name] -- reason` or `# noqa: RULE -- reason`. Do not
-  write a blanket suppression, and do not write a suppression with no reason.
+  `# type: ignore[rule-name]  # reason` or `# noqa: RULE -- reason`. zuban and
+  mypy refuse text after `]` unless a second `#` starts it. Do not write a
+  blanket suppression, and do not write a suppression with no reason.
 - Use the anyio primitives in new code, and do not use the raw `asyncio`
   equivalents. These primitives include `anyio.Lock`, `anyio.Event`, the memory
   object streams, `anyio.fail_after`, `anyio.move_on_after`,

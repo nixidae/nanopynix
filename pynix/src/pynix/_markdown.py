@@ -44,7 +44,7 @@ class _LeftHeading(Heading):
 
     LEVEL_ALIGN: ClassVar[dict[str, JustifyMethod]] = {
         f"h{i}": "left"
-        for i in range(1, 7)  # type: ignore[misc] -- rich TypedDict JustifyMethod is Literal
+        for i in range(1, 7)  # type: ignore[misc]  # rich TypedDict JustifyMethod is Literal
     }
 
 

@@ -443,7 +443,7 @@ def _add(parser: argparse.ArgumentParser, field: str, spec: Spec, annotation: An
         kwargs |= _option_kwargs(field, spec, inner, repeated=repeated)
         action = parser.add_argument(*option_flags(field, spec), **kwargs)
     # argcomplete reads this attribute off the action it did not create.
-    action.completer = spec.complete  # type: ignore[attr-defined] -- see above
+    action.completer = spec.complete  # type: ignore[attr-defined]  # see above
 
 
 def command_name(command: type[Command]) -> str:
@@ -474,7 +474,7 @@ class _LazyParserMap(dict[str, argparse.ArgumentParser]):
         if value is not None:
             super().__setitem__(key, value)
         else:
-            super().__setitem__(key, None)  # type: ignore[arg-type] -- placeholder until materialized
+            super().__setitem__(key, None)  # type: ignore[arg-type]  # placeholder until materialized
 
     def get_raw(self, key: str) -> argparse.ArgumentParser | None:
         return super().get(key, None)
@@ -492,11 +492,11 @@ class _LazyParserMap(dict[str, argparse.ArgumentParser]):
             return default
 
 
-class _LazySubParsersAction(argparse._SubParsersAction):  # type: ignore[reportPrivateUsage, type-arg] -- subclassing standard subparser action for on-demand subparser instantiation  # noqa: SLF001
+class _LazySubParsersAction(argparse._SubParsersAction):  # type: ignore[reportPrivateUsage, type-arg]  # subclassing standard subparser action for on-demand subparser instantiation  # noqa: SLF001
     """Subparsers action that builds child parsers on demand."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)  # type: ignore[reportUnknownMemberType] -- argparse type stubs
+        super().__init__(*args, **kwargs)  # type: ignore[reportUnknownMemberType]  # argparse type stubs
         self._lazy_map: _LazyParserMap = _LazyParserMap(self)
         self._name_parser_map = self._lazy_map
         self.choices = self._lazy_map
@@ -510,7 +510,7 @@ class _LazySubParsersAction(argparse._SubParsersAction):  # type: ignore[reportP
         factory: Callable[[argparse.ArgumentParser], None],
         **kwargs: Any,
     ) -> None:
-        choice_action = self._ChoicesPseudoAction(name, (), help)  # type: ignore[reportUnknownMemberType, reportPrivateUsage] -- argparse _ChoicesPseudoAction
+        choice_action = self._ChoicesPseudoAction(name, (), help)  # type: ignore[reportUnknownMemberType, reportPrivateUsage]  # argparse _ChoicesPseudoAction
         self._choices_actions.append(choice_action)
         self._factories[name] = (factory, kwargs)
         self._lazy_map.set_raw(name, None)
@@ -638,7 +638,7 @@ def _let_a_hash_stay_in_the_line() -> None:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             # The suppression sits on the call below, because the vendored
             # `shlex` of argcomplete carries no annotations at all.
-            super().__init__(*args, **kwargs)  # type: ignore[reportUnknownMemberType] -- vendored shlex, no annotations
+            super().__init__(*args, **kwargs)  # type: ignore[reportUnknownMemberType]  # vendored shlex, no annotations
             self.commenters = ""
 
     # `lexers.py` binds this same module object, so the attribute reaches it.

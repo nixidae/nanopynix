@@ -74,7 +74,7 @@ def _frame_lines(frames: list[object], indent: str) -> list[str]:
             # innermost frames are this module building the report. Nobody
             # debugging a hang needs to read those.
             continue
-        lines.append(f"{indent}{code.co_filename}:{frame.f_lineno} in {code.co_name}")  # type: ignore[attr-defined] -- guarded by the f_code check above
+        lines.append(f"{indent}{code.co_filename}:{frame.f_lineno} in {code.co_name}")  # type: ignore[attr-defined]  # guarded by the f_code check above
     return lines
 
 
@@ -152,7 +152,7 @@ def live_threads() -> str:
         # `sys._current_frames()` is the only way to reach the frame of a
         # thread other than this one, and reading a parked thread's frame is
         # this module's whole subject.
-        frames = sys._current_frames()  # type: ignore[reportPrivateUsage] -- no public API reaches another thread's frame  # noqa: SLF001 -- same reason
+        frames = sys._current_frames()  # type: ignore[reportPrivateUsage]  # no public API reaches another thread's frame  # noqa: SLF001 -- same reason
     except Exception as exc:
         return f"no thread state: {exc}"
 

@@ -76,7 +76,7 @@ def pynix_live_log(
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _host_nix_conf_stays_out() -> Iterator[None]:  # type: ignore[reportUnusedFunction] -- pytest autouse fixture, wired by pytest
+def _host_nix_conf_stays_out() -> Iterator[None]:  # type: ignore[reportUnusedFunction]  # pytest autouse fixture, wired by pytest
     """Keep the host's ``nix.conf`` out of the pytest process.
 
     Every pynix command loads it, and these tests run the commands in this
@@ -90,7 +90,7 @@ def _host_nix_conf_stays_out() -> Iterator[None]:  # type: ignore[reportUnusedFu
 
 
 @pytest.fixture(scope="module", autouse=True)
-async def _shared_pynix_sessions(  # type: ignore[reportUnusedFunction] -- pytest autouse fixture, wired by pytest
+async def _shared_pynix_sessions(  # type: ignore[reportUnusedFunction]  # pytest autouse fixture, wired by pytest
     anyio_backend: str,  # noqa: ARG001 -- see below; requested for its side effect on the fixture closure
 ) -> AsyncIterator[None]:
     """Share one Nix session/store/evaluator across pynix commands, unless CI
@@ -123,7 +123,7 @@ async def _shared_pynix_sessions(  # type: ignore[reportUnusedFunction] -- pytes
 
 
 @pytest.fixture(autouse=True)
-def _capture_pynix_test_structlog(  # type: ignore[reportUnusedFunction] -- pytest autouse fixture, wired by pytest
+def _capture_pynix_test_structlog(  # type: ignore[reportUnusedFunction]  # pytest autouse fixture, wired by pytest
     request: pytest.FixtureRequest,
     pynix_live_log: PynixLiveLog,
 ) -> Iterator[None]:

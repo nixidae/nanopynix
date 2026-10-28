@@ -55,7 +55,7 @@ async def lsp_server(shared_nix_environment: NixTestEnvironment) -> AsyncIterato
     server = create_server()
     # pygls exposes no public way to seed a Workspace without a real stdio
     # handshake -- see pygls' own test suite for the same pattern.
-    server.protocol._workspace = Workspace(  # type: ignore[reportPrivateUsage] -- intentional, see comment above
+    server.protocol._workspace = Workspace(  # type: ignore[reportPrivateUsage]  # intentional, see comment above
         root_uri=LSP_ASSETS_ROOT.as_uri(),
     )
     async with _seeded(server, shared_nix_environment):
@@ -97,7 +97,7 @@ async def lsp_wire(
     introspection (e.g. ``server.contexts[uri]``).
     """
     server = create_server()
-    server.protocol._workspace = Workspace(  # type: ignore[reportPrivateUsage] -- see lsp_server's comment above
+    server.protocol._workspace = Workspace(  # type: ignore[reportPrivateUsage]  # see lsp_server's comment above
         root_uri=LSP_ASSETS_ROOT.as_uri(),
     )
     client = pytest_lsp.make_test_lsp_client()

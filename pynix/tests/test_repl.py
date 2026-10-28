@@ -20,7 +20,7 @@ from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import ANSI, FormattedText
 
 from pynix import _util as util_module, parse
-from pynix._impl.repl import (  # type: ignore[reportPrivateUsage] -- tests intentionally access private symbols
+from pynix._impl.repl import (  # type: ignore[reportPrivateUsage]  # tests intentionally access private symbols
     _HELP,
     ReplRunError,
     _AttrDoc,
@@ -463,7 +463,7 @@ async def test_repl_completion_uses_commands_scope_and_attrsets() -> None:
     assert await complete(":e p") == ["pkgs"]
     assert await complete(":e pkgs.") == ["hello", "hello-unfree", "world"]
     assert await complete(":e pkgs.hel") == ["hello", "hello-unfree"]
-    assert completer._repl.value.released  # type: ignore[reportPrivateUsage] -- verifies temporary value lifetime
+    assert completer._repl.value.released  # type: ignore[reportPrivateUsage]  # verifies temporary value lifetime
 
 
 async def test_repl_completion_on_an_empty_line_waits_for_a_keypress() -> None:

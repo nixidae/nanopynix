@@ -144,14 +144,14 @@ def validate(schema: dict[str, Any], value: object) -> list[Finding]:
     """
     # jsonschema ships no py.typed marker, so validator_for's return type
     # (and the resulting validator instance) resolve to Unknown.
-    validator_cls = cast("Any", jsonschema.validators.validator_for)(schema)  # type: ignore[reportUnknownMemberType] -- jsonschema ships no py.typed marker
+    validator_cls = cast("Any", jsonschema.validators.validator_for)(schema)  # type: ignore[reportUnknownMemberType]  # jsonschema ships no py.typed marker
     validator = validator_cls(schema)
     findings: list[Finding] = []
     # jsonschema ships no py.typed marker, so pyright can't verify
     # iter_errors' overloads even though the library's own source has inline
     # type hints -- this is a real external-library limitation, not
     # something a cast on our own argument can resolve.
-    iter_errors = cast("Any", validator.iter_errors)  # type: ignore[reportUnknownMemberType] -- jsonschema ships no py.typed marker
+    iter_errors = cast("Any", validator.iter_errors)  # type: ignore[reportUnknownMemberType]  # jsonschema ships no py.typed marker
     for raw_error in iter_errors(value):
         error = _extract(raw_error)
         if error.validator == "additionalProperties":
