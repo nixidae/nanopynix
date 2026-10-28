@@ -1,7 +1,3 @@
-# pyright: reportUnknownMemberType=false
-# pytest.Pytester's makepyfile/makeconftest are typed as (*args, **kwargs) ->
-# Path -- untyped varargs, not a stub gap specific to this file.
-
 """What a run leaves behind when it is killed, or when it stops making progress.
 
 Every test here runs a real pytest subprocess and signals it, because that is

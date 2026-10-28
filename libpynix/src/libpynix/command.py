@@ -100,7 +100,7 @@ MISSING: typing.Final = object()
 
 
 @no_runtime_type_check  # a declaration returns a Spec, and the annotation names the value it will hold; beartype would flag every one
-def opt(  # noqa: PLR0913 -- one keyword for each thing a declaration can say; collapsing them into a dict would only hide the names from the reader and from pyright
+def opt(  # noqa: PLR0913 -- one keyword for each thing a declaration can say; collapsing them into a dict would only hide the names from the reader and from the type checker
     default: Any = None,
     *,
     help: str,  # noqa: A002 -- argparse names the parameter `help`, and so did clypi
@@ -454,8 +454,8 @@ def command_name(command: type[Command]) -> str:
     """
     if command.cli_name:
         return command.cli_name
-    head, *rest = command.__name__
-    return head.lower() + "".join("-" + c.lower() if c.isupper() else c for c in rest)
+    name = command.__name__
+    return name[0].lower() + "".join("-" + c.lower() if c.isupper() else c for c in name[1:])
 
 
 def _describe(command: type[Command]) -> str:
@@ -492,11 +492,11 @@ class _LazyParserMap(dict[str, argparse.ArgumentParser]):
             return default
 
 
-class _LazySubParsersAction(argparse._SubParsersAction):  # type: ignore[reportPrivateUsage, type-arg]  # subclassing standard subparser action for on-demand subparser instantiation  # noqa: SLF001
+class _LazySubParsersAction(argparse._SubParsersAction):  # type: ignore[type-arg]  # subclassing standard subparser action for on-demand subparser instantiation  # noqa: SLF001
     """Subparsers action that builds child parsers on demand."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)  # type: ignore[reportUnknownMemberType]  # argparse type stubs
+        super().__init__(*args, **kwargs)
         self._lazy_map: _LazyParserMap = _LazyParserMap(self)
         self._name_parser_map = self._lazy_map
         self.choices = self._lazy_map
@@ -510,7 +510,7 @@ class _LazySubParsersAction(argparse._SubParsersAction):  # type: ignore[reportP
         factory: Callable[[argparse.ArgumentParser], None],
         **kwargs: Any,
     ) -> None:
-        choice_action = self._ChoicesPseudoAction(name, (), help)  # type: ignore[reportUnknownMemberType, reportPrivateUsage]  # argparse _ChoicesPseudoAction
+        choice_action = self._ChoicesPseudoAction(name, (), help)
         self._choices_actions.append(choice_action)
         self._factories[name] = (factory, kwargs)
         self._lazy_map.set_raw(name, None)
@@ -589,7 +589,7 @@ def complete(parser: argparse.ArgumentParser) -> None:
     # never reaches `parsed_args` and the `--attr` completer has no file.
     # argcomplete's docs name this set as the place for a custom action; its
     # inferred type lists only the stock argparse ones.
-    safe_actions = typing.cast("set[type[argparse.Action]]", argcomplete.finders.safe_actions)
+    safe_actions = argcomplete.finders.safe_actions
     safe_actions.add(_Once)
     argcomplete.autocomplete(parser, exclude=_NOT_OFFERED)
 
@@ -638,7 +638,7 @@ def _let_a_hash_stay_in_the_line() -> None:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             # The suppression sits on the call below, because the vendored
             # `shlex` of argcomplete carries no annotations at all.
-            super().__init__(*args, **kwargs)  # type: ignore[reportUnknownMemberType]  # vendored shlex, no annotations
+            super().__init__(*args, **kwargs)
             self.commenters = ""
 
     # `lexers.py` binds this same module object, so the attribute reaches it.
@@ -688,7 +688,7 @@ def dispatch(parser: argparse.ArgumentParser, namespace: argparse.Namespace) -> 
     for help, and the help of the group is the answer.
     """
     values = {name: value for name, value in vars(namespace).items() if not name.startswith("_")}
-    command = getattr(namespace, "_command", None)
+    command: Callable[..., Command] | None = getattr(namespace, "_command", None)
     if command is None:
         parser.print_help()
         raise SystemExit(0)
@@ -697,8 +697,11 @@ def dispatch(parser: argparse.ArgumentParser, namespace: argparse.Namespace) -> 
 
 def group(name: str, *, help: str, subcommands: Sequence[type[Command]]) -> type[Command]:  # noqa: A002 -- see opt
     """A command that only mounts others, declared in one expression."""
-    return type(
-        name.replace("-", " ").title().replace(" ", ""),
-        (Command,),
-        {"cli_name": name, "__doc__": help, "subcommands": tuple(subcommands)},
+    return typing.cast(
+        "type[Command]",
+        type(
+            name.replace("-", " ").title().replace(" ", ""),
+            (Command,),
+            {"cli_name": name, "__doc__": help, "subcommands": tuple(subcommands)},
+        ),
     )

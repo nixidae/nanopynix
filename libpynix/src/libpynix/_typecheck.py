@@ -18,7 +18,7 @@ def no_runtime_type_check[F: Callable[..., Any]](func: F) -> F:
     """Exempt ``func`` from beartype's runtime checks, keeping the static ones.
 
     ``typing.no_type_check`` sets the same attribute and also carries a typing
-    meaning: pyright erases the signature and stops reading the body. This
+    meaning: a type checker erases the signature and stops reading the body. This
     decorator is an identity function to a type checker, so the annotations
     and the body stay checked.
 

@@ -7,7 +7,7 @@ from typing import TextIO, cast
 
 import pytest
 from _pytest.config import (
-    create_terminal_writer,  # type: ignore[reportPrivateImportUsage]  # no public equivalent; see _silence_terminal_reporter
+    create_terminal_writer,
 )
 
 from pytest_agent._harness_detect import detect_agent_harness
@@ -361,7 +361,7 @@ def _redirect_terminal_reporter(config: pytest.Config, path: Path) -> TextIO | N
     if terminal_reporter is None:
         return None
     log = path.open("w", encoding="utf-8")
-    terminal_reporter._tw = create_terminal_writer(config, log)  # type: ignore[reportPrivateUsage]  # see docstring above  # noqa: SLF001
+    terminal_reporter._tw = create_terminal_writer(config, log)  # noqa: SLF001 -- see docstring above
     return log
 
 

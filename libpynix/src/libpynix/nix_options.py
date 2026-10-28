@@ -39,33 +39,36 @@ def file_option(*, complete: Completer | None = None) -> str | None:
     also not a path: ``github:NixOS/nixpkgs`` and ``<nixpkgs>`` name a tree
     that no local directory holds.
     """
-    return opt(
+    value: str | None = opt(
         None,
         short="f",
         help="Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path.",
         complete=complete,
         once=True,
     )
+    return value
 
 
 @no_runtime_type_check  # see file_option
 def attr_option(*, complete: Completer | None = None) -> str | None:
     """Declare the common ``--attr`` option."""
-    return opt(
+    value: str | None = opt(
         None,
         short="A",
         help="Dot-separated attribute path within the evaluation result.",
         complete=complete,
         once=True,
     )
+    return value
 
 
 @no_runtime_type_check  # see file_option
 def flake_option(*, complete: Completer | None = None) -> str | None:
     """Declare the common ``--flake`` option."""
-    return opt(
+    value: str | None = opt(
         None,
         help="Evaluate FLAKE, optionally with a '#'-separated attribute path.",
         complete=complete,
         once=True,
     )
+    return value

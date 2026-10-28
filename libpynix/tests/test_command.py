@@ -203,7 +203,7 @@ def test_an_option_that_shadows_a_name_of_this_layer_is_refused() -> None:
     with pytest.raises(TypeError, match=r"declares \['subcommands'\]"):
         # `type`, and not a `class` statement: the declaration under test
         # overrides a class variable of `Command`, which is exactly the fault
-        # it reports, and pyright reads a written-out `class` as the mistake
+        # it reports, and the checker reads a written-out `class` as the mistake
         # rather than as the subject.
         type(
             "Bad",

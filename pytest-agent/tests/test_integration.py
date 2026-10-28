@@ -1,7 +1,3 @@
-# pyright: reportUnknownMemberType=false
-# pytest.Pytester's makepyfile is typed as (*args, **kwargs) -> Path -- untyped
-# varargs, not a stub gap specific to this file.
-
 from __future__ import annotations
 
 import json

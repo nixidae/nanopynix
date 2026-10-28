@@ -1,7 +1,3 @@
-# pyright: reportUnknownMemberType=false
-# pytest.Pytester's makepyfile is typed as (*args, **kwargs) -> Path -- untyped
-# varargs, not a stub gap specific to this file.
-
 """The whole loop an agent actually runs: fail a suite, then query it.
 
 Everything here goes through real processes -- an inner ``pytest --agent``

@@ -1,7 +1,3 @@
-# pyright: reportUnknownMemberType=false
-# pytest.Pytester's makepyfile is typed as (*args, **kwargs) -> Path -- untyped
-# varargs, not a stub gap specific to this file.
-
 """Extra introspection output: `note()`, `attach()`, and where they end up.
 
 Notes exist to answer a question in the run that asked it, so most of these

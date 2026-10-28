@@ -7,7 +7,7 @@ name = "test-support"
 version = "0.1.0"
 description = "Test helpers with no Nix knowledge, shared by every project in this repository"
 authors = [{ name = "nanopynix contributors" }]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 # PEP 639. The repository is Apache-2.0.
 #
 # The file is a copy of the one at the root of the repository, because the

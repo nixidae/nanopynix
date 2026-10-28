@@ -65,7 +65,7 @@ def renderer() -> Path:
 
     A fixture and not an import. `test_installed_scripts.py` needs the same
     path, and `from conftest import RENDERER` is a real import of a module
-    that pytest also loads as a plugin -- pyright resolves the name against
+    that pytest also loads as a plugin -- the type checker resolves the name against
     the wrong `conftest.py` of the several in this repository, and reports it
     as unknown.
     """

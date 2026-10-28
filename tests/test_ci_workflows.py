@@ -94,8 +94,7 @@ def test_ordering_ignores_the_order_it_receives() -> None:
             items = cast("dict[str, Any]", value)
             return {key: reverse_mappings(items[key]) for key in reversed(list(items))}
         if isinstance(value, list):
-            entries = cast("list[Any]", value)
-            return [reverse_mappings(entry) for entry in entries]
+            return [reverse_mappings(entry) for entry in value]
         return value
 
     renderer = _load_renderer()

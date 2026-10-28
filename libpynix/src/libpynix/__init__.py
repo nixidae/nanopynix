@@ -35,11 +35,6 @@ Issue #222 made this a library. Before it, ``pynix/src/pynix/_cli.py`` was
 359 lines and ``easykubenix``'s ``ekn/src/ekn/_cli.py`` was a copy of them.
 """
 
-# pyright: reportUnusedImport=false
-# Justifies the pragma above. The block below is this package's public surface:
-# every import in it is a deliberate re-export that no runtime line reads, so
-# 'unused' is what a correct entry looks like.
-#
 # Eager, and not a lazy PEP 562 table.
 #
 # Measured: a bare interpreter holds 34 modules, `import libpynix` holds 92,

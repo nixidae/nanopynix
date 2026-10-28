@@ -12,7 +12,7 @@ from libpynix.agent_harness import (
 
 
 @pytest.fixture(autouse=True)
-def _no_harness(  # type: ignore[reportUnusedFunction]  # pytest autouse fixture, wired by pytest
+def _no_harness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Clear every harness variable, so the test process itself is not one.

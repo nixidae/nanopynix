@@ -5,7 +5,7 @@ for `--file`, `test_flake_equivalence.py` for `--flake` -- so the two probes
 live here rather than in either of them.
 
 **Not `conftest.py`.** A function is an import and not a fixture, and this
-repository holds several `conftest.py` files: pyright resolves that name
+repository holds several `conftest.py` files: the type checker resolves that name
 against the wrong one and reports the import as unknown. A module with a name
 of its own resolves.
 """

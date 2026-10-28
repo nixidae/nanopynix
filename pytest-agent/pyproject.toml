@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "pytest-agent"
 version = "0.1.0"
 description = "AI-agent-friendly pytest configuration: minimal terminal noise, full per-test detail on disk"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 # PEP 639. The repository is Apache-2.0.
 #
 # The file is a copy of the one at the root of the repository, because the

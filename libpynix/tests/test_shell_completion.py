@@ -15,9 +15,7 @@ from collections.abc import Iterator
 from typing import cast
 
 import pytest
-from argcomplete.lexers import (
-    split_line,  # type: ignore[reportUnknownVariableType]  # argcomplete carries no annotations for its lexer
-)
+from argcomplete.lexers import split_line
 from argcomplete.packages import _shlex
 
 from libpynix import Command, build_parser, complete, opt
@@ -42,7 +40,7 @@ type _Lexed = tuple[str, str, str, list[str], int | None]
 
 def lex(line: str) -> tuple[str, list[str]]:
     """The word *line* is completing, and the words before it."""
-    _, prefix, _, words, _ = cast("_Lexed", split_line(line, len(line)))
+    _, prefix, _, words, _ = cast("_Lexed", split_line(line, len(line)))  # type: ignore[no-untyped-call]  # argcomplete carries no annotations for its lexer
     return prefix, words
 
 

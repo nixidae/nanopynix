@@ -95,8 +95,7 @@ def order_keys(value: Any) -> Any:
     for first.
     """
     # `cast`, and not an annotated assignment. `isinstance` narrows an `Any` to
-    # `dict[Unknown, Unknown]`, and that narrowed type wins over a declared one,
-    # so pyright reports `reportUnknownVariableType` either way.
+    # `dict[Unknown, Unknown]`, and that narrowed type wins over a declared one.
     if isinstance(value, dict):
         items = cast("dict[str, Any]", value)
         return {
@@ -104,20 +103,17 @@ def order_keys(value: Any) -> Any:
             for key in sorted(items, key=lambda name: (_KEY_RANK.get(name, len(KEY_ORDER)), name))
         }
     if isinstance(value, list):
-        entries = cast("list[Any]", value)
-        return [order_keys(entry) for entry in entries]
+        return [order_keys(entry) for entry in value]
     return value
 
 
-class _BlockStyleDumper(yaml.CSafeDumper):
+class _BlockStyleDumper(yaml.CSafeDumper):  # type: ignore[misc]  # the check environment carries no PyYAML stubs
     """Writes a string with a newline as a literal block (``|``), so a shell
     script in a step stays readable."""
 
 
 def _represent_str(dumper: _BlockStyleDumper, data: str) -> yaml.Node:
-    return dumper.represent_scalar(  # type: ignore[reportUnknownMemberType]  # PyYAML's stubs leave `value` untyped
-        "tag:yaml.org,2002:str", data, style="|" if "\n" in data else None
-    )
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|" if "\n" in data else None)
 
 
 _BlockStyleDumper.add_representer(str, _represent_str)
@@ -125,7 +121,8 @@ _BlockStyleDumper.add_representer(str, _represent_str)
 
 def to_yaml(document: Any) -> str:
     """*document* as YAML, in the key order it already has."""
-    return yaml.dump(document, sort_keys=False, Dumper=_BlockStyleDumper)
+    text: str = yaml.dump(document, sort_keys=False, Dumper=_BlockStyleDumper)
+    return text
 
 
 async def render_workflow(state: huggorm.AsyncEvalState, nix_file: Path) -> str:

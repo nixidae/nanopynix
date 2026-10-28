@@ -61,7 +61,7 @@ def profile(request: pytest.FixtureRequest) -> Generator[Profiler]:
         yield profiler
     finally:
         profiler.stop()
-        nodeid = request.node.nodeid  # type: ignore[reportUnknownMemberType]  # pytest's own stubs type Node.nodeid as Any
+        nodeid = request.node.nodeid
         relpath = nodeid_to_relpath(cast("str", nodeid))
         report_path = _report_dir(request) / relpath.parent / f"{relpath.name}.profile.txt"
         report_path.parent.mkdir(parents=True, exist_ok=True)

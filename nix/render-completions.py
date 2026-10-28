@@ -24,10 +24,6 @@ from __future__ import annotations
 import pathlib
 import sys
 
-# pyright: reportUnknownVariableType=false
-# argcomplete ships no type information and nixpkgs carries no stubs for it, so
-# `shellcode` is a partially unknown function. Scoped to this file, which is
-# eleven lines of build glue and imports nothing else.
 from argcomplete.shell_integration import shellcode
 
 #: The shells this writes a script for. `installShellCompletion` in
@@ -39,7 +35,7 @@ def main() -> None:
     program, out_dir = sys.argv[1], pathlib.Path(sys.argv[2])
     out_dir.mkdir(parents=True, exist_ok=True)
     for shell in SHELLS:
-        text = shellcode([program], shell=shell)
+        text = shellcode([program], shell=shell)  # type: ignore[no-untyped-call]  # argcomplete ships no type information
         (out_dir / shell).write_text(text, encoding="utf-8")
         print(f"{shell}: {len(text)} bytes")  # noqa: T201 -- the build log is the report
 

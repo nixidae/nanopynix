@@ -132,7 +132,7 @@ def agent_notes(request: pytest.FixtureRequest) -> AgentNotes:
     way. See also the module-level ``pytest_agent.note()``, which needs no
     fixture and so works from inside the code under test.
     """
-    nodeid = request.node.nodeid  # type: ignore[reportUnknownMemberType]  # pytest's own stubs type Node.nodeid as Any
+    nodeid = request.node.nodeid
     runtime = cast("AgentRuntime | None", request.config.pluginmanager.get_plugin(RUNTIME_PLUGIN_NAME))
     return AgentNotes(cast("str", nodeid), runtime)
 

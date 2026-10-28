@@ -47,7 +47,7 @@ def _projects() -> list[tuple[str, Path, dict[str, object]]]:
 
 
 PROJECTS = _projects()
-IDS = [name for name, _, _ in PROJECTS]
+IDS = [name for name, _path, _project in PROJECTS]
 
 
 def test_the_scan_finds_every_project() -> None:
@@ -81,7 +81,7 @@ def test_every_licence_file_of_the_project_is_there(
     entries = project.get("license-files")
     assert entries, f"{name} names no `license-files`, so its built artifact carries no licence text."
     # `cast`, because `tomllib` types every value of a parsed table as `Any`,
-    # and pyright then calls each element of the list unknown.
+    # and the checker then calls each element of the list unknown.
     named = [str(entry) for entry in cast("list[object]", entries)]
     missing = [entry for entry in named if not (path.parent / entry).is_file()]
     assert not missing, (

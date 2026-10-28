@@ -48,16 +48,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import huggorm
-
-# pyright: reportMissingImports=false
-# argparse-manpage is only in the build-time venv of nix/mk-app.nix, so
-# neither pyright's pythonEnv nor the dev shell resolves it. The build fails
-# loudly without it, which is the check that matters.
-# pyright: reportUnknownVariableType=false
-# argparse-manpage ships no type information, so the `Manpage` import binding
-# is unknown. Scoped to this file, which is build glue and imports nothing
-# else untyped.
-from argparse_manpage.manpage import Manpage
+from argparse_manpage.manpage import Manpage  # type: ignore[import-not-found]  # build-time venv only
 
 from libpynix import build_parser
 from pynix import Pynix
@@ -131,12 +122,12 @@ def _child_parsers(parser: argparse.ArgumentParser) -> Iterator[argparse.Argumen
     reads `_actions` and `choices` in one place.
     """
     for action in parser._actions:  # noqa: SLF001 -- see docstring
-        if isinstance(action, argparse._SubParsersAction):  # noqa: SLF001 -- see docstring # type: ignore[reportPrivateUsage]  # see docstring
+        if isinstance(action, argparse._SubParsersAction):  # noqa: SLF001 -- see docstring
             # argparse types the choices of a subparsers action loosely, and
             # this map holds None for a parser that nothing built yet, so
-            # pyright cannot follow either fact. The lookup below builds the
+            # the checker cannot follow either fact. The lookup below builds the
             # parser, which is the whole point of the lazy map.
-            choices: Any = action.choices  # type: ignore[reportUnknownMemberType]  # see above
+            choices: Any = action.choices
             for name in list(choices):
                 yield choices[name]
 
@@ -167,7 +158,7 @@ def _page_data(version: str, description: str) -> dict[str, str]:
 def _new_page(parser: argparse.ArgumentParser, data: dict[str, str]) -> Any:
     """One argparse-manpage page object for *parser*.
 
-    Untyped, so `Any`: the library ships no type information, and pyright
+    Untyped, so `Any`: the library ships no type information, and the checker
     narrows a declared `Any` back to unknown on assignment, so no call site
     can hold the object in a checked name. The single `Any` boundary here is
     what keeps the two call sites below clean.

@@ -1,7 +1,3 @@
-# pyright: reportUnknownMemberType=false
-# pytest.Pytester's makepyfile is typed as (*args, **kwargs) -> Path --
-# untyped varargs, not a stub gap specific to this file.
-
 """What `pytest-agent watch` reports, and when.
 
 Two halves, on purpose.

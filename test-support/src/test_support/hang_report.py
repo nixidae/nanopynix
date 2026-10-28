@@ -136,7 +136,7 @@ def _await_chain(coro: object) -> list[object]:
 
 def _first_attr(obj: object, names: tuple[str, ...]) -> object | None:
     for name in names:
-        value = getattr(obj, name, None)
+        value: object | None = getattr(obj, name, None)
         if value is not None:
             return value
     return None
@@ -152,7 +152,7 @@ def live_threads() -> str:
         # `sys._current_frames()` is the only way to reach the frame of a
         # thread other than this one, and reading a parked thread's frame is
         # this module's whole subject.
-        frames = sys._current_frames()  # type: ignore[reportPrivateUsage]  # no public API reaches another thread's frame  # noqa: SLF001 -- same reason
+        frames = sys._current_frames()  # noqa: SLF001 -- no public API reaches another thread's frame
     except Exception as exc:
         return f"no thread state: {exc}"
 

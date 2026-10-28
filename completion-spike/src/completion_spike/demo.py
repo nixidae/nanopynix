@@ -64,10 +64,10 @@ DYNAMIC_VALUES = (DynamicValue(command_path=("build",), option="--attr", subcomm
 app = App(name="demo", help="A tiny program, to test shell completion with.")
 
 store = App(name="store", help="Talk to a store.")
-app.command(store)
+app.command(store)  # type: ignore[call-overload]  # zuban-bug: rejects an App for App.command's overloads
 
 gc = App(name="gc", help="Collect garbage.")
-store.command(gc)
+store.command(gc)  # type: ignore[call-overload]  # zuban-bug: rejects an App for App.command's overloads
 
 
 @app.command

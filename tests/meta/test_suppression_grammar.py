@@ -27,7 +27,7 @@ from tests.support.suppressions import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_scanner_can_see_the_repository():
+def test_scanner_can_see_the_repository() -> None:
     """Fail loudly if the gate is pointed somewhere with no source in it.
 
     The packaged CI runner ``cd``s into a store copy of the tree rather than
@@ -40,7 +40,7 @@ def test_scanner_can_see_the_repository():
     assert len(found) > 100, f"only {len(found)} python files under {REPO_ROOT}; is the source tree present?"
 
 
-def test_every_suppression_is_justified():
+def test_every_suppression_is_justified() -> None:
     violations = scan_tree(REPO_ROOT)
     assert not violations, (
         f"{len(violations)} suppression(s) do not say why they exist.\n"
@@ -55,23 +55,23 @@ def test_every_suppression_is_justified():
 class TestScannerCatchesUnjustified:
     """The scanner must actually fire. One case per directive form."""
 
-    def test_bare_noqa_with_codes(self):
+    def test_bare_noqa_with_codes(self) -> None:
         assert scan_source("x = 1  # noqa: E501\n", Path("s.py"))
 
-    def test_bare_type_ignore(self):
+    def test_bare_type_ignore(self) -> None:
         assert scan_source("x = 1  # type: ignore[arg-type]\n", Path("s.py"))
 
-    def test_bare_pyright_ignore(self):
+    def test_bare_pyright_ignore(self) -> None:
         assert scan_source("x = 1  # pyright: ignore[reportAny]\n", Path("s.py"))
 
-    def test_unjustified_file_level_pragma(self):
+    def test_unjustified_file_level_pragma(self) -> None:
         assert scan_source("# ruff: noqa: T201\nx = 1\n", Path("s.py"))
 
-    def test_chained_directives_with_no_prose_anywhere(self):
+    def test_chained_directives_with_no_prose_anywhere(self) -> None:
         """A second directive is not a justification for the first."""
         assert scan_source("x = 1  # type: ignore[a]  # noqa: SLF001\n", Path("s.py"))
 
-    def test_type_ignore_with_a_dashed_reason(self):
+    def test_type_ignore_with_a_dashed_reason(self) -> None:
         """mypy and zuban report this form as a syntax error and drop the ignore."""
         assert scan_source("x = 1  # type: ignore[arg-type] -- a reason\n", Path("s.py"))
 
@@ -79,20 +79,20 @@ class TestScannerCatchesUnjustified:
 class TestScannerAcceptsJustified:
     """...and must not fire on the shapes the codebase actually uses."""
 
-    def test_inline_reason(self):
+    def test_inline_reason(self) -> None:
         assert not scan_source("x = 1  # noqa: E501 -- url in a docstring\n", Path("s.py"))
 
-    def test_type_ignore_reason_in_a_second_comment(self):
+    def test_type_ignore_reason_in_a_second_comment(self) -> None:
         assert not scan_source("x = 1  # type: ignore[arg-type]  # the wrong type is the point\n", Path("s.py"))
 
-    def test_one_reason_covers_a_chained_pair(self):
+    def test_one_reason_covers_a_chained_pair(self) -> None:
         source = "x = obj._p  # type: ignore[reportPrivateUsage]  # owner reaches into its own collaborator  # noqa: SLF001\n"
         assert not scan_source(source, Path("s.py"))
 
-    def test_file_level_reason_on_the_line_beneath(self):
+    def test_file_level_reason_on_the_line_beneath(self) -> None:
         assert not scan_source("# ruff: noqa: T201\n# output is the point here\nx = 1\n", Path("s.py"))
 
-    def test_file_level_reason_below_a_second_pragma(self):
+    def test_file_level_reason_below_a_second_pragma(self) -> None:
         source = "# ruff: noqa: F401\n# pyright: reportUnusedImport=false\n# re-export surface\nx = 1\n"
         assert not scan_source(source, Path("s.py"))
 
@@ -107,11 +107,11 @@ class TestScannerIgnoresProseAboutDirectives:
     or opens its comment; prose about one does neither.
     """
 
-    def test_directive_quoted_mid_sentence_in_a_standalone_comment(self):
+    def test_directive_quoted_mid_sentence_in_a_standalone_comment(self) -> None:
         assert not scan_source("# Write `# noqa: E501` when the line is a URL.\nx = 1\n", Path("s.py"))
 
-    def test_directive_named_inside_a_string_is_not_a_comment(self):
+    def test_directive_named_inside_a_string_is_not_a_comment(self) -> None:
         assert not scan_source('MARKER = "# type: ignore[arg-type]"\n', Path("s.py"))
 
-    def test_pragma_described_in_a_standalone_comment(self):
+    def test_pragma_described_in_a_standalone_comment(self) -> None:
         assert not scan_source("# The ruff: noqa pragma suppresses a whole file.\nx = 1\n", Path("s.py"))

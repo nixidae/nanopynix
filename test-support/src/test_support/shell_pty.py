@@ -34,14 +34,6 @@ here for a reason that a person met before:
   interprets a byte itself.
 """
 
-# pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
-# pyright: reportUnknownVariableType=false
-# `pexpect` ships no type information and nixpkgs carries no `types-pexpect`,
-# so every call on the spawned child is an unknown member, and every local
-# variable that holds what such a call returned is an unknown type. Scoped to
-# this module, which is the only one that touches pexpect, and to those three
-# rules. `pyte` needs none of them: it ships `py.typed`.
-
 from __future__ import annotations
 
 import re
