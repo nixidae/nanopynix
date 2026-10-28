@@ -35,7 +35,7 @@ let
     ./modules/config.nix
   ];
 
-  eku = import easykubenixSrc {
+  eku = (import easykubenixSrc { }).lib.easykubenix {
     inherit pkgs;
     modules = testModules;
   };
