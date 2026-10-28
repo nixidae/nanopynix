@@ -26,7 +26,7 @@ let
   # ghanix is a source of its own in nixidae, because nixkube wants it and
   # has no nanopynix dependency to reach it through. It takes `lib` and
   # nothing else.
-  ghalib = import sources.ghanix { inherit lib; };
+  ghalib = (import sources.ghanix { inherit lib; }).lib;
   inherit (ghalib)
     steps
     withCond
