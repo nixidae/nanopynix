@@ -134,7 +134,7 @@ let
   # This repo's seam onto pyproject.nix's builders: `ps` builds package sets
   # (nixvenv's python-set.nix), `mkApp` turns one of their packages into a
   # release application (nix/mk-app.nix).
-  inherit (import sources.nixvenv { inherit pkgs sources; }) ps;
+  inherit ((import sources.nixvenv { inherit pkgs sources; }).lib) ps;
   mkApp = pkgs.callPackage ./nix/mk-app.nix {
     pyprojectUtil = pkgs.callPackage pyproject-nix.build.util { };
   };

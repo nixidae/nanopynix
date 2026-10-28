@@ -18,7 +18,7 @@ let
   sources = import ../nix/sources.nix;
   repo = import ../. { inherit sources; };
   inherit (repo.internal) pkgs;
-  inherit (import sources.nixvenv { inherit pkgs; }) nixvenv;
+  inherit ((import sources.nixvenv { inherit pkgs; }).lib) nixvenv;
 
   # `src` and `test-support/src` are editable, and there is no install step:
   # an edit is live, which is what a spike needs. The Nix build tests the
