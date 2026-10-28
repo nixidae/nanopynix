@@ -525,6 +525,11 @@ lib.throwIf (unlistedVariants != [ ])
         experiment = import ./ci/workflows/experiment.nix { inherit repo; };
       };
 
+    # One scope per huggorm lane, plus `stable` and `latest`, which this file
+    # names. Every huggorm dependant in nixidae keys its own `lanes` on these
+    # names (nixidae/nixidae#1108). `nanopynixVersions` is the same set.
+    lanes = nanopynixVersions;
+
     inherit
       sources
       pkgs
