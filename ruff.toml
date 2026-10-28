@@ -1,5 +1,9 @@
 extend = "nix/shared/ruff.toml"
 
+[per-file-target-version]
+"pytest-agent/**" = "py311"
+"test-support/**" = "py312"
+
 [lint.flake8-builtins]
 ignorelist = ["eval"]
 
