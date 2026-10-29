@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -9,50 +8,28 @@ from sphinx.application import Sphinx
 _DOCS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_DOCS_DIR))
 sys.path.insert(0, str(_DOCS_DIR.parent / "pynix" / "src"))
+sys.path.insert(0, str(_DOCS_DIR.parent / "nix" / "shared"))
 
 from _generate_pynix_reference import generate as _generate_pynix_reference  # noqa: E402, I001 -- sys.path must be extended first, and this import cannot be merged into the block above it
+from sphinx_shared import (  # noqa: E402 -- sys.path must be extended first
+    author as author,
+    autodoc_default_options as autodoc_default_options,
+    autodoc_member_order as autodoc_member_order,
+    autodoc_typehints as autodoc_typehints,
+    exclude_patterns as exclude_patterns,
+    extensions as extensions,
+    html_theme as html_theme,
+    intersphinx_mapping as intersphinx_mapping,
+    myst_enable_extensions as myst_enable_extensions,
+    napoleon_google_docstring as napoleon_google_docstring,
+    napoleon_numpy_docstring as napoleon_numpy_docstring,
+    napoleon_use_rtype as napoleon_use_rtype,
+    smartquotes as smartquotes,
+    templates_path as templates_path,
+)
 
 project = "nanopynix"
 copyright = "2025, Carl Andersson"  # noqa: A001 -- Sphinx conf variable, not the Python builtin
-author = "Carl Andersson"
-
-extensions = [
-    "myst_parser",
-    "sphinx.ext.autodoc",
-    "sphinx.ext.napoleon",
-    "sphinx.ext.viewcode",
-    "sphinx.ext.intersphinx",
-]
-
-myst_enable_extensions = [
-    "colon_fence",
-    "deflist",
-]
-
-templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
-
-html_theme = "furo"
-
-# Disable smart quotes/dashes: this site is full of literal `--flag` mentions
-# and numeric ranges (e.g. "0-7") that must not be typographically mangled.
-smartquotes = False
-
-# The Nix-built nanopynix-docs package (nix/docs.nix) builds hermetically —
-# no network access — so it sets NANOPYNIX_DOCS_OFFLINE to skip intersphinx
-# rather than fail trying to fetch docs.python.org's inventory.
-intersphinx_mapping = (
-    {} if os.environ.get("NANOPYNIX_DOCS_OFFLINE") else {"python": ("https://docs.python.org/3", None)}
-)
-
-autodoc_member_order = "bysource"
-autodoc_typehints = "description"
-autodoc_default_options = {
-    "member-order": "bysource",
-}
-napoleon_google_docstring = True
-napoleon_numpy_docstring = False
-napoleon_use_rtype = False
 
 
 def _on_builder_inited(app: Sphinx) -> None:
