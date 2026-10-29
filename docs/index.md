@@ -7,6 +7,7 @@ language server (`pynix-lsp`), built on huggorm's bindings.
 :maxdepth: 2
 :caption: Contents
 
+getting-started
 pynix/index
 libpynix/index
 nix-misconceptions
