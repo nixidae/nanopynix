@@ -351,11 +351,19 @@ async def linux_builder(manifest_path: str, *, home: Path | None = None) -> Asyn
                 await _wait_for_daemon(vm, plan.daemon_port, work)
                 socket_path = work / "daemon.sock"
                 listener = await anyio.create_unix_listener(socket_path)
+                # Raised outside the task group, which would wrap it in an
+                # ExceptionGroup, and main() would print a NixError as a traceback.
+                failure: Exception | None = None
                 async with listener, anyio.create_task_group() as group:
                     group.start_soon(serve, listener)
                     logger.info("pynix linux builder is ready", socket=str(socket_path))
-                    yield LinuxBuilder(f"unix://{socket_path}?local-fs=false", plan)
+                    try:
+                        yield LinuxBuilder(f"unix://{socket_path}?local-fs=false", plan)
+                    except Exception as exc:
+                        failure = exc
                     group.cancel_scope.cancel()
+                if failure is not None:
+                    raise failure
             finally:
                 await _stop(vm)
     finally:
