@@ -70,6 +70,7 @@ DEFAULTS: Final[dict[str, str | bool | None]] = {
     "eval_store": None,
     "verbosity": None,
     "print_build_logs": False,
+    "linux_builder_guest": None,
 }
 
 # The spellings of true and false that the environment takes.

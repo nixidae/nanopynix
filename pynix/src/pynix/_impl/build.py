@@ -8,6 +8,7 @@ on every start, and none of these imports is needed to list an option.
 from __future__ import annotations
 
 import difflib
+import sys
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -44,6 +45,7 @@ from huggorm.namespace import Temporary
 from pynix import _evaluate
 from pynix._build_monitor import BuildPlan, MonitorState
 from pynix._impl.copy import StoreEnds, closure_of, copy_verified
+from pynix._impl.linux_builder import LinuxBuilderError, linux_builder
 from pynix._util import (
     build_derivation,
     configured_nix_settings,
@@ -275,13 +277,22 @@ async def _build_target(
             await build.state.forget_file(path)
 
 
+@dataclass(frozen=True)
+class _StoreUris:
+    """Where a build runs, where it evaluates, and where its outputs go when it succeeds."""
+
+    build: str
+    evaluation: str | None
+    copy_back: str | None = None
+
+
 async def _build_on_huggorm(
-    command: Build, target: EvaluationTarget, settings: dict[str, str]
+    command: Build, target: EvaluationTarget, settings: dict[str, str], uris: _StoreUris
 ) -> tuple[dict[str, str], int, dict[str, Any] | None]:
     monitor = MonitorState(started=time.monotonic(), print_build_logs=command.print_build_logs) if command.nom else None
     async with huggorm_build_session(
-        command.store,
-        eval_store_uri=command.eval_store,
+        uris.build,
+        eval_store_uri=uris.evaluation,
         settings=settings,
         verbosity=command.verbosity,
         print_build_logs=command.print_build_logs,
@@ -296,6 +307,8 @@ async def _build_on_huggorm(
             monitor=monitor,
         )
         logger.info("pynix build finished")
+        if uris.copy_back is not None and outputs:
+            await _copy_outputs(build_store, session.store(uris.copy_back), outputs, uris.copy_back)
         copied = None
         if command.copy is not None and outputs:
             copied = await _copy_outputs(build_store, session.store(command.copy), outputs, command.copy)
@@ -346,6 +359,7 @@ async def run_build(command: Build) -> None:
         error_exit("--dry-run builds nothing, so --copy has nothing to copy")
 
     namespaced = _resolve_namespaced(command)
+    guest = _resolve_linux_builder(command, namespaced=namespaced)
 
     settings = configured_nix_settings(
         substituters=command.substituters,
@@ -357,10 +371,16 @@ async def run_build(command: Build) -> None:
     try:
         if namespaced:
             outputs, updates, copied = await _build_namespaced(command, target, settings)
+        elif guest is not None:
+            outputs, updates, copied = await _build_on_linux_builder(command, target, settings, guest)
         else:
-            outputs, updates, copied = await _build_on_huggorm(command, target, settings)
+            outputs, updates, copied = await _build_on_huggorm(
+                command, target, settings, _StoreUris(command.store, command.eval_store)
+            )
     except BuildTargetError as exc:
         report_and_exit(exc)
+    except LinuxBuilderError as exc:
+        error_exit(str(exc))
 
     report: dict[str, Any] = {"outputs": outputs, "updatedFods": updates, "dryRun": command.dry_run}
     if copied is not None:
@@ -415,6 +435,42 @@ async def _build_namespaced(
                 destination = await session.store(command.copy)
                 copied = await _copy_outputs(build_store, destination, outputs, command.copy)
     return outputs, updates, copied
+
+
+async def _build_on_linux_builder(
+    command: Build, target: EvaluationTarget, settings: dict[str, str], guest: str
+) -> tuple[dict[str, str], int, dict[str, Any] | None]:
+    """Build in a Linux VM, evaluating against the host store.
+
+    The host store evaluates, so the derivations land in it and Nix copies
+    their closure to the guest; the overlay already holds every host path,
+    so that copy only registers them.
+    """
+    async with linux_builder(guest) as store:
+        uris = _StoreUris(
+            store,
+            command.eval_store or _HOST_STORE_URI,
+            _HOST_STORE_URI if command.copy_back else None,
+        )
+        return await _build_on_huggorm(command, target, settings, uris)
+
+
+def _resolve_linux_builder(command: Build, *, namespaced: bool) -> str | None:
+    """The guest manifest of a --linux-builder build, or None for any other build."""
+    if not command.linux_builder:
+        return None
+    if sys.platform != "darwin":
+        error_exit("--linux-builder runs on macOS only")
+    if namespaced:
+        error_exit("--linux-builder and --namespaced each build in a store of their own")
+    if "store" in command.explicit_options:
+        error_exit("--linux-builder builds in the VM's store, so it cannot be combined with --store")
+    if command.linux_builder_guest is None:
+        error_exit(
+            "--linux-builder needs --linux-builder-guest or PYNIX_LINUX_BUILDER_GUEST: "
+            "the path that `nix build --file nanopynix internal.linuxBuilder.manifest` prints"
+        )
+    return command.linux_builder_guest
 
 
 def _resolve_namespaced(command: Build) -> bool:

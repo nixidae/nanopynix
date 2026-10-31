@@ -9,6 +9,7 @@ from pynix._nix_options import attr_option, file_option, flake_option
 from pynix._settings import (
     ConfiguredCommand,
     eval_store_option,
+    option,
     print_build_logs_option,
     store_option,
     verbosity_option,
@@ -72,14 +73,29 @@ class Build(ConfiguredCommand):
         ),
     )
 
+    linux_builder: bool = opt(
+        False,
+        help=(
+            "Build in a Linux VM that this command starts on Apple's Virtualization.framework, and stops "
+            "when it exits. The VM builds aarch64-linux, and x86_64-linux through Rosetta. Its store "
+            "overlays the host store, so nothing is copied in. macOS only, and the host /nix must be "
+            "case-sensitive."
+        ),
+    )
+
+    linux_builder_guest: str | None = option(
+        "The manifest of the --linux-builder guest: the store path that "
+        "`nix build --file nanopynix internal.linuxBuilder.manifest` prints."
+    )
+
     copy_back: bool = opt(
         True,
         # `argparse.BooleanOptionalAction` writes `--copy-back` and
         # `--no-copy-back` from this one declaration.
         negatable=True,
         help=(
-            "Copy the outputs of a --namespaced build into the host store when the build succeeds. "
-            "Without it the outputs are gone when the worker exits."
+            "Copy the outputs of a --namespaced or --linux-builder build into the host store when the "
+            "build succeeds. Without it the outputs are gone when the worker or the VM exits."
         ),
     )
 
