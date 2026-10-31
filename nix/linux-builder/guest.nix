@@ -21,10 +21,11 @@ let
   # /proc/self/mounts names `/sysroot/host-nix/nix/store` after the pivot,
   # and Nix's string comparison fails on a correct layering.
   # `%3F` is a literal `?` inside the value of a query parameter.
+  upperStore = "/nix/.rw-store/store";
   overlayStoreUri = lib.concatStrings [
     "local-overlay://"
     "?lower-store=/host-nix%3Fread-only=true"
-    "&upper-layer=/nix/.rw-store/store"
+    "&upper-layer=${upperStore}"
     "&check-mount=false"
   ];
 in
@@ -111,6 +112,14 @@ in
   networking.firewall.enable = false;
   services.timesyncd.enable = false;
 
+  # A host daemon that hands builds to this guest locks each output in the
+  # host store first, and the overlay shows that lock here. The patch hides
+  # it with a whiteout in PYNIX_OVERLAY_UPPER_STORE.
+  # No checks: readLinkAt.works makes a 4095-byte symlink, and this guest's
+  # XFS takes 1024 bytes at most (nixidae/nixidae#1150).
+  nix.package = (pkgs.nix.appendPatches [ ./nix-overlay-foreign-lock.patch ]).overrideAttrs {
+    doCheck = false;
+  };
   nix.settings = {
     experimental-features = [
       "local-overlay-store"
@@ -160,6 +169,7 @@ in
       lib.replaceStrings [ "%" ] [ "%%" ] overlayStoreUri
     }"
   ];
+  systemd.services.nix-daemon.environment.PYNIX_OVERLAY_UPPER_STORE = upperStore;
   # The daemon opens the lower store once. Without the mount it opens an
   # empty one and refetches every lower path, silently.
   systemd.services.nix-daemon.unitConfig.RequiresMountsFor = [
@@ -181,7 +191,7 @@ in
   fileSystems."/nix/store" = lib.mkForce {
     overlay = {
       lowerdir = [ "/host-nix/nix/store" ];
-      upperdir = "/nix/.rw-store/store";
+      upperdir = upperStore;
       workdir = "/nix/.rw-store/work";
     };
     neededForBoot = true;
