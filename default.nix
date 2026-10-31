@@ -370,8 +370,8 @@ let
   ) huggorm.lanes;
 
   nanopynixVersions = lanes // {
-    stable = lanes.nix_2_34;
-    latest = lanes.nix_2_35;
+    stable = lanes.${huggorm.lib.defaultLane};
+    latest = lanes.${huggorm.lib.defaultLane};
   };
 
   # Per-version test runners, exposed individually as `nanopynix-tests-<name>`

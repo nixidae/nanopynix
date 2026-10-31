@@ -199,7 +199,7 @@ consumer takes the parser without taking the evaluator, which is the whole
 reason it is a project beside `pynix` rather than a module of it. Two
 things follow. `nix/py-packages.nix` gives it no
 `nixLinked` suffix, so it is one package for every Nix version -- measured:
-`lanes.stable.libpynix` and `lanes.nix_2_35.libpynix`
+`lanes.nix_2_34.libpynix` and `lanes.nix_2_35.libpynix`
 are the same store path. And `libpynix/src/libpynix/_typecheck.py` holds
 `no_runtime_type_check`, which `pynix` imports from there.
 
