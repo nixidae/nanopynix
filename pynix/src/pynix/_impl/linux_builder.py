@@ -2,9 +2,10 @@
 
 vzvm boots the guest of ``nix/linux-builder`` on Apple's Virtualization.framework,
 which gives the guest Rosetta, so the guest builds x86_64-linux as well as
-aarch64-linux. The guest's daemon listens on vsock, vzvm forwards a loopback TCP
-port to it, and this module serves a Unix socket in a temporary directory that
-forwards each connection to that port.
+aarch64-linux. The guest's daemon and, for ``pynix run``, its sshd listen on
+vsock. vzvm forwards a Unix socket to each, in a 0700 temporary directory, so
+no other local user reaches them. vzvm's Unix-socket forwards come from a patch
+in ``nix/linux-builder``.
 
 The store URI carries ``local-fs=false``: the guest's store is an overlay that
 the host cannot see, and the default ``unix://`` reads store objects from the
@@ -23,7 +24,6 @@ import platform
 import re
 import shlex
 import shutil
-import socket
 import struct
 import sys
 import tempfile
@@ -34,7 +34,7 @@ from pathlib import Path
 import anyio
 import structlog
 from anyio import Path as AnyioPath
-from anyio.abc import ByteStream, Process, SocketListener, SocketStream
+from anyio.abc import Process
 
 from pynix._util import error_exit
 
@@ -113,29 +113,19 @@ async def _nested_supported() -> bool:
     return chip is not None and int(chip.group(1)) >= _NESTED_CHIP
 
 
-def _free_loopback_port() -> int:
-    # vzvm binds the port itself. Another process can take it between this
-    # close and vzvm's bind; vzvm then refuses to start, and says why.
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        port: int = probe.getsockname()[1]
-        return port
-
-
 @dataclass(frozen=True)
 class _Plan:
-    """One start of the VM: where its files are, and its loopback ports."""
+    """One start of the VM: where its files are."""
 
     manifest: Manifest
+    #: 0700, from mkdtemp: its mode is the only access control on the sockets.
     work: Path
-    daemon_port: int
     rosetta: bool
     #: The guest then has /dev/kvm, and its daemon offers `kvm`.
     nested: bool
     #: The host directory to share at the same path, for ``pynix run``. With
     #: it the guest also lets the run's key log in over ssh.
     home: Path | None
-    ssh_port: int
 
     @property
     def disk(self) -> Path:
@@ -145,15 +135,24 @@ class _Plan:
     def keys(self) -> Path:
         return self.work / "keys"
 
+    @property
+    def daemon_socket(self) -> Path:
+        return self.work / "daemon.sock"
+
+    @property
+    def ssh_socket(self) -> Path:
+        return self.work / "ssh.sock"
+
     def vzvm_config(self) -> dict[str, object]:
-        forwards = [{"listen": f"127.0.0.1:{self.daemon_port}", "vsockPort": self.manifest.daemon_vsock_port}]
-        shares = [{"tag": "hostnix", "path": "/nix"}]
+        forwards = [{"listen": str(self.daemon_socket), "vsockPort": self.manifest.daemon_vsock_port}]
+        shares: list[dict[str, object]] = [{"tag": "hostnix", "path": "/nix", "readOnly": True}]
         cmdline = self.manifest.cmdline
         if _DEBUG:
             cmdline += " systemd.log_level=info systemd.journald.forward_to_console=1"
         if self.home is not None:
-            forwards.append({"listen": f"127.0.0.1:{self.ssh_port}", "vsockPort": self.manifest.ssh_vsock_port})
-            shares += [{"tag": "pynix-keys", "path": str(self.keys)}, {"tag": "pynix-home", "path": str(self.home)}]
+            forwards.append({"listen": str(self.ssh_socket), "vsockPort": self.manifest.ssh_vsock_port})
+            shares.append({"tag": "pynix-keys", "path": str(self.keys), "readOnly": True})
+            shares.append({"tag": "pynix-home", "path": str(self.home)})
             cmdline += f" pynix.home={self.home}"
         return {
             "cpuCount": os.cpu_count() or 1,
@@ -192,14 +191,14 @@ class LinuxBuilder:
         return [
             "/usr/bin/ssh",
             "-i", str(self._plan.keys / "id_ed25519"),
-            "-p", str(self._plan.ssh_port),
+            "-o", f"ProxyCommand=/usr/bin/nc -U {self._plan.ssh_socket}",
             "-o", "IdentitiesOnly=yes",
             "-o", f"HostKeyAlias={_HOST_ALIAS}",
             "-o", f"UserKnownHostsFile={self._plan.keys / 'known_hosts'}",
             "-o", "StrictHostKeyChecking=yes",
             "-o", "LogLevel=ERROR",
             "-t" if tty else "-T",
-            "root@127.0.0.1",
+            f"root@{_HOST_ALIAS}",
             "--",
             remote,
         ]  # fmt: skip
@@ -220,15 +219,15 @@ async def _stage_keys(plan: _Plan) -> None:
     await AnyioPath(plan.keys / "known_hosts").write_text(f"{_HOST_ALIAS} {plan.manifest.ssh_host_key}\n")
 
 
-async def _daemon_answers(port: int) -> bool:
+async def _daemon_answers(path: Path) -> bool:
     """True when the guest daemon answers the first word of the worker handshake.
 
-    vzvm accepts on the loopback port before the guest listens, and closes the
+    vzvm accepts on the socket before the guest listens, and closes the
     connection when the vsock connect fails, so an accepted connection proves
     nothing.
     """
     try:
-        async with await anyio.connect_tcp("127.0.0.1", port) as stream:
+        async with await anyio.connect_unix(path) as stream:
             await stream.send(_WORD.pack(_WORKER_MAGIC_1))
             reply = b""
             with anyio.move_on_after(2):
@@ -247,9 +246,9 @@ async def _console_tail(work: Path) -> str:
     return "\n".join(lines[-20:])
 
 
-async def _wait_for_daemon(vm: Process, port: int, work: Path) -> None:
+async def _wait_for_daemon(vm: Process, path: Path, work: Path) -> None:
     with anyio.move_on_after(_BOOT_TIMEOUT) as scope:
-        while not await _daemon_answers(port):
+        while not await _daemon_answers(path):
             if vm.returncode is not None:
                 msg = f"vzvm exited with status {vm.returncode}\n{await _console_tail(work)}"
                 raise LinuxBuilderError(msg)
@@ -257,26 +256,6 @@ async def _wait_for_daemon(vm: Process, port: int, work: Path) -> None:
     if scope.cancelled_caught:
         msg = f"the guest daemon did not answer within {_BOOT_TIMEOUT:.0f} s\n{await _console_tail(work)}"
         raise LinuxBuilderError(msg)
-
-
-async def _pump(source: ByteStream, sink: ByteStream) -> None:
-    # A peer that goes away ends this direction; the other one ends on its own.
-    with contextlib.suppress(anyio.BrokenResourceError, anyio.ClosedResourceError):
-        async for chunk in source:
-            await sink.send(chunk)
-        await sink.send_eof()
-
-
-async def _forward(client: SocketStream, port: int) -> None:
-    async with client:
-        try:
-            upstream = await anyio.connect_tcp("127.0.0.1", port)
-        except OSError as exc:
-            logger.warning("pynix linux builder cannot reach vzvm", error=str(exc))
-            return
-        async with upstream, anyio.create_task_group() as group:
-            group.start_soon(_pump, client, upstream)
-            group.start_soon(_pump, upstream, client)
 
 
 async def _stop(vm: Process) -> None:
@@ -319,9 +298,7 @@ async def linux_builder(manifest_path: str, *, home: Path | None = None) -> Asyn
         logger.warning("pynix linux builder: Rosetta is not installed, so x86_64-linux will not build")
     work = Path(await anyio.to_thread.run_sync(lambda: tempfile.mkdtemp(prefix="pynix-lb-")))
     try:
-        plan = _Plan(
-            manifest, work, _free_loopback_port(), rosetta, await _nested_supported(), home, _free_loopback_port()
-        )
+        plan = _Plan(manifest, work, rosetta, await _nested_supported(), home)
         # ASIF, Apple's sparse format: measured in croshome, 2.5x the random
         # write IOPS of a raw sparse file.
         created = await anyio.run_process(
@@ -338,34 +315,13 @@ async def linux_builder(manifest_path: str, *, home: Path | None = None) -> Asyn
         config = work / "vzvm.json"
         await AnyioPath(config).write_text(json.dumps(plan.vzvm_config()))
 
-        async def forward(client: SocketStream) -> None:
-            await _forward(client, plan.daemon_port)
-
-        async def serve(listener: SocketListener) -> None:
-            await listener.serve(forward)
-
         log = await AnyioPath(work / "vzvm.log").open("wb")
         command = [manifest.vzvm, str(config)]
         async with log, await anyio.open_process(command, stdout=log.wrapped, stderr=log.wrapped) as vm:
             try:
-                await _wait_for_daemon(vm, plan.daemon_port, work)
-                socket_path = work / "daemon.sock"
-                listener = await anyio.create_unix_listener(socket_path)
-                # Raised outside the task group, which would wrap it in an
-                # ExceptionGroup, and main() would print a NixError, or the
-                # SystemExit of error_exit, as a traceback. Not Cancelled: the
-                # task group must see that one.
-                failure: BaseException | None = None
-                async with listener, anyio.create_task_group() as group:
-                    group.start_soon(serve, listener)
-                    logger.info("pynix linux builder is ready", socket=str(socket_path))
-                    try:
-                        yield LinuxBuilder(f"unix://{socket_path}?local-fs=false", plan)
-                    except (Exception, SystemExit, KeyboardInterrupt) as exc:
-                        failure = exc
-                    group.cancel_scope.cancel()
-                if failure is not None:
-                    raise failure
+                await _wait_for_daemon(vm, plan.daemon_socket, work)
+                logger.info("pynix linux builder is ready", socket=str(plan.daemon_socket))
+                yield LinuxBuilder(f"unix://{plan.daemon_socket}?local-fs=false", plan)
             finally:
                 await _stop(vm)
     finally:

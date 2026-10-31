@@ -1,6 +1,6 @@
 /**
-  The Linux builder guest for `pynix build --linux-builder`
-  (nixidae/nixidae#1138).
+  The Linux builder guest for `pynix build --linux-builder` and
+  `pynix run --linux-builder` (nixidae/nixidae#1138).
 
   `manifest` is a JSON file that names vzvm and what it boots. pynix reads it
   through `--linux-builder-guest` or `PYNIX_LINUX_BUILDER_GUEST`. pynix's own
@@ -31,6 +31,12 @@ let
 
   inherit (guest.config.system.build) kernel netbootRamdisk toplevel;
 
+  # Unix-socket forwards and read-only shares. Upstream vzvm forwards to
+  # loopback TCP, which every local user reaches, and shares read-write.
+  vzvm = pkgs.vzvm.overrideAttrs (old: {
+    patches = (old.patches or [ ]) ++ [ ./vzvm-unix-socket.patch ];
+  });
+
   manifest = pkgs.writeText "pynix-linux-builder.json" (
     builtins.toJSON {
       kernel = "${kernel}/${guest.config.system.boot.loader.kernelFile}";
@@ -40,7 +46,7 @@ let
       sshHostKey = lib.trim (
         builtins.readFile "${sources.nixpkgs}/nixos/modules/profiles/keys/ssh_host_ed25519_key.pub"
       );
-      vzvm = lib.getExe pkgs.vzvm;
+      vzvm = lib.getExe vzvm;
     }
   );
 
