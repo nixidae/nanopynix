@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 from typing import Literal
 
 import anyio
+import structlog
 from anyio import Path as AnyioPath
 from huggorm import AsyncEvalState, AsyncValue
 
@@ -28,6 +29,10 @@ from pynix.target import EvaluationTarget, EvaluationTargetError
 #: ``DrvName`` ends the name at the first dash that a non-letter follows.
 _VERSION_DASH = re.compile(r"-(?![A-Za-z])")
 _HOST_STORE_URI = "daemon"
+#: ssh's own failure status, which a program can also return.
+_SSH_FAILED = 255
+
+logger = structlog.get_logger("pynix.run")
 
 
 def expected_type(selected: str) -> Literal["app", "derivation"]:
@@ -158,8 +163,12 @@ async def _run_on_linux_builder(command: Run, guest: str) -> int:
         resolved = await resolve_program(command, where)
         tty = sys.stdin.isatty() and sys.stdout.isatty()
         argv = vm.ssh_argv([resolved.program, *command.args], cwd=str(Path.cwd()), tty=tty)
-        process = await anyio.open_process(argv, stdin=None, stdout=None, stderr=None)
-        return await process.wait()
+        async with await anyio.open_process(argv, stdin=None, stdout=None, stderr=None) as process:
+            status = await process.wait()
+    if status == _SSH_FAILED:
+        logger.warning("pynix run: ssh into the Linux builder failed, or the program exited with 255")
+    # A negative status is a signal; a shell reports that as 128 + its number.
+    return 128 - status if status < 0 else status
 
 
 async def run_run(command: Run) -> None:
