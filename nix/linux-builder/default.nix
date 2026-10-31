@@ -12,6 +12,7 @@ let
   inherit (pkgs) lib;
 
   daemonVsockPort = 3030;
+  sshVsockPort = 22;
 
   guest = import "${sources.nixpkgs}/nixos/lib/eval-config.nix" {
     system = null;
@@ -19,7 +20,7 @@ let
       ./guest.nix
       { nixpkgs.hostPlatform = "aarch64-linux"; }
     ];
-    specialArgs = { inherit daemonVsockPort; };
+    specialArgs = { inherit daemonVsockPort sshVsockPort; };
   };
 
   inherit (guest.config.system.build) kernel netbootRamdisk toplevel;
@@ -32,7 +33,10 @@ in
       kernel = "${kernel}/${guest.config.system.boot.loader.kernelFile}";
       initrd = "${netbootRamdisk}/initrd";
       cmdline = "init=${toplevel}/init ${toString guest.config.boot.kernelParams}";
-      inherit daemonVsockPort;
+      inherit daemonVsockPort sshVsockPort;
+      sshHostKey = lib.trim (
+        builtins.readFile "${sources.nixpkgs}/nixos/modules/profiles/keys/ssh_host_ed25519_key.pub"
+      );
       vzvm = lib.getExe pkgs.vzvm;
     }
   );

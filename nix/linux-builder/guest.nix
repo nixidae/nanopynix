@@ -12,6 +12,7 @@
   lib,
   pkgs,
   daemonVsockPort,
+  sshVsockPort,
   ...
 }:
 let
@@ -186,6 +187,115 @@ in
     };
   };
 
+  # `pynix run --linux-builder` runs its program over ssh (nixidae/nixidae#1147).
+  # The runner makes a key pair per run and shares the public half; a build
+  # shares none, so nothing can log in.
+  #
+  # Our own vsock socket, as for the daemon, and not systemd-ssh-generator's
+  # (turned off below): with the generator, ssh connected and no sshd
+  # answered.
+  systemd.sockets.pynix-sshd-vsock = {
+    wantedBy = [ "sockets.target" ];
+    socketConfig = {
+      ListenStream = "vsock::${toString sshVsockPort}";
+      Accept = true;
+      TriggerLimitIntervalSec = 0;
+    };
+  };
+  systemd.services."pynix-sshd-vsock@" = {
+    serviceConfig = {
+      ExecStart = "-${lib.getExe' config.services.openssh.package "sshd"} -i -f /etc/ssh/sshd_config";
+      KillMode = "process";
+      StandardInput = "socket";
+      StandardError = "journal";
+    };
+  };
+  services.openssh = {
+    enable = true;
+    startWhenNeeded = true;
+    # The key is fixed, below. With `hostKeys = [ ]` NixOS still writes
+    # sshd-keygen.service, empty; systemd refuses to load it, and the
+    # per-connection sshd that waits for it never sent its banner.
+    generateHostKeys = false;
+    hostKeys = lib.mkForce [
+      {
+        type = "ed25519";
+        path = "/etc/ssh/ssh_host_ed25519_key";
+      }
+    ];
+    settings = {
+      PasswordAuthentication = false;
+      PermitRootLogin = "prohibit-password";
+      # virtiofs shows the share's files as uid 1000, and StrictModes refuses
+      # an authorized_keys file that root does not own. No guest process can
+      # write the read-only share.
+      StrictModes = false;
+      # vsock delivers no RST, so a session whose peer is gone never ends
+      # without keepalives.
+      ClientAliveInterval = 60;
+      ClientAliveCountMax = 3;
+    };
+    authorizedKeysFiles = lib.mkForce [ "/run/pynix-keys/authorized_keys" ];
+  };
+  # nixpkgs' fixed builder key: the manifest carries its public half, so the
+  # host checks the guest with no prompt and nothing in a known_hosts file.
+  # `${modulesPath}/...` here is a string with no store context: nothing
+  # copied the file into a store, so it was missing in the guest and sshd
+  # exited with no host key. readFile and writeText make a real store path.
+  # A unit installs it, because sshd refuses a 0444 host key.
+  systemd.services.pynix-ssh-host-key = {
+    unitConfig.DefaultDependencies = false;
+    wantedBy = [ "sockets.target" ];
+    after = [ "local-fs.target" ];
+    before = [ "pynix-sshd-vsock.socket" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      ${pkgs.coreutils}/bin/install -D -m 0600 ${pkgs.writeText "ssh_host_ed25519_key" (builtins.readFile "${modulesPath}/profiles/keys/ssh_host_ed25519_key")} /etc/ssh/ssh_host_ed25519_key
+    '';
+  };
+  security.pam.services.sshd.startSession = lib.mkForce false;
+  fileSystems."/run/pynix-keys" = {
+    device = "pynix-keys";
+    fsType = "virtiofs";
+    options = [
+      "ro"
+      "nofail"
+    ];
+  };
+
+  # The host's $HOME, at the same path, so the caller's directory and HOME
+  # mean the same in here. The path comes on the kernel command line,
+  # because it differs per user and the guest is the same for all.
+  systemd.services.pynix-home = {
+    # Out of the default dependencies: those order a service after
+    # basic.target, which is after sockets.target, and `before` the ssh
+    # socket closed that into a cycle. systemd broke it by dropping the
+    # socket, so ssh found nothing on vsock:22.
+    unitConfig.DefaultDependencies = false;
+    wantedBy = [ "sockets.target" ];
+    after = [ "local-fs.target" ];
+    before = [ "pynix-sshd-vsock.socket" ];
+    path = [
+      pkgs.util-linux
+      pkgs.coreutils
+    ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      for word in $(cat /proc/cmdline); do
+        case "$word" in pynix.home=*) home=''${word#pynix.home=} ;; esac
+      done
+      [ -n "''${home-}" ] || exit 0
+      mkdir -p "$home"
+      mount -t virtiofs pynix-home "$home"
+    '';
+  };
+
   # Each unit below runs on every boot of a VM that lives for one command.
   documentation.enable = false;
   documentation.nixos.enable = false;
@@ -210,6 +320,7 @@ in
     "systemd-imds-generator"
     "systemd-import-generator"
     "systemd-integritysetup-generator"
+    "systemd-ssh-generator"
     "systemd-system-update-generator"
     "systemd-tpm2-generator"
     "systemd-veritysetup-generator"
