@@ -33,6 +33,7 @@ from pynix._impl import (
     env as env,
     eval as eval,
     flake as flake,
+    linux_builder as linux_builder,
     log as log,
     main as main,
     merged_tui as merged_tui,
