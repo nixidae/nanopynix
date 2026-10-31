@@ -1,11 +1,10 @@
 # The Linux builder guest: a NixOS system that vzvm boots for `pynix build
-# --linux-builder` (nixidae/nixidae#1138).
+# --linux-builder` and `pynix run --linux-builder` (nixidae/nixidae#1138).
 #
-# Taken from croshome's hosts/macbook/vz-builder/guest.nix, cut down to the
-# store and the daemon. The store is a local-overlay store whose lower layer
-# is the host's /nix over virtiofs, so the guest starts with every path the
-# host has, and the disk holds only new outputs. That needs a case-sensitive
-# /nix on the host. The daemon serves the host over vsock, not ssh.
+# The store is a local-overlay store whose lower layer is the host's /nix over
+# virtiofs, so the guest starts with every path the host has, and the disk
+# holds only new outputs. That needs a case-sensitive /nix on the host. The
+# daemon serves builds over vsock; sshd serves `pynix run` over vsock too.
 {
   modulesPath,
   config,
@@ -113,8 +112,11 @@ in
   services.timesyncd.enable = false;
 
   # A host daemon that hands builds to this guest locks each output in the
-  # host store first, and the overlay shows that lock here. The patch hides
-  # it with a whiteout in PYNIX_OVERLAY_UPPER_STORE.
+  # host store first, and the overlay shows that lock here. Apple's virtiofs
+  # refuses even a lookup of the root-only file, so the overlay cannot unlink
+  # it. The patch writes a whiteout straight into PYNIX_OVERLAY_UPPER_STORE.
+  # The kernel calls a change to a mounted overlay's layer undefined; it is
+  # measured to work for a name whose lookup failed, which leaves no dentry.
   # No checks: readLinkAt.works makes a 4095-byte symlink, and this guest's
   # XFS takes 1024 bytes at most (nixidae/nixidae#1150).
   nix.package = (pkgs.nix.appendPatches [ ./nix-overlay-foreign-lock.patch ]).overrideAttrs {
@@ -205,7 +207,7 @@ in
   systemd.services.register-nix-paths.enable = lib.mkForce false;
 
   # One `nix-daemon --stdio` per connection, as root, so the daemon trusts
-  # it. vzvm forwards a loopback port on the host to this vsock port.
+  # it. vzvm forwards a Unix socket on the host to this vsock port.
   systemd.sockets.nix-daemon-vsock = {
     wantedBy = [ "sockets.target" ];
     socketConfig = {
@@ -232,8 +234,8 @@ in
   # shares none, so nothing can log in.
   #
   # Our own vsock socket, as for the daemon, and not systemd-ssh-generator's
-  # (turned off below): with the generator, ssh connected and no sshd
-  # answered.
+  # (turned off below): with the generator, ssh connects and no sshd
+  # answers.
   systemd.sockets.pynix-sshd-vsock = {
     wantedBy = [ "sockets.target" ];
     socketConfig = {
@@ -255,7 +257,7 @@ in
     startWhenNeeded = true;
     # The key is fixed, below. With `hostKeys = [ ]` NixOS still writes
     # sshd-keygen.service, empty; systemd refuses to load it, and the
-    # per-connection sshd that waits for it never sent its banner.
+    # per-connection sshd that waits for it never sends its banner.
     generateHostKeys = false;
     hostKeys = lib.mkForce [
       {
@@ -279,9 +281,9 @@ in
   };
   # nixpkgs' fixed builder key: the manifest carries its public half, so the
   # host checks the guest with no prompt and nothing in a known_hosts file.
-  # `${modulesPath}/...` here is a string with no store context: nothing
-  # copied the file into a store, so it was missing in the guest and sshd
-  # exited with no host key. readFile and writeText make a real store path.
+  # Not `${modulesPath}/...` alone: that is a string with no store context,
+  # so the file is not in the guest, and sshd exits with no host key.
+  # readFile and writeText make a real store path.
   # A unit installs it, because sshd refuses a 0444 host key.
   systemd.services.pynix-ssh-host-key = {
     unitConfig.DefaultDependencies = false;
@@ -312,8 +314,8 @@ in
   systemd.services.pynix-home = {
     # Out of the default dependencies: those order a service after
     # basic.target, which is after sockets.target, and `before` the ssh
-    # socket closed that into a cycle. systemd broke it by dropping the
-    # socket, so ssh found nothing on vsock:22.
+    # socket closes that into a cycle. systemd breaks it by dropping the
+    # socket, and ssh finds nothing on vsock:22.
     unitConfig.DefaultDependencies = false;
     wantedBy = [ "sockets.target" ];
     after = [ "local-fs.target" ];
