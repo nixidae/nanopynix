@@ -9,6 +9,7 @@
 {
   modulesPath,
   config,
+  options,
   lib,
   pkgs,
   daemonVsockPort,
@@ -64,6 +65,9 @@ in
   boot.kernelModules = [
     "virtiofs"
     "overlay"
+    # Harmless without nested virtualization: /dev/kvm only appears when
+    # vzvm boots the guest at EL2.
+    "kvm"
   ];
   boot.initrd.systemd.tpm2.enable = false;
 
@@ -120,6 +124,32 @@ in
     # Every client proxies to the daemon. The daemon's command line names the
     # overlay store and beats nix.conf, so it does not proxy to itself.
     store = "daemon";
+    # NixOS lists `kvm` whether or not /dev/kvm exists. pynix-kvm-feature
+    # adds it when the guest really has it.
+    # mkForce: nix.nix defines the list too, and lists concatenate.
+    system-features = lib.mkForce (
+      lib.remove "kvm" (options.nix.settings.type.getSubOptions [ ]).system-features.default
+    );
+  };
+  nix.extraOptions = "!include /run/pynix/nix.conf";
+
+  # `kvm` here means aarch64 guests only. Nix features belong to the daemon,
+  # not to a system, so an x86_64-linux derivation that requires `kvm` is
+  # accepted too, and its qemu gets no acceleration.
+  systemd.services.pynix-kvm-feature = {
+    wantedBy = [ "nix-daemon.service" ];
+    before = [ "nix-daemon.service" ];
+    after = [ "systemd-modules-load.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      mkdir -p /run/pynix
+      if [ -e /dev/kvm ]; then
+        echo "extra-system-features = kvm" > /run/pynix/nix.conf
+      fi
+    '';
   };
 
   # `%` doubled for systemd, where `%3F` is a specifier and the unit fails to
