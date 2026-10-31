@@ -507,6 +507,8 @@ lib.throwIf (unlistedVariants != [ ])
         ciVersionMatrix
         storeExecTools
         ;
+      # nix build --file . internal.linuxBuilder.manifest
+      linuxBuilder = import ./nix/linux-builder { inherit pkgs sources; };
       inherit (nanopynixVersions.stable)
         pynixDevEnv
         pynixNonEditableDevEnv
