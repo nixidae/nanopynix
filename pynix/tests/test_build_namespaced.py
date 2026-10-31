@@ -11,6 +11,7 @@ reason, when the host lacks one.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -37,8 +38,11 @@ DAEMON_SOCKET = "/nix/var/nix/daemon-socket/socket"
 
 
 def _minor(version: str) -> tuple[int, int]:
-    major, minor = version.split(".")[:2]
-    return int(major), int(minor)
+    """Major and minor of `2.35.4`, and of the git lane's `2.36pre20260912_203f85b2`."""
+    found = re.match(r"(\d+)\.(\d+)", version)
+    if found is None:
+        raise ValueError(f"not a Nix version: {version!r}")
+    return int(found[1]), int(found[2])
 
 
 async def _unsupported(tmp_path: Path) -> str:
