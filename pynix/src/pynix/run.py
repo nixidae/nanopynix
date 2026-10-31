@@ -56,7 +56,8 @@ class Run(ConfiguredCommand):
         help=(
             "Build the program for Linux and run it in a VM that this command starts on Apple's "
             "Virtualization.framework. The VM mounts $HOME at the same path, and the program starts in "
-            "the current directory. macOS only."
+            "the current directory. Apple silicon and macOS 26 or later, and the host /nix must be "
+            "case-sensitive."
         ),
     )
 

@@ -159,6 +159,8 @@ def print_build_logs_option() -> bool:
 def linux_builder_guest_option() -> str | None:
     value: str | None = option(
         "The manifest of the --linux-builder guest: the store path that "
-        "`nix build --file nanopynix internal.linuxBuilder.manifest` prints."
+        "`nix build --file nanopynix internal.linuxBuilder.manifest` prints. For debugging: "
+        "PYNIX_LINUX_BUILDER_DEBUG=1 sends the guest journal to console.log and keeps the VM's "
+        "directory; PYNIX_LINUX_BUILDER_NESTED=1 or 0 forces nested virtualization on or off."
     )
     return value

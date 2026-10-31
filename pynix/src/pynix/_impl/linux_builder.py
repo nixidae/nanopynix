@@ -49,9 +49,12 @@ _STOP_TIMEOUT = 5.0
 _ROSETTA = Path("/Library/Apple/usr/libexec/oah")
 #: Sparse: an empty ASIF image takes 4 MiB on the host.
 _DISK_BYTES = 128 * 1024**3
-#: Half the host's memory, at least 8 GiB. 8 GiB with 15 vCPUs ran out:
-#: the guest's OOM killer took cc1plus in Nix's LTO build.
-_MEMORY_MIB = max(8192, os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") // 2 // 1024**2)
+#: 8 GiB with 15 vCPUs ran out: the guest's OOM killer took cc1plus in Nix's LTO build.
+_MEMORY_FLOOR_MIB = 8192
+#: What the host keeps for itself, whatever the floor asks.
+_HOST_RESERVE_MIB = 4096
+#: ASIF disk images, which ``diskutil image`` creates.
+_MACOS_FLOOR = 26
 _HOST_ALIAS = "pynix-linux-builder"
 #: The guest journal goes to console.log, and the work directory stays after exit.
 _DEBUG = os.environ.get("PYNIX_LINUX_BUILDER_DEBUG") == "1"
@@ -95,6 +98,22 @@ class Manifest:
         except (OSError, ValueError, KeyError) as exc:
             msg = f"cannot read the Linux builder manifest {path}: {exc}"
             raise LinuxBuilderError(msg) from exc
+
+    async def check_present(self, path: str) -> None:
+        """Refuse a guest that a garbage collection removed: the manifest roots nothing by itself."""
+        for needed in (self.vzvm, self.kernel, self.initrd):
+            if not await AnyioPath(needed).exists():
+                msg = (
+                    f"the Linux builder guest of {path} is not in the store ({needed} is missing); "
+                    "build it again with `nix build --file nanopynix internal.linuxBuilder.manifest`"
+                )
+                raise LinuxBuilderError(msg)
+
+
+def _memory_mib() -> int:
+    """Half the host's memory, at least the floor, and never past the host's reserve."""
+    total = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") // 1024**2
+    return min(max(_MEMORY_FLOOR_MIB, total // 2), total - _HOST_RESERVE_MIB)
 
 
 async def _nested_supported() -> bool:
@@ -156,7 +175,7 @@ class _Plan:
             cmdline += f" pynix.home={self.home}"
         return {
             "cpuCount": os.cpu_count() or 1,
-            "memorySizeMiB": _MEMORY_MIB,
+            "memorySizeMiB": _memory_mib(),
             "kernel": self.manifest.kernel,
             "initrd": self.manifest.initrd,
             "cmdline": cmdline,
@@ -273,8 +292,11 @@ async def _stop(vm: Process) -> None:
 
 def requested_guest(*, guest: str | None, store_named: bool) -> str:
     """The guest manifest of a ``--linux-builder`` command, or exit with what makes it impossible."""
-    if sys.platform != "darwin":
-        error_exit("--linux-builder runs on macOS only")
+    if sys.platform != "darwin" or platform.machine() != "arm64":
+        error_exit("--linux-builder runs on Apple silicon Macs only")
+    macos = platform.mac_ver()[0]
+    if not macos or int(macos.split(".")[0]) < _MACOS_FLOOR:
+        error_exit(f"--linux-builder needs macOS {_MACOS_FLOOR} or later, for its disk image; this is macOS {macos}")
     if store_named:
         error_exit("--linux-builder builds in the VM's store, so it cannot be combined with --store")
     if guest is None:
@@ -293,6 +315,7 @@ async def linux_builder(manifest_path: str, *, home: Path | None = None) -> Asyn
     ssh sessions. The VM and its directory exist until the context exits.
     """
     manifest = await Manifest.read(manifest_path)
+    await manifest.check_present(manifest_path)
     rosetta = await AnyioPath(_ROSETTA).is_dir()
     if not rosetta:
         logger.warning("pynix linux builder: Rosetta is not installed, so x86_64-linux will not build")
@@ -329,4 +352,9 @@ async def linux_builder(manifest_path: str, *, home: Path | None = None) -> Asyn
             logger.warning("pynix linux builder keeps its directory", directory=str(work))
         else:
             with anyio.CancelScope(shield=True):
-                await anyio.to_thread.run_sync(lambda: shutil.rmtree(work))
+                await anyio.to_thread.run_sync(lambda: shutil.rmtree(work, onexc=_log_rmtree_failure))
+
+
+def _log_rmtree_failure(_function: object, path: str, exc: BaseException) -> None:
+    # A leftover file must not replace the error that is on its way out.
+    logger.warning("pynix linux builder cannot remove a file", path=path, error=str(exc))

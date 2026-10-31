@@ -78,8 +78,8 @@ class Build(ConfiguredCommand):
         help=(
             "Build in a Linux VM that this command starts on Apple's Virtualization.framework, and stops "
             "when it exits. The VM builds aarch64-linux, and x86_64-linux through Rosetta. Its store "
-            "overlays the host store, so nothing is copied in. macOS only, and the host /nix must be "
-            "case-sensitive."
+            "overlays the host store, so nothing is copied in. Apple silicon and macOS 26 or later, and "
+            "the host /nix must be case-sensitive."
         ),
     )
 
