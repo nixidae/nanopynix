@@ -508,7 +508,10 @@ lib.throwIf (unlistedVariants != [ ])
         storeExecTools
         ;
       # nix build --file . internal.linuxBuilder.manifest
-      linuxBuilder = import ./nix/linux-builder { inherit pkgs sources; };
+      linuxBuilder = import ./nix/linux-builder {
+        inherit pkgs sources;
+        inherit (nanopynixVersions.stable) pynix;
+      };
       inherit (nanopynixVersions.stable)
         pynixDevEnv
         pynixNonEditableDevEnv
