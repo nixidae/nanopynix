@@ -8,14 +8,18 @@ from __future__ import annotations
 
 import os
 import re
+import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Literal
 
+import anyio
 from anyio import Path as AnyioPath
 from huggorm import AsyncEvalState, AsyncValue
 
 from pynix import _evaluate
+from pynix._impl.linux_builder import LinuxBuilderError, linux_builder, requested_guest
 from pynix._store_layout import StoreLayout
 from pynix._util import error_exit, huggorm_build_session, report_and_exit
 from pynix.run import Run
@@ -23,6 +27,7 @@ from pynix.target import EvaluationTarget, EvaluationTargetError
 
 #: ``DrvName`` ends the name at the first dash that a non-letter follows.
 _VERSION_DASH = re.compile(r"-(?![A-Za-z])")
+_HOST_STORE_URI = "daemon"
 
 
 def expected_type(selected: str) -> Literal["app", "derivation"]:
@@ -89,12 +94,27 @@ async def _program(state: AsyncEvalState, value: AsyncValue, selected: str) -> s
     return f"{out_path}/bin/{main_program(main=main, pname=pname, name=name)}"
 
 
-async def resolve_program(command: Run) -> ResolvedProgram:
+@dataclass(frozen=True)
+class _Where:
+    """Where the program builds and evaluates, and whether its files are on this machine."""
+
+    store: str
+    eval_store: str | None = None
+    settings: Mapping[str, str] | None = None
+    on_host: bool = True
+
+
+async def resolve_program(command: Run, where: _Where | None = None) -> ResolvedProgram:
     """Evaluate, build and check the program that *command* runs."""
+    where = where or _Where(command.store)
     target = EvaluationTarget.from_command(command)
     try:
         async with huggorm_build_session(
-            command.store, verbosity=command.verbosity, print_build_logs=command.print_build_logs
+            where.store,
+            eval_store_uri=where.eval_store,
+            settings=where.settings,
+            verbosity=command.verbosity,
+            print_build_logs=command.print_build_logs,
         ) as (_session, store, _eval_store, state):
             value, locked, selected = await _evaluate.evaluate_target_selected(
                 target, state, auto_call_file=True, attr_search=_evaluate.app_attr_search()
@@ -105,21 +125,41 @@ async def resolve_program(command: Run) -> ResolvedProgram:
                 if locked is not None:
                     await locked.aclose()
             layout = await StoreLayout.of(store)
-            program = await _locate(layout, program, command.bin)
+            program = await _locate(layout, program, command.bin, on_host=where.on_host)
             return ResolvedProgram(program=program, exec_prefix=layout.exec_prefix())
     except EvaluationTargetError as exc:
         report_and_exit(exc)
 
 
-async def _locate(layout: StoreLayout, program: str, wanted: str | None) -> str:
+async def _locate(layout: StoreLayout, program: str, wanted: str | None, *, on_host: bool) -> str:
     """Refuse a *program* outside the store, as ``resolve`` does, and apply ``--bin``."""
     if not program.startswith(layout.store_dir + "/"):
         raise EvaluationTargetError(f"app program '{program}' is not in the Nix store")
     if wanted is None:
         return program
+    if not on_host:
+        # The directory is in the guest's store, so this machine cannot list
+        # it. A missing name fails in the guest instead.
+        return str(PurePosixPath(program).parent / wanted)
     directory = AnyioPath(layout.to_disk(str(PurePosixPath(program).parent)))
     names = [entry.name async for entry in directory.iterdir()] if await directory.is_dir() else []
     return choose_bin(program, wanted, names)
+
+
+async def _run_on_linux_builder(command: Run, guest: str) -> int:
+    """Build the program in the VM for ``--linux-system``, run it there over ssh, and return its status.
+
+    Not ``exec``: the VM must stop after the program. ``eval-system`` sets
+    ``builtins.currentSystem``, so ``nixpkgs#hello`` selects the Linux package,
+    and the host store still builds only for the host.
+    """
+    async with linux_builder(guest, home=Path.home()) as vm:
+        where = _Where(vm.store, _HOST_STORE_URI, {"eval-system": command.linux_system}, on_host=False)
+        resolved = await resolve_program(command, where)
+        tty = sys.stdin.isatty() and sys.stdout.isatty()
+        argv = vm.ssh_argv([resolved.program, *command.args], cwd=str(Path.cwd()), tty=tty)
+        process = await anyio.open_process(argv, stdin=None, stdout=None, stderr=None)
+        return await process.wait()
 
 
 async def run_run(command: Run) -> None:
@@ -128,6 +168,13 @@ async def run_run(command: Run) -> None:
     ``exec``, so the exit status of the program is the exit status of
     ``pynix``. ``argv[0]`` is the program path, as ``CmdRun`` passes it.
     """
+    if command.linux_builder:
+        guest = requested_guest(guest=command.linux_builder_guest, store_named="store" in command.explicit_options)
+        try:
+            status = await _run_on_linux_builder(command, guest)
+        except LinuxBuilderError as exc:
+            error_exit(str(exc))
+        sys.exit(status)
     resolved = await resolve_program(command)
     if resolved.exec_prefix:
         argv = [*resolved.exec_prefix, resolved.program, *command.args]

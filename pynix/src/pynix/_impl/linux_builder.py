@@ -19,9 +19,11 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shlex
 import shutil
 import socket
 import struct
+import sys
 import tempfile
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -30,7 +32,9 @@ from pathlib import Path
 import anyio
 import structlog
 from anyio import Path as AnyioPath
-from anyio.abc import ByteStream, Process, SocketStream
+from anyio.abc import ByteStream, Process, SocketListener, SocketStream
+
+from pynix._util import error_exit
 
 logger = structlog.get_logger("pynix.linux_builder")
 
@@ -44,6 +48,9 @@ _ROSETTA = Path("/Library/Apple/usr/libexec/oah")
 #: Sparse: an empty ASIF image takes 4 MiB on the host.
 _DISK_BYTES = 128 * 1024**3
 _MEMORY_MIB = 8192
+_HOST_ALIAS = "pynix-linux-builder"
+#: The guest journal goes to console.log, and the work directory stays after exit.
+_DEBUG = os.environ.get("PYNIX_LINUX_BUILDER_DEBUG") == "1"
 
 
 class LinuxBuilderError(Exception):
@@ -59,6 +66,8 @@ class Manifest:
     initrd: str
     cmdline: str
     daemon_vsock_port: int
+    ssh_vsock_port: int
+    ssh_host_key: str
 
     @classmethod
     async def read(cls, path: str) -> Manifest:
@@ -70,6 +79,8 @@ class Manifest:
                 initrd=data["initrd"],
                 cmdline=data["cmdline"],
                 daemon_vsock_port=int(data["daemonVsockPort"]),
+                ssh_vsock_port=int(data["sshVsockPort"]),
+                ssh_host_key=data["sshHostKey"],
             )
         except (OSError, ValueError, KeyError) as exc:
             msg = f"cannot read the Linux builder manifest {path}: {exc}"
@@ -85,21 +96,99 @@ def _free_loopback_port() -> int:
         return port
 
 
-def _vzvm_config(manifest: Manifest, work: Path, port: int, disk: Path, *, rosetta: bool) -> dict[str, object]:
-    return {
-        "cpuCount": os.cpu_count() or 1,
-        "memorySizeMiB": _MEMORY_MIB,
-        "kernel": manifest.kernel,
-        "initrd": manifest.initrd,
-        "cmdline": manifest.cmdline,
-        # vzvm refuses to start when Rosetta is asked for and absent. Without
-        # it the guest still builds aarch64-linux.
-        "rosetta": rosetta,
-        "console": {"mode": "file", "path": str(work / "console.log")},
-        "vsock": {"forwards": [{"listen": f"127.0.0.1:{port}", "vsockPort": manifest.daemon_vsock_port}]},
-        "disks": [{"path": str(disk), "readOnly": False}],
-        "shares": [{"tag": "hostnix", "path": "/nix"}],
-    }
+@dataclass(frozen=True)
+class _Plan:
+    """One start of the VM: where its files are, and its loopback ports."""
+
+    manifest: Manifest
+    work: Path
+    daemon_port: int
+    rosetta: bool
+    #: The host directory to share at the same path, for ``pynix run``. With
+    #: it the guest also lets the run's key log in over ssh.
+    home: Path | None
+    ssh_port: int
+
+    @property
+    def disk(self) -> Path:
+        return self.work / "store.img"
+
+    @property
+    def keys(self) -> Path:
+        return self.work / "keys"
+
+    def vzvm_config(self) -> dict[str, object]:
+        forwards = [{"listen": f"127.0.0.1:{self.daemon_port}", "vsockPort": self.manifest.daemon_vsock_port}]
+        shares = [{"tag": "hostnix", "path": "/nix"}]
+        cmdline = self.manifest.cmdline
+        if _DEBUG:
+            cmdline += " systemd.log_level=info systemd.journald.forward_to_console=1"
+        if self.home is not None:
+            forwards.append({"listen": f"127.0.0.1:{self.ssh_port}", "vsockPort": self.manifest.ssh_vsock_port})
+            shares += [{"tag": "pynix-keys", "path": str(self.keys)}, {"tag": "pynix-home", "path": str(self.home)}]
+            cmdline += f" pynix.home={self.home}"
+        return {
+            "cpuCount": os.cpu_count() or 1,
+            "memorySizeMiB": _MEMORY_MIB,
+            "kernel": self.manifest.kernel,
+            "initrd": self.manifest.initrd,
+            "cmdline": cmdline,
+            # vzvm refuses to start when Rosetta is asked for and absent.
+            # Without it the guest still builds aarch64-linux.
+            "rosetta": self.rosetta,
+            "console": {"mode": "file", "path": str(self.work / "console.log")},
+            "vsock": {"forwards": forwards},
+            "disks": [{"path": str(self.disk), "readOnly": False}],
+            "shares": shares,
+        }
+
+
+@dataclass(frozen=True)
+class LinuxBuilder:
+    """A running guest: its daemon as a store URI, and ssh into it for ``pynix run``."""
+
+    store: str
+    _plan: _Plan
+
+    def ssh_argv(self, argv: list[str], *, cwd: str, tty: bool) -> list[str]:
+        """The ssh command that runs *argv* as root in the guest, in *cwd* when the guest has it."""
+        home = self._plan.home
+        if home is None:
+            msg = "this Linux builder shares no home directory, so it takes no ssh session"
+            raise LinuxBuilderError(msg)
+        remote = (
+            f"cd {shlex.quote(cwd)} 2>/dev/null || cd {shlex.quote(str(home))}; "
+            f"export HOME={shlex.quote(str(home))}; exec {shlex.join(argv)}"
+        )
+        return [
+            "/usr/bin/ssh",
+            "-i", str(self._plan.keys / "id_ed25519"),
+            "-p", str(self._plan.ssh_port),
+            "-o", "IdentitiesOnly=yes",
+            "-o", f"HostKeyAlias={_HOST_ALIAS}",
+            "-o", f"UserKnownHostsFile={self._plan.keys / 'known_hosts'}",
+            "-o", "StrictHostKeyChecking=yes",
+            "-o", "LogLevel=ERROR",
+            "-t" if tty else "-T",
+            "root@127.0.0.1",
+            "--",
+            remote,
+        ]  # fmt: skip
+
+
+async def _stage_keys(plan: _Plan) -> None:
+    """A key pair for this run only, and the files each side needs to trust the other."""
+    await AnyioPath(plan.keys).mkdir()
+    key = plan.keys / "id_ed25519"
+    made = await anyio.run_process(
+        ["/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "pynix-linux-builder", "-f", str(key)],
+        check=False,
+    )
+    if made.returncode != 0:
+        msg = f"ssh-keygen cannot make {key}: {made.stderr.decode(errors='replace').strip()}"
+        raise LinuxBuilderError(msg)
+    await AnyioPath(plan.keys / "authorized_keys").write_text(await AnyioPath(f"{key}.pub").read_text())
+    await AnyioPath(plan.keys / "known_hosts").write_text(f"{_HOST_ALIAS} {plan.manifest.ssh_host_key}\n")
 
 
 async def _daemon_answers(port: int) -> bool:
@@ -174,11 +263,26 @@ async def _stop(vm: Process) -> None:
         await vm.wait()
 
 
-@contextlib.asynccontextmanager
-async def linux_builder(manifest_path: str) -> AsyncIterator[str]:
-    """Start the guest that *manifest_path* names, and yield a store URI for its daemon.
+def requested_guest(*, guest: str | None, store_named: bool) -> str:
+    """The guest manifest of a ``--linux-builder`` command, or exit with what makes it impossible."""
+    if sys.platform != "darwin":
+        error_exit("--linux-builder runs on macOS only")
+    if store_named:
+        error_exit("--linux-builder builds in the VM's store, so it cannot be combined with --store")
+    if guest is None:
+        error_exit(
+            "--linux-builder needs --linux-builder-guest or PYNIX_LINUX_BUILDER_GUEST: "
+            "the path that `nix build --file nanopynix internal.linuxBuilder.manifest` prints"
+        )
+    return guest
 
-    The VM and its directory exist until the context exits.
+
+@contextlib.asynccontextmanager
+async def linux_builder(manifest_path: str, *, home: Path | None = None) -> AsyncIterator[LinuxBuilder]:
+    """Start the guest that *manifest_path* names, and yield it once its daemon answers.
+
+    With *home*, the guest mounts that directory at the same path and takes
+    ssh sessions. The VM and its directory exist until the context exits.
     """
     manifest = await Manifest.read(manifest_path)
     rosetta = await AnyioPath(_ROSETTA).is_dir()
@@ -186,39 +290,46 @@ async def linux_builder(manifest_path: str) -> AsyncIterator[str]:
         logger.warning("pynix linux builder: Rosetta is not installed, so x86_64-linux will not build")
     work = Path(await anyio.to_thread.run_sync(lambda: tempfile.mkdtemp(prefix="pynix-lb-")))
     try:
-        disk = work / "store.img"
+        plan = _Plan(manifest, work, _free_loopback_port(), rosetta, home, _free_loopback_port())
         # ASIF, Apple's sparse format: measured in croshome, 2.5x the random
         # write IOPS of a raw sparse file.
         created = await anyio.run_process(
             ["/usr/sbin/diskutil", "image", "create", "blank", "--fs", "none", "--format", "ASIF",
-             "--size", str(_DISK_BYTES), str(disk)],
+             "--size", str(_DISK_BYTES), str(plan.disk)],
             check=False,
         )  # fmt: skip
         if created.returncode != 0:
-            msg = f"diskutil cannot create {disk}: {created.stderr.decode(errors='replace').strip()}"
+            msg = f"diskutil cannot create {plan.disk}: {created.stderr.decode(errors='replace').strip()}"
             raise LinuxBuilderError(msg)
+        if home is not None:
+            await _stage_keys(plan)
 
-        port = _free_loopback_port()
         config = work / "vzvm.json"
-        await AnyioPath(config).write_text(json.dumps(_vzvm_config(manifest, work, port, disk, rosetta=rosetta)))
+        await AnyioPath(config).write_text(json.dumps(plan.vzvm_config()))
 
         async def forward(client: SocketStream) -> None:
-            await _forward(client, port)
+            await _forward(client, plan.daemon_port)
+
+        async def serve(listener: SocketListener) -> None:
+            await listener.serve(forward)
 
         log = await AnyioPath(work / "vzvm.log").open("wb")
         command = [manifest.vzvm, str(config)]
         async with log, await anyio.open_process(command, stdout=log.wrapped, stderr=log.wrapped) as vm:
             try:
-                await _wait_for_daemon(vm, port, work)
+                await _wait_for_daemon(vm, plan.daemon_port, work)
                 socket_path = work / "daemon.sock"
                 listener = await anyio.create_unix_listener(socket_path)
                 async with listener, anyio.create_task_group() as group:
-                    group.start_soon(listener.serve, forward)
+                    group.start_soon(serve, listener)
                     logger.info("pynix linux builder is ready", socket=str(socket_path))
-                    yield f"unix://{socket_path}?local-fs=false"
+                    yield LinuxBuilder(f"unix://{socket_path}?local-fs=false", plan)
                     group.cancel_scope.cancel()
             finally:
                 await _stop(vm)
     finally:
-        with anyio.CancelScope(shield=True):
-            await anyio.to_thread.run_sync(lambda: shutil.rmtree(work))
+        if _DEBUG:
+            logger.warning("pynix linux builder keeps its directory", directory=str(work))
+        else:
+            with anyio.CancelScope(shield=True):
+                await anyio.to_thread.run_sync(lambda: shutil.rmtree(work))

@@ -153,3 +153,12 @@ def print_build_logs_option() -> bool:
         negatable=True,
     )
     return value
+
+
+@no_runtime_type_check  # see option
+def linux_builder_guest_option() -> str | None:
+    value: str | None = option(
+        "The manifest of the --linux-builder guest: the store path that "
+        "`nix build --file nanopynix internal.linuxBuilder.manifest` prints."
+    )
+    return value

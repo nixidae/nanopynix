@@ -9,7 +9,7 @@ from pynix._nix_options import attr_option, file_option, flake_option
 from pynix._settings import (
     ConfiguredCommand,
     eval_store_option,
-    option,
+    linux_builder_guest_option,
     print_build_logs_option,
     store_option,
     verbosity_option,
@@ -83,10 +83,7 @@ class Build(ConfiguredCommand):
         ),
     )
 
-    linux_builder_guest: str | None = option(
-        "The manifest of the --linux-builder guest: the store path that "
-        "`nix build --file nanopynix internal.linuxBuilder.manifest` prints."
-    )
+    linux_builder_guest: str | None = linux_builder_guest_option()
 
     copy_back: bool = opt(
         True,

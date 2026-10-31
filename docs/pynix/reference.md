@@ -328,6 +328,9 @@ Examples:
 | `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--print-build-logs` | `bool` | Print build log lines to stderr. (default: `False`) |
 | `--bin` | `str or None` | Run this program from the directory of the resolved program, instead of the resolved program. A name that is not there fails with the names that are. (default: `None`) |
+| `--linux-builder` | `bool` | Build the program for Linux and run it in a VM that this command starts on Apple's Virtualization.framework. The VM mounts $HOME at the same path, and the program starts in the current directory. macOS only. (default: `False`) |
+| `--linux-builder-guest` | `str or None` | The manifest of the --linux-builder guest: the store path that `nix build --file nanopynix internal.linuxBuilder.manifest` prints. (default: `None`) |
+| `--linux-system` | `Literal[aarch64-linux, x86_64-linux]` | The system that --linux-builder evaluates for. x86_64-linux runs through Rosetta. (default: `'aarch64-linux'`) |
 | `args` | `list[str]` | Arguments for the program, after --. (default: `[]`) |
 
 ### `pynix sbom`

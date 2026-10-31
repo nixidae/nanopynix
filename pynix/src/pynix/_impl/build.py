@@ -8,7 +8,6 @@ on every start, and none of these imports is needed to list an option.
 from __future__ import annotations
 
 import difflib
-import sys
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -45,7 +44,7 @@ from huggorm.namespace import Temporary
 from pynix import _evaluate
 from pynix._build_monitor import BuildPlan, MonitorState
 from pynix._impl.copy import StoreEnds, closure_of, copy_verified
-from pynix._impl.linux_builder import LinuxBuilderError, linux_builder
+from pynix._impl.linux_builder import LinuxBuilderError, linux_builder, requested_guest
 from pynix._util import (
     build_derivation,
     configured_nix_settings,
@@ -446,9 +445,9 @@ async def _build_on_linux_builder(
     their closure to the guest; the overlay already holds every host path,
     so that copy only registers them.
     """
-    async with linux_builder(guest) as store:
+    async with linux_builder(guest) as vm:
         uris = _StoreUris(
-            store,
+            vm.store,
             command.eval_store or _HOST_STORE_URI,
             _HOST_STORE_URI if command.copy_back else None,
         )
@@ -459,18 +458,9 @@ def _resolve_linux_builder(command: Build, *, namespaced: bool) -> str | None:
     """The guest manifest of a --linux-builder build, or None for any other build."""
     if not command.linux_builder:
         return None
-    if sys.platform != "darwin":
-        error_exit("--linux-builder runs on macOS only")
     if namespaced:
         error_exit("--linux-builder and --namespaced each build in a store of their own")
-    if "store" in command.explicit_options:
-        error_exit("--linux-builder builds in the VM's store, so it cannot be combined with --store")
-    if command.linux_builder_guest is None:
-        error_exit(
-            "--linux-builder needs --linux-builder-guest or PYNIX_LINUX_BUILDER_GUEST: "
-            "the path that `nix build --file nanopynix internal.linuxBuilder.manifest` prints"
-        )
-    return command.linux_builder_guest
+    return requested_guest(guest=command.linux_builder_guest, store_named="store" in command.explicit_options)
 
 
 def _resolve_namespaced(command: Build) -> bool:

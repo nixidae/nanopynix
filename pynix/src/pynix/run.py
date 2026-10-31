@@ -5,12 +5,18 @@ Everything after ``--`` goes to the program, as in ``pynix develop``.
 
 from __future__ import annotations
 
-from typing import override
+from typing import Literal, override
 
 from libpynix import opt, pos
 from pynix import _impl
 from pynix._nix_options import attr_option, file_option, flake_option
-from pynix._settings import ConfiguredCommand, print_build_logs_option, store_option, verbosity_option
+from pynix._settings import (
+    ConfiguredCommand,
+    linux_builder_guest_option,
+    print_build_logs_option,
+    store_option,
+    verbosity_option,
+)
 
 
 class Run(ConfiguredCommand):
@@ -43,6 +49,22 @@ class Run(ConfiguredCommand):
             "Run this program from the directory of the resolved program, instead of the resolved program. "
             "A name that is not there fails with the names that are."
         ),
+    )
+
+    linux_builder: bool = opt(
+        False,
+        help=(
+            "Build the program for Linux and run it in a VM that this command starts on Apple's "
+            "Virtualization.framework. The VM mounts $HOME at the same path, and the program starts in "
+            "the current directory. macOS only."
+        ),
+    )
+
+    linux_builder_guest: str | None = linux_builder_guest_option()
+
+    linux_system: Literal["aarch64-linux", "x86_64-linux"] = opt(
+        "aarch64-linux",
+        help="The system that --linux-builder evaluates for. x86_64-linux runs through Rosetta.",
     )
 
     #: Everything after ``--``.
