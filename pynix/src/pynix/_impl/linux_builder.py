@@ -19,6 +19,8 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import platform
+import re
 import shlex
 import shutil
 import socket
@@ -51,6 +53,12 @@ _MEMORY_MIB = 8192
 _HOST_ALIAS = "pynix-linux-builder"
 #: The guest journal goes to console.log, and the work directory stays after exit.
 _DEBUG = os.environ.get("PYNIX_LINUX_BUILDER_DEBUG") == "1"
+#: "1" or "0" forces nested virtualization on or off instead of asking the host.
+_NESTED = os.environ.get("PYNIX_LINUX_BUILDER_NESTED")
+#: Apple's floor for nested virtualization: an M3 chip and macOS 15.
+_NESTED_CHIP = 3
+_NESTED_MACOS = 15
+_APPLE_CHIP = re.compile(r"^Apple M(\d+)")
 
 
 class LinuxBuilderError(Exception):
@@ -87,6 +95,22 @@ class Manifest:
             raise LinuxBuilderError(msg) from exc
 
 
+async def _nested_supported() -> bool:
+    """Whether vzvm may ask for nested virtualization here; it refuses to start otherwise.
+
+    Read from the chip name and the macOS version, because Virtualization.framework's
+    own answer is an Objective-C class property that Python does not reach.
+    """
+    if _NESTED is not None:
+        return _NESTED == "1"
+    macos = platform.mac_ver()[0]
+    if not macos or int(macos.split(".")[0]) < _NESTED_MACOS:
+        return False
+    brand = await anyio.run_process(["/usr/sbin/sysctl", "-n", "machdep.cpu.brand_string"], check=False)
+    chip = _APPLE_CHIP.match(brand.stdout.decode(errors="replace"))
+    return chip is not None and int(chip.group(1)) >= _NESTED_CHIP
+
+
 def _free_loopback_port() -> int:
     # vzvm binds the port itself. Another process can take it between this
     # close and vzvm's bind; vzvm then refuses to start, and says why.
@@ -104,6 +128,8 @@ class _Plan:
     work: Path
     daemon_port: int
     rosetta: bool
+    #: The guest then has /dev/kvm, and its daemon offers `kvm`.
+    nested: bool
     #: The host directory to share at the same path, for ``pynix run``. With
     #: it the guest also lets the run's key log in over ssh.
     home: Path | None
@@ -136,6 +162,7 @@ class _Plan:
             # vzvm refuses to start when Rosetta is asked for and absent.
             # Without it the guest still builds aarch64-linux.
             "rosetta": self.rosetta,
+            "nestedVirtualization": self.nested,
             "console": {"mode": "file", "path": str(self.work / "console.log")},
             "vsock": {"forwards": forwards},
             "disks": [{"path": str(self.disk), "readOnly": False}],
@@ -290,7 +317,9 @@ async def linux_builder(manifest_path: str, *, home: Path | None = None) -> Asyn
         logger.warning("pynix linux builder: Rosetta is not installed, so x86_64-linux will not build")
     work = Path(await anyio.to_thread.run_sync(lambda: tempfile.mkdtemp(prefix="pynix-lb-")))
     try:
-        plan = _Plan(manifest, work, _free_loopback_port(), rosetta, home, _free_loopback_port())
+        plan = _Plan(
+            manifest, work, _free_loopback_port(), rosetta, await _nested_supported(), home, _free_loopback_port()
+        )
         # ASIF, Apple's sparse format: measured in croshome, 2.5x the random
         # write IOPS of a raw sparse file.
         created = await anyio.run_process(
