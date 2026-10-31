@@ -49,7 +49,9 @@ _STOP_TIMEOUT = 5.0
 _ROSETTA = Path("/Library/Apple/usr/libexec/oah")
 #: Sparse: an empty ASIF image takes 4 MiB on the host.
 _DISK_BYTES = 128 * 1024**3
-_MEMORY_MIB = 8192
+#: Half the host's memory, at least 8 GiB. 8 GiB with 15 vCPUs ran out:
+#: the guest's OOM killer took cc1plus in Nix's LTO build.
+_MEMORY_MIB = max(8192, os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") // 2 // 1024**2)
 _HOST_ALIAS = "pynix-linux-builder"
 #: The guest journal goes to console.log, and the work directory stays after exit.
 _DEBUG = os.environ.get("PYNIX_LINUX_BUILDER_DEBUG") == "1"
