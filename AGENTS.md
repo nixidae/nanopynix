@@ -113,13 +113,7 @@ command can become a part of that command. `env:` also keeps the body to one
 line: the Nix version and the workspace path are the values that would make an
 expression necessary.
 
-# Version control
-
-This repository uses Jujutsu (`jj`) for version control. Use `jj` commands for
-status, for diffs, for history, and for inspection of commits and changes. Do
-not run a Git porcelain command such as `git status`, `git diff`, `git commit`,
-`git checkout`, or `git reset`. Use a Git command only when the user asks for
-Git, or when a tool needs Git plumbing.
+# Commits
 
 **Commit each piece of work when that piece is complete and its tests pass.
 Do not collect several pieces into one commit at the end of a task.** One
@@ -128,12 +122,9 @@ A commit that holds a package change, a defect correction and a removal
 answers no question about any of the three.
 
 The rule is a size rule as well. When a task gives two answers that stand
-alone, write two commits. `jj split <paths> -m "..."` divides the working copy
-after the fact, so the size of the commit is a decision that you take at the
-end and not at the start.
-
-Finish each task on an empty commit. Run `jj new` when the last commit of the
-task is complete, so the next task does not land inside it.
+alone, write two commits. The working copy can be divided after the fact, so
+the size of the commit is a decision that you take at the end and not at the
+start.
 
 `pynix` runs on huggorm's public API. A convention that a machine can check
 belongs in `tests/meta/`, which is the home of the self-checks of this
