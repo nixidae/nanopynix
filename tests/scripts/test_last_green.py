@@ -1,6 +1,6 @@
 """``scripts/last-green.sh``, against a real repository and a real remote.
 
-**This runs the script, so it is not a meta test.** ``tests/AGENTS.md`` gives
+**This runs the script, so it is not a meta test.** nixidae's ``CLAUDE.md`` gives
 that line, and the directory this module sits in is the answer to it:
 ``scripts/`` belongs to the repository and to no project, and the tests of a
 script belong beside the tests of everything else in that position.

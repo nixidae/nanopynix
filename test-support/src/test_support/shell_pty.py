@@ -4,7 +4,7 @@
 `completion-spike` asks whether a dynamic candidate can sit on a
 cyclopts-generated script, and `pynix/completions/tests/` asks what the
 installed `pynix` really offers for each line a user can type. The rule in
-`tests/AGENTS.md` picks this project: the module names no Nix concept, and a
+nixidae's `CLAUDE.md` picks this project: the module names no Nix concept, and a
 second project needs it.
 
 **A pty is not optional.** zsh loads its completion system only in an

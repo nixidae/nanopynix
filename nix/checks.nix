@@ -211,7 +211,7 @@ in
 {
   lint = mkCheck "lint" [ ruff ] "ruff check --no-cache .";
 
-  # The configuration that AGENTS.md says to keep at zero findings. This is
+  # The configuration that nixidae's CLAUDE.md says to keep at zero findings. This is
   # the sentence that makes that true.
   lint-strict = mkCheck "lint-strict" [ ruff ] "ruff check --no-cache --config ruff-strict.toml .";
 

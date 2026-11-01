@@ -5,7 +5,7 @@ as well as attaching it to the exception. The file is the only copy that
 survives a CI step which is killed before pytest prints its FAILURES section,
 and that is the case the whole mechanism exists for.
 
-These tests follow the rule in `tests/AGENTS.md` for a helper of the harness:
+These tests follow the rule in nixidae's `CLAUDE.md` for a helper of the harness:
 a defect here makes no other test fail, it only stops the report arriving at
 the one moment a reader needs it.
 """

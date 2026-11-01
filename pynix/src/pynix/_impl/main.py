@@ -41,7 +41,7 @@ def run(body: Callable[[], Coroutine[object, object, None]]) -> None:
 
     One call, so that the choice of an async backend is written down once.
     clypi owned this call and started asyncio; anyio is what the rest of this
-    repository uses, and `AGENTS.md` says why.
+    repository uses, and nixidae's `CLAUDE.md` says why.
 
     **The `except` is new, and clypi never had it.** clypi wrapped every
     `run()` in `except get_config().nice_errors`, and that setting defaults to

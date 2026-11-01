@@ -1,7 +1,7 @@
 """Every project states a licence, and the licence is Apache-2.0.
 
 No project here links Nix: the engine is huggorm's bindings, a dependency
-built elsewhere. Read the `# Licensing` section of `AGENTS.md`.
+built elsewhere. Read the licensing rule in nixidae's `CLAUDE.md`.
 
 Two things decay here, and neither fails a build:
 
@@ -67,7 +67,7 @@ def test_the_project_states_the_licence_that_applies_to_it(
     assert stated, f'{name} states no licence. Add `license = "{APACHE}"`.'
     assert stated == APACHE, (
         f"{name} states {stated!r} and this repository expects {APACHE!r}. "
-        "Read the `# Licensing` section of AGENTS.md before you change either one."
+        "Read the licensing rule in nixidae's CLAUDE.md before you change either one."
     )
 
 

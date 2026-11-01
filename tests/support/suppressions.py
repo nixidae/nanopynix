@@ -1,6 +1,6 @@
 """Scan the tree for lint/type suppressions that do not say why they exist.
 
-CLAUDE.md requires every suppression to name its rule *and* justify itself:
+nixidae's CLAUDE.md requires every suppression to name its rule *and* justify itself:
 ``# type: ignore[rule]  # reason`` / ``# noqa: RULE -- reason``. Ruff's
 PGH003/PGH004 enforce the first half -- that a bare ``# type: ignore`` or
 ``# noqa`` names codes -- and nothing enforces the second half, nor do they

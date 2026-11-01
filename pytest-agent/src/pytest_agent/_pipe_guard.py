@@ -45,7 +45,7 @@ def zero_detail_mode(config: pytest.Config) -> str | None:
 # stdout is piped straight into one of these, the reader silently discards
 # whatever pytest didn't print first (head/grep/sed/awk) or last (tail),
 # which is exactly the failure mode this whole project exists to prevent --
-# see CLAUDE.md's "Pytest output discipline" section for the human-authored
+# see nixidae's CLAUDE.md, nanopynix "Tests" for the human-authored
 # version of this same rule.
 #
 # The grep family is listed by every name it ships under, not just GNU's:
