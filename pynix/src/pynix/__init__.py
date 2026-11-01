@@ -7,7 +7,12 @@ import deferimport
 # Every module that loads after this line imports lazily, so a plain import
 # at the top of a module costs nothing until a name is used. A runtime type
 # checker needs real objects, and `DEFERIMPORT=eager` makes this a no-op.
-deferimport.install()
+#
+# Denied, so eager: rapidfuzz picks its native module inside
+# `with contextlib.suppress(ImportError):`, where an import goes lazy, so its
+# fallback never ran and the first call raised. pynix/tests/test_lazy_imports.py
+# resolves every lazy import to find the next one.
+deferimport.install("deny=rapidfuzz")
 
 from libpynix import Command, build_parser, complete, dispatch, group, parse_args
 from pynix import _impl
