@@ -42,7 +42,7 @@ async def _write_snapshot(directory: Path, **overrides: object) -> dict[str, obj
         **overrides,
     }
     for key in ("qemu", "qemuImg", "overlay", "aux", "state"):
-        await anyio.Path(str(data[key])).touch()
+        await anyio.Path(directory / str(data[key])).touch()
     await anyio.Path(directory / "snapshot.json").write_text(json.dumps(data))
     return data
 
@@ -55,6 +55,24 @@ async def test_the_run_directory_replaces_the_placeholder(tmp_path: Path) -> Non
 
     assert argv == [str(tmp_path / "qemu-system-aarch64"), "-qmp", "unix:/run/x/qmp.sock,server=on,wait=off",
                     "-incoming", "defer"]  # fmt: skip
+
+
+async def test_a_moved_snapshot_finds_its_files(tmp_path: Path) -> None:
+    saved = tmp_path / "saved"
+    await anyio.Path(saved).mkdir()
+    # QEMU stays where it is; only the snapshot moves.
+    await _write_snapshot(
+        saved, qemu=str(tmp_path / "qemu-system-aarch64"), qemuImg=str(tmp_path / "qemu-img"),
+        overlay="overlay.qcow2", aux="aux.img", state="state.bin",
+        args=["-object", "memory-backend-file,mem-path={snapshot}/ram.bin"],
+    )  # fmt: skip
+    moved = tmp_path / "moved"
+    await anyio.Path(saved).rename(moved)
+
+    snapshot = await Snapshot.read(str(moved))
+
+    assert (snapshot.overlay, snapshot.state) == (str(moved / "overlay.qcow2"), str(moved / "state.bin"))
+    assert snapshot.qemu_argv(Path("/run/x"))[2] == f"memory-backend-file,mem-path={moved}/ram.bin"
 
 
 async def test_a_snapshot_without_a_key_is_a_darwin_builder_error(tmp_path: Path) -> None:

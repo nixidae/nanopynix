@@ -6,7 +6,8 @@ nix-daemon listening on vsock. A start loads the snapshot instead of booting,
 so the daemon answers in a fraction of a second.
 
 ``snapshot.json`` names QEMU, its arguments (``{run}`` stands for the run
-directory), the read-only disk overlay, the device state and the vsock ports.
+directory, ``{snapshot}`` for the snapshot's), the read-only disk overlay, the
+device state and the vsock ports.
 Guest RAM is a file the arguments map private and copy-on-write, so each start
 sees the saved RAM and none changes it. Each start gets a new qcow2 overlay
 over the saved one, so every build starts from the same guest.
@@ -64,6 +65,7 @@ class DarwinBuilderError(Exception):
 class Snapshot:
     """What ``snapshot.json`` says about one saved guest."""
 
+    directory: str
     qemu: str
     qemu_img: str
     args: tuple[str, ...]
@@ -78,13 +80,15 @@ class Snapshot:
         path = Path(directory) / "snapshot.json"
         try:
             data = json.loads(await AnyioPath(path).read_text())
+            # A relative path is inside the snapshot, which can then move.
             snapshot = cls(
+                directory=directory,
                 qemu=data["qemu"],
                 qemu_img=data["qemuImg"],
                 args=tuple(str(arg) for arg in data["args"]),
-                overlay=data["overlay"],
-                aux=data["aux"],
-                state=data["state"],
+                overlay=str(Path(directory) / data["overlay"]),
+                aux=str(Path(directory) / data["aux"]),
+                state=str(Path(directory) / data["state"]),
                 daemon_vsock_port=int(data["daemonVsockPort"]),
                 clock_vsock_port=int(data["clockVsockPort"]),
             )
@@ -98,7 +102,7 @@ class Snapshot:
         return snapshot
 
     def qemu_argv(self, run: Path) -> list[str]:
-        return [self.qemu, *(arg.replace("{run}", str(run)) for arg in self.args)]
+        return [self.qemu, *(arg.replace("{run}", str(run)).replace("{snapshot}", self.directory) for arg in self.args)]
 
 
 class _Qmp:
