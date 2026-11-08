@@ -39,6 +39,7 @@ import structlog
 from anyio import Path as AnyioPath
 from anyio.abc import ByteStream, Process, SocketStream, TaskStatus
 
+from libpynix._typecheck import no_runtime_type_check
 from pynix._util import error_exit
 
 logger = structlog.get_logger("pynix.darwin_builder")
@@ -205,6 +206,7 @@ async def _pump(source: ByteStream, sink: ByteStream) -> None:
         await sink.send_eof()
 
 
+@no_runtime_type_check  # TaskStatus is a Protocol beartype cannot check; its warning broke every command's stderr
 async def _forward(vsock: Path, port: int, listen: Path, *, task_status: TaskStatus[None]) -> None:
     """Serve the guest's daemon port on *listen*, a socket Nix can open."""
     listener = await anyio.create_unix_listener(listen)
