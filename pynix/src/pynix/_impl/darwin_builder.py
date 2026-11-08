@@ -183,8 +183,12 @@ async def _daemon_answers(vsock: Path, port: int) -> bool:
     return len(reply) == _WORD.size and _WORD.unpack(reply)[0] == _WORKER_MAGIC_2
 
 
-async def _set_clock(vsock: Path, port: int) -> None:
-    """A loaded guest wakes at the time of the save; it takes the host's epoch."""
+async def _set_clock(vsock: Path, port: int) -> str:
+    """A loaded guest wakes at the time of the save; it takes the host's epoch.
+
+    The guest renews its DHCP lease when it has no address, and answers
+    ``ok ADDRESS``; returns the address, empty when it still has none.
+    """
     async with await connect_guest(vsock, port) as stream:
         await stream.send(f"{int(time.time())}\n".encode())
         await stream.send_eof()
@@ -192,9 +196,11 @@ async def _set_clock(vsock: Path, port: int) -> None:
         with contextlib.suppress(anyio.EndOfStream):
             while len(reply) < _LINE_MAX:
                 reply += await stream.receive()
-    if reply.strip() != b"ok":
+    words = reply.split()
+    if not words or words[0] != b"ok":
         msg = f"the guest did not set its clock: {reply!r}"
         raise DarwinBuilderError(msg)
+    return words[1].decode(errors="replace") if len(words) > 1 else ""
 
 
 async def _pump(source: ByteStream, sink: ByteStream) -> None:
@@ -328,7 +334,8 @@ async def darwin_builder(directory: str) -> AsyncIterator[DarwinBuilder]:
                 qmp = await _Qmp.connect(work / "qmp.sock", vm)
                 await _load(qmp, vm, snapshot)
                 await _wait_for_daemon(vm, vsock, snapshot.daemon_vsock_port)
-                await _set_clock(vsock, snapshot.clock_vsock_port)
+                if not await _set_clock(vsock, snapshot.clock_vsock_port):
+                    logger.warning("pynix darwin builder: the guest has no network address, so it cannot substitute")
                 logger.info(
                     "pynix darwin builder is ready", seconds=round(time.monotonic() - started, 3), work=str(work)
                 )

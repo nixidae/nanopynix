@@ -175,15 +175,18 @@ async def test_a_refused_client_leaves_the_forward_serving(
         group.cancel_scope.cancel()
 
 
-@pytest.mark.parametrize(("reply", "sets"), [(b"ok\n", True), (b"date: illegal time\n", False)])
-async def test_the_clock_is_set_only_when_the_guest_says_ok(short_dir: Path, reply: bytes, sets: bool) -> None:
+@pytest.mark.parametrize(
+    ("reply", "address"),
+    [(b"ok 10.0.2.15\n", "10.0.2.15"), (b"ok \n", ""), (b"ok\n", ""), (b"date: illegal time\n", None)],
+)
+async def test_the_clock_is_set_only_when_the_guest_says_ok(short_dir: Path, reply: bytes, address: str | None) -> None:
     path = short_dir / "vsock.sock"
     received: list[bytes] = []
     listener = await anyio.create_unix_listener(path)
     async with anyio.create_task_group() as group:
         group.start_soon(_vsock_device, listener, {3031: reply}, received)
-        if sets:
-            await darwin_builder._set_clock(path, 3031)
+        if address is not None:
+            assert await darwin_builder._set_clock(path, 3031) == address
         else:
             with pytest.raises(DarwinBuilderError, match="did not set its clock"):
                 await darwin_builder._set_clock(path, 3031)
