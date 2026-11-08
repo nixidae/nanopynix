@@ -49,6 +49,7 @@ _WORKER_MAGIC_2 = 0x6478696F
 _START_TIMEOUT = 60.0
 _STOP_TIMEOUT = 5.0
 _QMP_TIMEOUT = 10.0
+_HANDSHAKE_TIMEOUT = 2.0
 _X_IGNORE_SHARED = [{"capability": "x-ignore-shared", "state": True}]
 #: Longer than ``OK <port>\n`` and ``ok\n``: anything past it is not virtio-vsock-unix or the clock.
 _LINE_MAX = 32
@@ -149,11 +150,14 @@ class _Qmp:
 async def connect_guest(vsock: Path, port: int) -> SocketStream:
     """A stream to the guest's vsock *port*: virtio-vsock-unix's ``CONNECT`` handshake."""
     stream = await anyio.connect_unix(vsock)
+    line = b""
     try:
-        await stream.send(f"CONNECT {port}\n".encode())
-        line = b""
-        while not line.endswith(b"\n") and len(line) < _LINE_MAX:
-            line += await stream.receive(1)
+        # A guest whose vsock driver ignores the request never answers at all.
+        # fail_after raises TimeoutError, an OSError like a refusal.
+        with anyio.fail_after(_HANDSHAKE_TIMEOUT):
+            await stream.send(f"CONNECT {port}\n".encode())
+            while not line.endswith(b"\n") and len(line) < _LINE_MAX:
+                line += await stream.receive(1)
     except BaseException:
         await stream.aclose()
         raise

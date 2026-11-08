@@ -124,6 +124,24 @@ async def test_no_socket_is_no_daemon(short_dir: Path) -> None:
     assert await darwin_builder._daemon_answers(short_dir / "absent.sock", 3030) is False
 
 
+async def _accept_and_stay_silent(listener: SocketListener) -> None:
+    async with listener, await listener.accept():
+        await anyio.sleep_forever()
+
+
+async def test_a_handshake_nobody_answers_times_out(short_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A first boot of macOS 26 left one request unanswered: with no limit, the
+    # whole wait for the daemon went to that one attempt.
+    monkeypatch.setattr(darwin_builder, "_HANDSHAKE_TIMEOUT", 0.1)
+    path = short_dir / "vsock.sock"
+    listener = await anyio.create_unix_listener(path)
+    async with anyio.create_task_group() as group:
+        group.start_soon(_accept_and_stay_silent, listener)
+        with anyio.fail_after(5):
+            assert await darwin_builder._daemon_answers(path, 3030) is False
+        group.cancel_scope.cancel()
+
+
 @pytest.mark.parametrize(("reply", "sets"), [(b"ok\n", True), (b"date: illegal time\n", False)])
 async def test_the_clock_is_set_only_when_the_guest_says_ok(short_dir: Path, reply: bytes, sets: bool) -> None:
     path = short_dir / "vsock.sock"
