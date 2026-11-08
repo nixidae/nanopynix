@@ -77,6 +77,7 @@ DEFAULTS: Final[dict[str, str | bool | None]] = {
     "verbosity": None,
     "print_build_logs": False,
     "linux_builder_guest": None,
+    "darwin_builder_snapshot": None,
 }
 
 #: The variable that Nix reads as the default of an option, below

@@ -47,6 +47,7 @@ from huggorm.namespace import Temporary
 from pynix import _evaluate
 from pynix._build_monitor import BuildPlan, MonitorState
 from pynix._impl.copy import StoreEnds, closure_of, copy_verified
+from pynix._impl.darwin_builder import DarwinBuilderError, darwin_builder, requested_snapshot
 from pynix._impl.linux_builder import LinuxBuilderError, linux_builder, requested_guest
 from pynix._util import (
     build_derivations,
@@ -445,7 +446,9 @@ async def run_build(command: Build) -> None:
 
     namespaced = _resolve_namespaced(command)
     guest = _resolve_linux_builder(command, namespaced=namespaced)
-    _refuse_an_out_link_with_nothing_to_link(command, elsewhere=namespaced or guest is not None)
+    snapshot = _resolve_darwin_builder(command, namespaced=namespaced, linux=guest is not None)
+    elsewhere = namespaced or guest is not None or snapshot is not None
+    _refuse_an_out_link_with_nothing_to_link(command, elsewhere=elsewhere)
 
     settings = configured_nix_settings(
         substituters=command.substituters,
@@ -456,22 +459,17 @@ async def run_build(command: Build) -> None:
     # Outside the session, so the error passes through its log forwarding:
     # --nom counts it in the last frame, and the message prints after that.
     try:
-        if namespaced:
-            built, updates, copied = await _build_namespaced(command, targets, settings)
-        elif guest is not None:
-            built, updates, copied = await _build_on_linux_builder(command, targets, settings, guest)
-        else:
-            built, updates, copied = await _build_on_huggorm(
-                command, targets, settings, _StoreUris(command.store, command.eval_store)
-            )
+        built, updates, copied = await _build_where_asked(
+            command, targets, settings, namespaced=namespaced, guest=guest, snapshot=snapshot
+        )
     except BuildTargetError as exc:
         report_and_exit(exc)
-    except LinuxBuilderError as exc:
+    except (LinuxBuilderError, DarwinBuilderError) as exc:
         error_exit(str(exc))
 
     if command.out_link is not None and built:
         # The store the outputs are in now: a namespaced or VM build copied them to the host's.
-        linked = _HOST_STORE_URI if namespaced or guest is not None else command.store
+        linked = _HOST_STORE_URI if elsewhere else command.store
         async with huggorm_store_session(linked) as (_session, store):
             await create_out_links(store, command.out_link, [target.outputs for target in built])
 
@@ -535,6 +533,24 @@ def _targets(command: Build) -> list[EvaluationTarget]:
     except EvaluationTargetError as exc:
         report_and_exit(exc)
     return targets
+
+
+async def _build_where_asked(  # noqa: PLR0913 -- the resolved choice of each builder flag
+    command: Build,
+    targets: Sequence[EvaluationTarget],
+    settings: dict[str, str],
+    *,
+    namespaced: bool,
+    guest: str | None,
+    snapshot: str | None,
+) -> tuple[list[BuiltTarget], int, dict[str, Any] | None]:
+    if namespaced:
+        return await _build_namespaced(command, targets, settings)
+    if guest is not None:
+        return await _build_on_linux_builder(command, targets, settings, guest)
+    if snapshot is not None:
+        return await _build_on_darwin_builder(command, targets, settings, snapshot)
+    return await _build_on_huggorm(command, targets, settings, _StoreUris(command.store, command.eval_store))
 
 
 async def _build_namespaced(
@@ -605,6 +621,33 @@ async def _build_on_linux_builder(
             _HOST_STORE_URI if command.copy_back else None,
         )
         return await _build_on_huggorm(command, targets, settings, uris)
+
+
+async def _build_on_darwin_builder(
+    command: Build, targets: Sequence[EvaluationTarget], settings: dict[str, str], snapshot: str
+) -> tuple[list[BuiltTarget], int, dict[str, Any] | None]:
+    """Build in a macOS VM, evaluating against the host store.
+
+    Nix copies the derivations to the guest; the guest substitutes their
+    inputs, or builds them. Unlike the Linux builder's, its store holds none of
+    the host's paths.
+    """
+    async with darwin_builder(snapshot) as vm:
+        uris = _StoreUris(
+            vm.store,
+            command.eval_store or _HOST_STORE_URI,
+            _HOST_STORE_URI if command.copy_back else None,
+        )
+        return await _build_on_huggorm(command, targets, settings, uris)
+
+
+def _resolve_darwin_builder(command: Build, *, namespaced: bool, linux: bool) -> str | None:
+    """The snapshot of a --darwin-builder build, or None for any other build."""
+    if not command.darwin_builder:
+        return None
+    if namespaced or linux:
+        error_exit("--darwin-builder, --linux-builder and --namespaced each build in a store of their own")
+    return requested_snapshot(snapshot=command.darwin_builder_snapshot, store_named="store" in command.explicit_options)
 
 
 def _resolve_linux_builder(command: Build, *, namespaced: bool) -> str | None:
