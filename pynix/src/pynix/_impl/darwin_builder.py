@@ -213,8 +213,11 @@ async def _forward(vsock: Path, port: int, listen: Path, *, task_status: TaskSta
         async with client:
             try:
                 guest = await connect_guest(vsock, port)
-            except (OSError, anyio.EndOfStream) as exc:
-                logger.warning("pynix darwin builder cannot reach the guest daemon", error=str(exc))
+            # A reset during the handshake is BrokenResourceError, not an OSError.
+            except (OSError, anyio.EndOfStream, anyio.BrokenResourceError) as exc:
+                logger.warning(
+                    "pynix darwin builder cannot reach the guest daemon", error=str(exc) or type(exc).__name__
+                )
                 return
             async with guest, anyio.create_task_group() as tg:
                 tg.start_soon(_pump, client, guest)

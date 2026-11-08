@@ -142,6 +142,39 @@ async def test_a_handshake_nobody_answers_times_out(short_dir: Path, monkeypatch
         group.cancel_scope.cancel()
 
 
+@pytest.mark.parametrize("error", [anyio.BrokenResourceError, anyio.EndOfStream, ConnectionRefusedError])
+async def test_a_refused_client_leaves_the_forward_serving(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch, error: type[Exception]
+) -> None:
+    # A reset while the device writes the handshake reaches the sender as
+    # EPIPE, which anyio raises as BrokenResourceError; that is a race a fake
+    # device cannot force, so the first handshake raises it directly.
+    real = darwin_builder.connect_guest
+    calls: list[int] = []
+
+    async def refuse_first(vsock: Path, port: int) -> SocketStream:
+        calls.append(port)
+        if len(calls) == 1:
+            raise error
+        return await real(vsock, port)
+
+    monkeypatch.setattr(darwin_builder, "connect_guest", refuse_first)
+    vsock, listen = short_dir / "vsock.sock", short_dir / "daemon.sock"
+    device = await anyio.create_unix_listener(vsock)
+    reply = darwin_builder._WORD.pack(darwin_builder._WORKER_MAGIC_2)
+    async with anyio.create_task_group() as group:
+        group.start_soon(_vsock_device, device, {3030: reply}, [])
+        await group.start(darwin_builder._forward, vsock, 3030, listen)
+        async with await anyio.connect_unix(listen) as refused:
+            with pytest.raises((anyio.EndOfStream, anyio.BrokenResourceError)):
+                await refused.receive()
+        async with await anyio.connect_unix(listen) as client:
+            await client.send(darwin_builder._WORD.pack(darwin_builder._WORKER_MAGIC_1))
+            with anyio.fail_after(5):
+                assert await client.receive(8) == darwin_builder._WORD.pack(darwin_builder._WORKER_MAGIC_2)
+        group.cancel_scope.cancel()
+
+
 @pytest.mark.parametrize(("reply", "sets"), [(b"ok\n", True), (b"date: illegal time\n", False)])
 async def test_the_clock_is_set_only_when_the_guest_says_ok(short_dir: Path, reply: bytes, sets: bool) -> None:
     path = short_dir / "vsock.sock"
