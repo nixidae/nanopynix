@@ -32,11 +32,9 @@
   completionSpike,
 }:
 let
-  # Only the trees the gates read. An allowlist, and not the shared denylist
-  # of `nix/source.nix` that the test runner and the docs build take: a lint
-  # gate must not report on a file that is gitignored and absent under a flake
-  # evaluation, and naming each input keeps an unrelated edit from rebuilding
-  # all four gates.
+  # Only the trees the gates read, and not the whole repository of
+  # `nix/source.nix` that the test runner and the docs build take: naming each
+  # input keeps an unrelated edit from rebuilding all four gates.
   source = lib.fileset.toSource {
     root = ../.;
     fileset = lib.fileset.unions [
