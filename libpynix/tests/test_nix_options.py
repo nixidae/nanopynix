@@ -14,6 +14,7 @@ from libpynix import (
     arg_option,
     argstr_option,
     attr_option,
+    attrs_option,
     build_parser,
     dispatch,
     file_option,
@@ -64,6 +65,18 @@ def test_a_flake_reference_is_a_string_and_keeps_every_separator() -> None:
     ``https:/example.com/x.tar.gz`` and failed.
     """
     assert parse("--file", "https://example.com/x.tar.gz").file == "https://example.com/x.tar.gz"
+
+
+def test_attrs_option_collects_each_attr_in_order() -> None:
+    class Building(Command):
+        """A command that takes several targets."""
+
+        attr: list[str] = attrs_option()
+
+    parser = build_parser(Building)
+    command = dispatch(parser, parser.parse_args(["--attr", "a", "-A", "b"]))
+    assert isinstance(command, Building)
+    assert command.attr == ["a", "b"]
 
 
 def test_arg_and_argstr_collect_each_use_in_order() -> None:

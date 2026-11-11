@@ -64,6 +64,17 @@ def attr_option(*, complete: Completer | None = None) -> str | None:
 
 
 @no_runtime_type_check  # see file_option
+def attrs_option(*, complete: Completer | None = None) -> list[str]:
+    """``--attr`` for a command that takes several, as ``nix build a b`` does."""
+    value: list[str] = opt(
+        short="A",
+        help="Dot-separated attribute path within the evaluation result. Repeatable: each one is a target.",
+        complete=complete,
+    )
+    return value
+
+
+@no_runtime_type_check  # see file_option
 def flake_option(*, complete: Completer | None = None) -> str | None:
     """Declare the common ``--flake`` option."""
     value: str | None = opt(
