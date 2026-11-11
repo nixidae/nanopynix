@@ -265,7 +265,8 @@ async def _evaluate_selected(
         if target.flake is None:
             raise EvaluationTargetError("either --file or --flake is required")
         ref, _, flake_attr = target.flake.partition("#")
-        locked = await state.lock_flake(huggorm.parse_flake_ref(ref))
+        # `InstallableFlake::getLockedFlake` applies the flake's `nixConfig`.
+        locked = await state.lock_flake(huggorm.parse_flake_ref(ref), apply_nix_config=True)
         # `outputs`, and not the value `callFlake` returns: `openEvalCache` of
         # `src/libflake/flake.cc` selects them before it resolves anything.
         value = await flake_outputs(state, await state.call_flake(locked))

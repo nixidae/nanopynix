@@ -175,7 +175,8 @@ async def _lock(
     also writes nothing for a flake that is not on this machine.
 
     ``tarball-ttl`` is 0, as both commands of Nix set it: a cached tarball
-    of a moving reference would otherwise lock the old revision again.
+    of a moving reference would otherwise lock the old revision again. Both
+    apply the flake's ``nixConfig`` too.
     """
     ref = huggorm.parse_flake_ref(flake_ref)
     lock_file = ref.lock_file_path()
@@ -194,6 +195,7 @@ async def _lock(
             update=update_inputs if isinstance(update_inputs, list) else None,
             write_lock_file=True,
             fail_on_unlocked=fail_on_unlocked,
+            apply_nix_config=True,
         )
         await locked.aclose()
         if lock_file is not None and before is not None and before == await _read_lock_file(lock_file):
