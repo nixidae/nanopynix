@@ -269,6 +269,26 @@ Examples:
 | `--store` | `str` | Store URI to evaluate and build with. (default: `'auto'`) |
 | `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 
+### `pynix fmt`
+
+Reformat your code in the standard style
+
+Runs formatter.<system> of the flake in the current directory, as nix fmt
+does. The formatter gets the arguments, and PRJ_ROOT names the top of the
+flake. Its exit status is the exit status of pynix.
+
+Examples:
+  pynix fmt
+  pynix fmt -- --check .
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
+| `--store` | `str` | Store URI to build with. (default: `'auto'`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
+| `--print-build-logs` | `bool` | Print build log lines to stderr. (default: `False`) |
+| `args` | `list[str]` | Arguments for the formatter, after --. (default: `[]`) |
+
 ### `pynix hash`
 
 Compute and convert cryptographic hashes

@@ -18,6 +18,7 @@ import anyio
 import structlog
 from anyio import Path as AnyioPath
 from huggorm import AsyncEvalState, AsyncValue
+from huggorm.attrpath import AttrPathSearch
 
 from pynix import _evaluate
 from pynix._impl.linux_builder import LinuxBuilderError, linux_builder, requested_guest
@@ -100,6 +101,31 @@ async def _program(state: AsyncEvalState, value: AsyncValue, selected: str) -> s
 
 
 @dataclass(frozen=True)
+class ProgramRequest:
+    """What to evaluate and build, and how: the part of a command that ``toApp`` reads."""
+
+    target: EvaluationTarget
+    attr_search: AttrPathSearch
+    store: str
+    impure: bool
+    verbosity: str | None
+    print_build_logs: bool
+    bin: str | None = None
+
+    @classmethod
+    def of_run(cls, command: Run) -> ProgramRequest:
+        return cls(
+            target=EvaluationTarget.from_command(command),
+            attr_search=_evaluate.app_attr_search(),
+            store=command.store,
+            impure=command.impure,
+            verbosity=command.verbosity,
+            print_build_logs=command.print_build_logs,
+            bin=command.bin,
+        )
+
+
+@dataclass(frozen=True)
 class _Where:
     """Where the program builds and evaluates, and whether its files are on this machine."""
 
@@ -109,21 +135,21 @@ class _Where:
     on_host: bool = True
 
 
-async def resolve_program(command: Run, where: _Where | None = None) -> ResolvedProgram:
-    """Evaluate, build and check the program that *command* runs."""
-    where = where or _Where(command.store)
-    target = EvaluationTarget.from_command(command)
+async def resolve_program(request: ProgramRequest, where: _Where | None = None) -> ResolvedProgram:
+    """Evaluate, build and check the program that *request* names."""
+    where = where or _Where(request.store)
+    target = request.target
     try:
         async with huggorm_build_session(
             where.store,
             eval_store_uri=where.eval_store,
             settings=where.settings,
-            verbosity=command.verbosity,
-            print_build_logs=command.print_build_logs,
-            pure=target.pure(impure=command.impure),
+            verbosity=request.verbosity,
+            print_build_logs=request.print_build_logs,
+            pure=target.pure(impure=request.impure),
         ) as (_session, store, _eval_store, state):
             value, locked, selected = await _evaluate.evaluate_target_selected(
-                target, state, auto_call_file=True, attr_search=_evaluate.app_attr_search()
+                target, state, auto_call_file=True, attr_search=request.attr_search
             )
             try:
                 program = await _program(state, value, selected)
@@ -131,7 +157,7 @@ async def resolve_program(command: Run, where: _Where | None = None) -> Resolved
                 if locked is not None:
                     await locked.aclose()
             layout = await StoreLayout.of(store)
-            program = await _locate(layout, program, command.bin, on_host=where.on_host)
+            program = await _locate(layout, program, request.bin, on_host=where.on_host)
             return ResolvedProgram(program=program, exec_prefix=layout.exec_prefix())
     except EvaluationTargetError as exc:
         report_and_exit(exc)
@@ -161,7 +187,7 @@ async def _run_on_linux_builder(command: Run, guest: str) -> int:
     """
     async with linux_builder(guest, home=Path.home()) as vm:
         where = _Where(vm.store, _HOST_STORE_URI, {"eval-system": command.linux_system}, on_host=False)
-        resolved = await resolve_program(command, where)
+        resolved = await resolve_program(ProgramRequest.of_run(command), where)
         tty = sys.stdin.isatty() and sys.stdout.isatty()
         argv = vm.ssh_argv([resolved.program, *command.args], cwd=str(Path.cwd()), tty=tty)
         async with await anyio.open_process(argv, stdin=None, stdout=None, stderr=None) as process:
@@ -185,7 +211,7 @@ async def run_run(command: Run) -> None:
         except LinuxBuilderError as exc:
             error_exit(str(exc))
         sys.exit(status)
-    resolved = await resolve_program(command)
+    resolved = await resolve_program(ProgramRequest.of_run(command))
     if resolved.exec_prefix:
         argv = [*resolved.exec_prefix, resolved.program, *command.args]
         os.execvp(argv[0], argv)  # noqa: S606 -- the helper that nanopynix ships; see nanopynix.store_exec

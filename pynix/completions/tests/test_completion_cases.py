@@ -42,6 +42,7 @@ ROOT_SUBCOMMANDS = frozenset(
         "env",
         "eval",
         "flake",
+        "fmt",
         "hash",
         "log",
         "nar",

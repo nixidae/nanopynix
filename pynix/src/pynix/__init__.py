@@ -24,6 +24,7 @@ from pynix.develop import Develop, PrintDevEnv
 from pynix.env import Env
 from pynix.eval import Eval
 from pynix.flake import Flake
+from pynix.fmt import Fmt
 from pynix.hash import Hash
 from pynix.log import Log
 from pynix.nar import Nar
@@ -60,6 +61,7 @@ Pynix = group(
         Develop,
         Env,
         Flake,
+        Fmt,
         Hash,
         Log,
         Nar,

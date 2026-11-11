@@ -34,6 +34,7 @@ from pynix._impl import (
     eval as eval,
     flake as flake,
     flake_check as flake_check,
+    fmt as fmt,
     hash as hash,
     linux_builder as linux_builder,
     log as log,
