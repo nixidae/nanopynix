@@ -49,13 +49,14 @@ def _endpoints(command: Copy) -> tuple[str, str]:
     return source, destination
 
 
-async def _evaluated_paths(command: Copy, state: AsyncEvalState, source: AsyncStore, source_uri: str) -> list[str]:
+async def evaluated_paths(
+    target: EvaluationTarget, state: AsyncEvalState, source: AsyncStore, source_uri: str
+) -> list[str]:
     """The output paths of the derivation that ``--file`` or ``--flake`` names.
 
-    Empty when the caller named neither. ``pynix copy`` builds nothing, so an
-    output that the source store does not hold is an error and not a build.
+    Empty when the caller named neither. This builds nothing, so an output
+    that the source store does not hold is an error and not a build.
     """
-    target = EvaluationTarget.from_command(command)
     try:
         target.validate()
     except EvaluationTargetError as exc:
@@ -180,9 +181,9 @@ async def run_copy(command: Copy) -> None:
     """The body of :meth:`pynix.copy.Copy.run`."""
     source_uri, destination_uri = _endpoints(command)
 
-    pure = EvaluationTarget.from_command(command).pure(impure=command.impure)
-    async with huggorm_eval_session(source_uri, pure=pure) as (session, source, state):
-        requested = sorted({*command.paths, *await _evaluated_paths(command, state, source, source_uri)})
+    target = EvaluationTarget.from_command(command)
+    async with huggorm_eval_session(source_uri, pure=target.pure(impure=command.impure)) as (session, source, state):
+        requested = sorted({*command.paths, *await evaluated_paths(target, state, source, source_uri)})
         if not requested:
             error_exit("name a store path, or name --file or --flake")
 
