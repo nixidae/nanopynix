@@ -88,13 +88,49 @@ class InteractiveShell:
     exec_prefix: list[str]
 
 
-def compose_shell_script(
+@dataclass(frozen=True)
+class BashPrompt:
+    """``bash-prompt``, ``bash-prompt-prefix`` and ``bash-prompt-suffix``.
+
+    Read after the target is locked: a flake's ``nixConfig`` may set all three,
+    and the whitelist of ``ConfigFile::apply`` always trusts them.
+    """
+
+    prompt: str = ""
+    prefix: str = ""
+    suffix: str = ""
+
+    @classmethod
+    def configured(cls) -> BashPrompt:
+        return cls(
+            prompt=huggorm.get_setting("bash-prompt") or "",
+            prefix=huggorm.get_setting("bash-prompt-prefix") or "",
+            suffix=huggorm.get_setting("bash-prompt-suffix") or "",
+        )
+
+    def lines(self) -> str:
+        """The lines of ``develop.cc:621``, for each setting that is not empty."""
+        script = ""
+        if self.prompt:
+            script += f'[ -n "$PS1" ] && PS1={quote(self.prompt)};\n'
+        if self.prefix:
+            script += f'[ -n "$PS1" ] && PS1={quote(self.prefix)}"$PS1";\n'
+        if self.suffix:
+            script += f'[ -n "$PS1" ] && PS1+={quote(self.suffix)};\n'
+        return script
+
+
+_NO_PROMPT = BashPrompt()
+
+
+def compose_shell_script(  # noqa: PLR0913 -- keyword-only, one per part of the script
     environment: BuildEnvironment,
     *,
     command: list[str],
     outputs_dir: Path,
     cleanup: Path | None = None,
     shell: InteractiveShell | None = None,
+    prompt: BashPrompt = _NO_PROMPT,
 ) -> str:
     """Build the bash that ``develop`` hands to the shell.
 
@@ -117,7 +153,7 @@ def compose_shell_script(
         # quote(), not shlex.join(): develop.cc:620 quotes every word, and a
         # word that shlex leaves bare would be re-split by the shell.
         return script + "exec {}\n".format(" ".join(quote(word) for word in command))
-    script = _INTERACTIVE_PROLOGUE + script + _INTERACTIVE_EPILOGUE
+    script = _INTERACTIVE_PROLOGUE + script + _INTERACTIVE_EPILOGUE + prompt.lines()
     if shell is not None:
         # The build's own bash is not interactive: it is built without
         # readline. Leaving it in SHELL hands it to everything that spawns the
@@ -388,6 +424,7 @@ async def run_develop(command: Develop) -> None:
         outputs_dir=Path.cwd() / _OUTPUTS_DIR_NAME,
         cleanup=Path(directory),
         shell=shell,
+        prompt=BashPrompt.configured(),
     )
     rc_path = Path(directory) / "rc"
     await AnyioPath(rc_path).write_text(script)

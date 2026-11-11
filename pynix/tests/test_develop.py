@@ -11,12 +11,15 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+import huggorm
 import pytest
 from anyio import Path as AnyioPath, run_process
 from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, with_nixpkgs
@@ -24,6 +27,7 @@ from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, 
 from pynix import parse
 from pynix._dev_env import BuildEnvironment, make_rc_script, quote
 from pynix._impl.develop import (
+    BashPrompt,
     InteractiveShell,
     _nixpkgs_flake_ref,
     compose_shell_script,
@@ -566,6 +570,75 @@ def test_a_command_gets_no_shell_line(tmp_path: Path) -> None:
     )
     assert "SHELL=" not in script
     assert script.endswith("exec 'true'\n")
+
+
+# --- the prompt, from bash-prompt and its prefix and suffix ------------------
+
+
+_PROMPT = BashPrompt(prompt="dev's \\w> ", prefix="(nix) ", suffix="$ ")
+
+
+def _ps1_after(lines: str, ps1: str) -> str:
+    """What *lines* leave in ``PS1``, run by bash with *ps1* set."""
+    bash = shutil.which("bash")
+    assert bash is not None
+    shown = subprocess.run(  # noqa: S603 -- fixed argv, no shell, every word from the test itself
+        [bash, "-c", 'PS1="$1"; eval "$2"; printf %s "$PS1"', "bash", ps1, lines],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return shown.stdout
+
+
+def test_the_prompt_lines_follow_the_environment_and_precede_shell(tmp_path: Path) -> None:
+    """``develop.cc:621`` adds them after the epilogue; ``:688`` adds SHELL after them."""
+    script = compose_shell_script(
+        _environment(), command=[], outputs_dir=tmp_path / "outputs", shell=_nixpkgs_shell(), prompt=_PROMPT
+    )
+    epilogue = script.index("shopt -s expand_aliases\n")
+    assert epilogue < script.index(_PROMPT.lines()) < script.index("SHELL=")
+
+
+def test_the_prompt_replaces_then_the_prefix_and_suffix_wrap_it() -> None:
+    assert _ps1_after(_PROMPT.lines(), "host$ ") == "(nix) dev's \\w> $ "
+
+
+def test_a_prompt_setting_that_is_empty_leaves_ps1_alone() -> None:
+    assert BashPrompt().lines() == ""
+    assert _ps1_after(BashPrompt(suffix="!").lines(), "host$ ") == "host$ !"
+
+
+def test_a_shell_with_no_ps1_gets_none() -> None:
+    """``[ -n "$PS1" ]``: a non-interactive shell stays without a prompt."""
+    assert _ps1_after(_PROMPT.lines(), "") == ""
+
+
+def test_a_command_gets_no_prompt_line(tmp_path: Path) -> None:
+    script = compose_shell_script(_environment(), command=["true"], outputs_dir=tmp_path / "outputs", prompt=_PROMPT)
+    assert "PS1=" not in script
+
+
+@pytest.fixture
+def bash_prompt_back() -> Iterator[None]:
+    """The three settings belong to the process, so each test puts them back."""
+    names = ("bash-prompt", "bash-prompt-prefix", "bash-prompt-suffix")
+    before = {name: huggorm.get_setting(name) or "" for name in names}
+    yield
+    for name, value in before.items():
+        huggorm.set_setting(name, value)
+
+
+@pytest.mark.usefixtures("bash_prompt_back")
+async def test_a_flake_nix_config_sets_the_prompt(isolated_nix_environment: NixTestEnvironment, tmp_path: Path) -> None:
+    """``bash-prompt`` is on the whitelist of ``ConfigFile::apply``, so it needs no trust."""
+    flake = tmp_path / "prompt"
+    flake.mkdir()
+    (flake / "flake.nix").write_text(
+        '{ nixConfig.bash-prompt = "flake> "; outputs = _: { x = 1; }; }\n', encoding="utf-8"
+    )
+    await parse(["eval", "--flake", f"path:{flake}#x", *isolated_nix_environment.pynix_store_args()]).run()
+    assert BashPrompt.configured() == BashPrompt(prompt="flake> ")
 
 
 def test_an_output_path_is_rewritten_to_the_outputs_directory(tmp_path: Path) -> None:
