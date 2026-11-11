@@ -13,6 +13,8 @@ Build a Nix derivation value
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
+| `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
@@ -60,6 +62,8 @@ Copy the closure of a store path from one store to another
 | --- | --- | --- |
 | `paths` | `list[str]` | Store paths to copy. Give none when --file or --flake names the target. (default: `[]`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
+| `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
 | `--to` | `str or None` | Store URI to copy into. --store is the other side. (default: `None`) |
@@ -75,6 +79,8 @@ Evaluate a Nix expression and print the result as JSON
 | --- | --- | --- |
 | `--expr` | `str or None` | Nix expression to evaluate. Reads from stdin if not provided. (default: `None`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
+| `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
 | `--store` | `str` | Store URI to evaluate with. (default: `'auto'`) |
@@ -98,6 +104,8 @@ Examples:
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
+| `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
 | `--store` | `str` | Store URI to use. (default: `'auto'`) |
@@ -117,6 +125,8 @@ Examples:
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
+| `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
@@ -146,6 +156,8 @@ Examples:
 | --- | --- | --- |
 | `installables` | `list[str]` | Flake references, or attribute paths of --file. (default: `[]`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
+| `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
 | `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--print-build-logs` | `bool` | Print build log lines to stderr. (default: `False`) |
@@ -246,6 +258,8 @@ Examples:
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
+| `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
@@ -306,6 +320,8 @@ Open an interactive Nix evaluation session.
 | --- | --- | --- |
 | `--store` | `str` | Store URI to evaluate with. (default: `'auto'`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
+| `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
 
@@ -325,6 +341,8 @@ Examples:
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
+| `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
@@ -352,6 +370,8 @@ Examples:
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
+| `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
@@ -368,6 +388,8 @@ Search the NixOS options and the packages of one target.
 | --- | --- | --- |
 | `query` | `str or None` | Search query. Omit to just (re)build the index. (default: `None`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
+| `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
 | `--options` | `bool` | Search the NixOS module options only. Without this and --packages, the search reads whichever of the two the target offers. (default: `False`) |

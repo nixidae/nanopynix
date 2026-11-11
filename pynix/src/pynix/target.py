@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -184,6 +186,39 @@ def _is_lookup_path(candidate: str) -> bool:
     return len(candidate) > 2 and candidate.startswith("<") and candidate.endswith(">")  # noqa: PLR2004 -- '<' and '>' plus one character, which is the rule in lookup_file_arg
 
 
+class AutoArgKind(Enum):
+    """How the text of an ``--arg`` or an ``--argstr`` becomes a value."""
+
+    EXPR = "arg"
+    STRING = "argstr"
+
+
+@dataclass(frozen=True, slots=True)
+class AutoArg:
+    """One argument for the function that ``--file`` names."""
+
+    name: str
+    kind: AutoArgKind
+    text: str
+
+
+def auto_args(arg: Sequence[tuple[str, str]], argstr: Sequence[tuple[str, str]]) -> tuple[AutoArg, ...]:
+    """The arguments that ``--arg`` and ``--argstr`` give, one for each name.
+
+    A repeated name keeps its last value, as Nix's ``insert_or_assign`` does.
+    A name in both options is refused: two separate options lose the order
+    between them, and Nix keeps the later of the two.
+    """
+    exprs = dict(arg)
+    strings = dict(argstr)
+    if both := sorted(exprs.keys() & strings.keys()):
+        raise EvaluationTargetError(f"--arg and --argstr both give the argument {', '.join(both)}")
+    return (
+        *(AutoArg(name, AutoArgKind.EXPR, text) for name, text in exprs.items()),
+        *(AutoArg(name, AutoArgKind.STRING, text) for name, text in strings.items()),
+    )
+
+
 @dataclass(frozen=True)
 class EvaluationTarget:
     """A file or flake evaluation source with an optional attribute selector."""
@@ -191,11 +226,23 @@ class EvaluationTarget:
     file: str | None
     attr: str | None
     flake: str | None
+    arg: tuple[tuple[str, str], ...] = ()
+    argstr: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def from_command(cls, command: Any) -> EvaluationTarget:
         """Construct a target from a command declaring the common options."""
-        return cls(file=command.file, attr=command.attr, flake=command.flake)
+        return cls(
+            file=command.file,
+            attr=command.attr,
+            flake=command.flake,
+            arg=tuple(command.arg),
+            argstr=tuple(command.argstr),
+        )
+
+    def auto_args(self) -> tuple[AutoArg, ...]:
+        """See :func:`auto_args`."""
+        return auto_args(self.arg, self.argstr)
 
     async def file_reference(self) -> FileReference | None:
         """Resolve ``--file``, or return ``None`` when there is no ``--file``."""
@@ -223,6 +270,10 @@ class EvaluationTarget:
             raise EvaluationTargetError("either --file or --flake is required")
         if self.attr is not None and self.file is None and self.flake is None:
             raise EvaluationTargetError("--attr requires --file or --flake")
+        # Nix ignores both for a flake. A flake takes no arguments, so the
+        # value would not reach anything.
+        if self.auto_args() and self.file is None:
+            raise EvaluationTargetError("--arg and --argstr require --file")
 
 
 #: What the module system stamps on the result of `nixosSystem` and of

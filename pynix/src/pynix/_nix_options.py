@@ -25,7 +25,13 @@ this module exists to keep off a start that evaluates nothing.
 
 from __future__ import annotations
 
-from libpynix import attr_option as _attr_option, file_option as _file_option, flake_option as _flake_option
+from libpynix import (
+    arg_option as arg_option,
+    argstr_option as argstr_option,
+    attr_option as _attr_option,
+    file_option as _file_option,
+    flake_option as _flake_option,
+)
 from libpynix._typecheck import no_runtime_type_check
 from pynix._attr_completion import FlakeSearch, complete_attr, complete_file, flake_completer
 

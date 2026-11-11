@@ -60,6 +60,8 @@ ROOT_SUBCOMMANDS = frozenset(
 #: from one declaration, and a caller can type either.
 BUILD_OPTIONS = frozenset(
     {
+        "--arg",
+        "--argstr",
         "--attr",
         "--copy",
         "--copy-back",

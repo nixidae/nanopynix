@@ -205,3 +205,82 @@ async def test_eval_accepts_impure(
     cmd = parse(["eval", "--impure", "--expr", "builtins ? currentSystem", *shared_nix_environment.pynix_store_args()])
     await cmd.run()
     assert _parse_json_output(capsys.readouterr().out) is True
+
+
+_FUNCTION = '{ a ? "da", b ? "db", c }: { inherit a b c; }'
+
+
+async def _eval_file(
+    environment: NixTestEnvironment,
+    capsys: pytest.CaptureFixture[str],
+    nix_file: Path,
+    *arguments: str,
+) -> object:
+    await parse(["eval", "--file", str(nix_file), *arguments, *environment.pynix_store_args()]).run()
+    return _parse_json_output(capsys.readouterr().out)
+
+
+async def test_eval_arg_and_argstr_call_the_file_with_defaults_for_the_rest(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    nix_file = tmp_path / "f.nix"
+    nix_file.write_text(_FUNCTION)
+    got = await _eval_file(shared_nix_environment, capsys, nix_file, "--arg", "c", "1 + 1", "--argstr", "a", "s")
+    assert got == {"a": "s", "b": "db", "c": 2}
+
+
+async def test_eval_a_repeated_arg_keeps_the_last(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    nix_file = tmp_path / "f.nix"
+    nix_file.write_text(_FUNCTION)
+    got = await _eval_file(shared_nix_environment, capsys, nix_file, "--argstr", "c", "1", "--argstr", "c", "2")
+    assert got == {"a": "da", "b": "db", "c": "2"}
+
+
+async def test_eval_arg_applies_before_attr_selects(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    nix_file = tmp_path / "f.nix"
+    nix_file.write_text(_FUNCTION)
+    assert await _eval_file(shared_nix_environment, capsys, nix_file, "--argstr", "c", "x", "--attr", "c") == "x"
+
+
+async def test_eval_an_arg_the_function_does_not_take_is_not_evaluated(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Nix passes the thunk only to a formal that names it, so a `throw` stays unforced."""
+    nix_file = tmp_path / "f.nix"
+    nix_file.write_text(_FUNCTION)
+    got = await _eval_file(shared_nix_environment, capsys, nix_file, "--argstr", "c", "x", "--arg", "z", 'throw "z"')
+    assert got == {"a": "da", "b": "db", "c": "x"}
+
+
+async def test_eval_arg_to_a_file_that_is_not_a_function_is_unused(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`nix eval --file f.nix --argstr a x` prints the set unchanged, with exit 0."""
+    nix_file = tmp_path / "f.nix"
+    nix_file.write_text("{ a = 1; }")
+    assert await _eval_file(shared_nix_environment, capsys, nix_file, "--argstr", "a", "x") == {"a": 1}
+
+
+async def test_eval_argstr_is_a_string_and_never_nix_source(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    nix_file = tmp_path / "f.nix"
+    nix_file.write_text(_FUNCTION)
+    got = await _eval_file(shared_nix_environment, capsys, nix_file, "--argstr", "c", '"; throw "x"; "')
+    assert got == {"a": "da", "b": "db", "c": '"; throw "x"; "'}

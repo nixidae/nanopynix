@@ -32,9 +32,12 @@ from pynix._evaluate import (
 )
 from pynix.target import (
     CONFIGURATION_KINDS,
+    AutoArg,
+    AutoArgKind,
     EvaluationTarget,
     EvaluationTargetError,
     FileReference,
+    auto_args,
     configuration_message,
     resolve_file_reference,
 )
@@ -428,6 +431,24 @@ def test_the_selected_attribute_joins_a_fragment_and_an_attr() -> None:
     assert EvaluationTarget(file=None, attr=None, flake="ref#hello").selected_attr() == "hello"
     assert EvaluationTarget(file="default.nix", attr=None, flake=None).selected_attr() is None
     assert EvaluationTarget(file=None, attr=None, flake=None).selected_attr() is None
+
+
+def test_a_repeated_argument_keeps_its_last_value() -> None:
+    """Nix's `insert_or_assign` in `common-eval-args.cc`."""
+    assert auto_args([("a", "1"), ("a", "2")], [("b", "x")]) == (
+        AutoArg("a", AutoArgKind.EXPR, "2"),
+        AutoArg("b", AutoArgKind.STRING, "x"),
+    )
+
+
+def test_a_name_in_both_arg_and_argstr_is_refused() -> None:
+    with pytest.raises(EvaluationTargetError, match="both give the argument a"):
+        EvaluationTarget(file="x.nix", attr=None, flake=None, arg=(("a", "1"),), argstr=(("a", "x"),)).validate()
+
+
+def test_an_argument_without_a_file_is_refused() -> None:
+    with pytest.raises(EvaluationTargetError, match="require --file"):
+        EvaluationTarget(file=None, attr=None, flake="nixpkgs#hello", argstr=(("a", "x"),)).validate()
 
 
 def test_the_configuration_message_names_the_kind_and_the_path() -> None:

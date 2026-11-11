@@ -6,7 +6,7 @@ from typing import Literal, override
 
 from libpynix import opt
 from pynix import _impl
-from pynix._nix_options import attr_option, file_option, flake_option
+from pynix._nix_options import arg_option, argstr_option, attr_option, file_option, flake_option
 from pynix._settings import ConfiguredCommand, print_build_logs_option, store_option, verbosity_option
 
 
@@ -23,6 +23,10 @@ class Sbom(ConfiguredCommand):
       pynix sbom --flake .#default --buildtime"""
 
     file: str | None = file_option()
+
+    arg: list[tuple[str, str]] = arg_option()
+
+    argstr: list[tuple[str, str]] = argstr_option()
 
     attr: str | None = attr_option()
 

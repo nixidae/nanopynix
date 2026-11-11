@@ -88,9 +88,13 @@ async def output_paths(state: AsyncEvalState, value: AsyncValue) -> list[str]:
 
 
 def _targets(command: Shell) -> list[EvaluationTarget]:
+    arg, argstr = tuple(command.arg), tuple(command.argstr)
     if command.file is not None:
-        return [EvaluationTarget(file=command.file, attr=attr, flake=None) for attr in command.installables]
-    return [EvaluationTarget(file=None, attr=None, flake=ref) for ref in command.installables]
+        return [
+            EvaluationTarget(file=command.file, attr=attr, flake=None, arg=arg, argstr=argstr)
+            for attr in command.installables
+        ]
+    return [EvaluationTarget(file=None, attr=None, flake=ref, arg=arg, argstr=argstr) for ref in command.installables]
 
 
 async def prepare_shell(command: Shell) -> ShellEnvironment:
