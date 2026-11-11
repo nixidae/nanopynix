@@ -39,6 +39,7 @@ ROOT_SUBCOMMANDS = frozenset(
         "copy",
         "derivation",
         "develop",
+        "edit",
         "env",
         "eval",
         "flake",

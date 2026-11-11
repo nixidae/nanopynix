@@ -149,6 +149,29 @@ Examples:
 | `--print-build-logs` | `bool` | Print build log lines to stderr. (default: `False`) |
 | `command` | `list[str]` | Command to run in the environment, after --. Omit for an interactive bash. (default: `[]`) |
 
+### `pynix edit`
+
+Open the Nix expression of a Nix package in $EDITOR
+
+Opens the file of meta.position at its line, as nix edit does. $EDITOR
+defaults to cat. emacs, nano, vim and kak get the line as +LINE.
+
+Examples:
+  pynix edit --flake nixpkgs#hello
+  pynix edit --file '<nixpkgs>' --attr hello
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
+| `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--argjson` | `list[tuple[str, str]]` | Pass the JSON value JSON as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--args-json` | `str or None` | Pass each key of the JSON object JSON as an argument to the function that --file names. '@FILE' reads the object from FILE. (default: `None`) |
+| `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
+| `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
+| `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
+| `--store` | `str` | Store URI to use. (default: `'auto'`) |
+
 ### `pynix env`
 
 Run programs in an environment of packages

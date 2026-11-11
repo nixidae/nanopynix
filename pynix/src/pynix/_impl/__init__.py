@@ -30,6 +30,7 @@ from pynix._impl import (
     copy as copy,
     derivation as derivation,
     develop as develop,
+    edit as edit,
     env as env,
     eval as eval,
     flake as flake,
