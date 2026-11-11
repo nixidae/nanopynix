@@ -92,9 +92,10 @@ class Spec:
     #: `--attr a --attr b` selected `b` alone, and a caller who meant both
     #: got exit 0 (nixidae/nixidae#1050).
     once: bool = False
-    #: The names of the values in the help, as `("NAME", "EXPR")` for
-    #: `--arg NAME EXPR`. `None` leaves argparse to spell them.
-    metavar: tuple[str, ...] | None = None
+    #: The names of the values in the help: `"JSON"` for one value, or
+    #: `("NAME", "EXPR")` for `--arg NAME EXPR`. `None` leaves argparse to
+    #: spell them.
+    metavar: str | tuple[str, ...] | None = None
 
 
 #: The default of a positional that the caller must give. Not `None`, which is
@@ -114,7 +115,7 @@ def opt(  # noqa: PLR0913 -- one keyword for each thing a declaration can say; c
     complete: Completer | None = None,
     remainder: bool = False,
     once: bool = False,
-    metavar: tuple[str, ...] | None = None,
+    metavar: str | tuple[str, ...] | None = None,
 ) -> Any:
     """Declare an option.
 

@@ -76,6 +76,8 @@ from libpynix.command import (
 )
 from libpynix.nix_options import (
     arg_option as arg_option,
+    argjson_option as argjson_option,
+    args_json_option as args_json_option,
     argstr_option as argstr_option,
     attr_option as attr_option,
     attrs_option as attrs_option,

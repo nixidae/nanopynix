@@ -12,6 +12,8 @@ import pytest
 from libpynix import (
     Command,
     arg_option,
+    argjson_option,
+    args_json_option,
     argstr_option,
     attr_option,
     attrs_option,
@@ -36,6 +38,8 @@ class Calling(Command):
     file: str | None = file_option()
     arg: list[tuple[str, str]] = arg_option()
     argstr: list[tuple[str, str]] = argstr_option()
+    argjson: list[tuple[str, str]] = argjson_option()
+    args_json: str | None = args_json_option()
 
 
 def parse(*arguments: str) -> Evaluating:
@@ -85,6 +89,22 @@ def test_arg_and_argstr_collect_each_use_in_order() -> None:
     assert isinstance(command, Calling)
     assert command.arg == [("a", "1"), ("a", "2")]
     assert command.argstr == [("b", "x")]
+
+
+def test_argjson_collects_each_use_and_args_json_takes_one() -> None:
+    parser = build_parser(Calling)
+    arguments = ["--argjson", "a", "[1]", "--argjson", "b", "{}", "--args-json", "@x.json"]
+    command = dispatch(parser, parser.parse_args(arguments))
+    assert isinstance(command, Calling)
+    assert command.argjson == [("a", "[1]"), ("b", "{}")]
+    assert command.args_json == "@x.json"
+
+
+def test_a_second_args_json_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
+    parser = build_parser(Calling)
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--args-json", "{}", "--args-json", "{}"])
+    assert "--args-json may be given once" in capsys.readouterr().err
 
 
 def test_none_of_the_three_is_required() -> None:

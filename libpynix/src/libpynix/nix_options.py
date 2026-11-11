@@ -4,8 +4,9 @@
 that evaluates Nix, and two programs in this organisation had declared them
 separately: ``pynix._settings`` and ``easykubenix``'s ``NixCommand``. The help
 of ``--attr`` was the same string in both, character for character. Issue #222
-is why there is one copy now. ``--arg`` and ``--argstr`` are here for the
-same reason: they give the arguments of a ``--file`` that is a function.
+is why there is one copy now. The argument options (``--arg``, ``--argstr``,
+``--argjson``, ``--args-json``) are here for the same reason: they give the
+arguments of a ``--file`` that is a function.
 
 **This module declares the options, and reads none of them.** That split is the
 whole reason it can be here. Reading a target means an evaluator, and issue
@@ -102,5 +103,27 @@ def argstr_option() -> list[tuple[str, str]]:
     value: list[tuple[str, str]] = opt(
         metavar=("NAME", "STRING"),
         help="Pass the string STRING as the argument NAME to the function that --file names. Repeatable.",
+    )
+    return value
+
+
+@no_runtime_type_check  # see file_option
+def argjson_option() -> list[tuple[str, str]]:
+    """Declare ``--argjson NAME JSON``, as jq's ``--argjson`` does."""
+    value: list[tuple[str, str]] = opt(
+        metavar=("NAME", "JSON"),
+        help="Pass the JSON value JSON as the argument NAME to the function that --file names. Repeatable.",
+    )
+    return value
+
+
+@no_runtime_type_check  # see file_option
+def args_json_option() -> str | None:
+    """Declare ``--args-json JSON``: each key of an object is one argument."""
+    value: str | None = opt(
+        None,
+        metavar="JSON",
+        help="Pass each key of the JSON object JSON as an argument to the function that --file names. '@FILE' reads the object from FILE.",
+        once=True,
     )
     return value
