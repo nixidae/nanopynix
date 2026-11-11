@@ -412,11 +412,16 @@ class _ReplEngine:
 
     line_editors = _LINE_EDITORS
 
-    def __init__(self, store: AsyncStore, state: AsyncEvalState, repl: AsyncRepl, logs: _LogForwarder) -> None:
+    def __init__(
+        self, store: AsyncStore, state: AsyncEvalState, repl: AsyncRepl, logs: _LogForwarder, auto_args: AsyncValue
+    ) -> None:
         self._store = store
         self._state = state
         self._repl = repl
         self._logs = logs
+        # What `--arg` and `--argstr` build. `nix repl` calls every file it
+        # loads with them, `:load` and `:reload` included (`NixRepl::loadFile`).
+        self._auto_args = auto_args
 
     async def scope_names(self) -> list[str]:
         return await self._repl.names()
@@ -428,10 +433,10 @@ class _ReplEngine:
         return await self._repl.process_line(text)
 
     async def load_file(self, path: str) -> AsyncValue:
-        return await self._repl.load_file(path)
+        return await self._repl.load_file(path, self._auto_args)
 
     async def load_target(self, target: EvaluationTarget) -> AsyncValue:
-        return await _evaluate.load_repl_target(target, self._state, self._repl)
+        return await _evaluate.load_repl_target(target, self._state, self._repl, self._auto_args)
 
     async def eval_flake(self, ref: str) -> AsyncValue:
         """The value of `callFlake`, as `:load-flake` adds it: the outputs and the metadata."""
@@ -939,7 +944,8 @@ async def run_repl(command: Repl) -> None:
         state = session.eval(store)
         with patch_stdout():
             async with _forwarding(session, state) as logs:
-                repl = _ReplEngine(store, state, await state.repl(), logs)
+                auto_args = await _evaluate.auto_arg_set(state, await target.arguments.resolve())
+                repl = _ReplEngine(store, state, await state.repl(), logs, auto_args)
                 prompt: PromptSession[str] = PromptSession(
                     completer=_ReplCompleter(repl),
                     complete_while_typing=True,

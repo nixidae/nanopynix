@@ -194,18 +194,18 @@ async def evaluate_target_selected(
         raise EvaluationTargetError(str(exc)) from exc
 
 
-async def load_repl_target(target: EvaluationTarget, state: AsyncEvalState, repl: AsyncRepl) -> AsyncValue:
-    """Evaluate *target* as ``nix repl`` loads it: a file as ``:load`` does."""
+async def load_repl_target(
+    target: EvaluationTarget, state: AsyncEvalState, repl: AsyncRepl, args: AsyncValue
+) -> AsyncValue:
+    """Evaluate *target* as ``nix repl`` loads it: a file as ``:load`` does,
+    called with *args*, the set that ``--arg`` and ``--argstr`` build."""
     target.validate(required=True)
-    # `Repl.load_file` calls the file with no arguments (nixidae/nixidae#1280).
-    if target.arguments:
-        raise EvaluationTargetError("pynix repl does not pass arguments to the file yet")
     if names_stdin(target.file):
         raise EvaluationTargetError("--file - reads standard input, and the REPL reads its commands there")
     if target.file is None:
         return await evaluate_target(target, state, attr_search=repl_attr_search())
     reference = await resolve_file_reference(target.file)
-    value = await open_file_reference(reference, repl.load_file)
+    value = await open_file_reference(reference, lambda candidate: repl.load_file(candidate, args))
     try:
         if reference.fragment:
             value = await select_attr(state, value, reference.fragment)
@@ -228,7 +228,7 @@ async def _auto_arg_value(state: AsyncEvalState, arg: AutoArg) -> AsyncValue:
             return await from_json(await state.make_string(arg.text))
 
 
-async def _auto_arg_set(state: AsyncEvalState, args: tuple[AutoArg, ...]) -> AsyncValue:
+async def auto_arg_set(state: AsyncEvalState, args: tuple[AutoArg, ...]) -> AsyncValue:
     """The attribute set ``getAutoArgs`` builds: an ``--arg`` stays an
     unforced thunk, parsed against the working directory, so an argument
     the function does not take is never evaluated."""
@@ -257,7 +257,7 @@ async def _evaluate_selected(
         # Auto-call first, then the fragment. The root of a fetched tree is
         # usually a function, and its attributes only exist after the call.
         if auto_call_file:
-            value = await auto_call(state, value, await _auto_arg_set(state, await target.arguments.resolve()))
+            value = await auto_call(state, value, await auto_arg_set(state, await target.arguments.resolve()))
         if reference.fragment:
             value = await select_attr(state, value, reference.fragment)
             selected = reference.fragment

@@ -1052,6 +1052,50 @@ async def test_repl_run_loads_a_file_target_into_initial_scope(
     assert output == ["Added 1 variables: answer", _HELP]
 
 
+async def test_repl_calls_every_loaded_file_with_the_arguments(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """``nix repl --arg`` calls the ``--file`` and each ``:load`` with the set (nixidae/nixidae#1280)."""
+    other = tmp_path / "other.nix"
+    other.write_text("{ c, ... }: { again = c; }")
+
+    def _fake_prompt_session(**kwargs: object) -> _ScriptedPromptSession:
+        return _ScriptedPromptSession(["got", "number", f":load {other}", "again", ":quit"], **kwargs)
+
+    output: list[str] = []
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.PromptSession", _fake_prompt_session)
+    nix_file = tmp_path / "test.nix"
+    nix_file.write_text('{ c, n, unused ? throw "unused" }: { got = c; number = n; }')
+
+    cmd = parse(
+        [
+            "repl",
+            "--file",
+            str(nix_file),
+            "--argstr",
+            "c",
+            "x",
+            "--arg",
+            "n",
+            "1 + 1",
+            *shared_nix_environment.pynix_store_args(),
+        ]
+    )
+    await cmd.run()
+
+    assert [str(line) for line in output] == [
+        "Added 2 variables: got number",
+        _HELP,
+        '"x"',
+        "2",
+        "Added 1 variables: again",
+        '"x"',
+    ]
+
+
 async def test_repl_run_loads_a_flake_target_into_initial_scope(
     shared_nix_environment: NixTestEnvironment,
     git_flake: Path,
@@ -1194,7 +1238,7 @@ async def test_ctrl_c_stops_a_build_and_returns_to_the_prompt(
         _forwarding(session, state) as logs,
         anyio.create_task_group() as tg,
     ):
-        engine = _ReplEngine(store, state, await state.repl(), logs)
+        engine = _ReplEngine(store, state, await state.repl(), logs, await state.make_attrs())
         tg.start_soon(interrupt_the_build)
         with anyio.fail_after(30):
             await _run_repl_loop(engine, _Prompt([f":b {build}", "1 + 1", ":quit"]))
