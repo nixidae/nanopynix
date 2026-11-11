@@ -37,7 +37,8 @@ max-jobs = 8
 
 `[defaults]` holds the options of `pynix` itself. Each key is the option
 without the leading dashes, and the environment variable is `PYNIX_` with the
-name in capitals: `store` is `PYNIX_STORE`.
+name in capitals: `store` is `PYNIX_STORE`. `store` also reads `NIX_REMOTE`, as
+`nix` does. `PYNIX_STORE` wins over it, and it wins over the file.
 
 `[nix]` holds the Nix settings, under the names that `nix.conf` uses. The
 environment variable is `PYNIX_NIX_` with the name in capitals: `max-jobs` is

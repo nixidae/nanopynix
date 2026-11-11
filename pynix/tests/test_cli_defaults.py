@@ -46,12 +46,15 @@ def write_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str) -> 
     path = tmp_path / "config.toml"
     path.write_text(text)
     monkeypatch.setenv("PYNIX_CONFIG", str(path))
+    # The store of whoever runs the suite would rank above the file.
+    monkeypatch.delenv("NIX_REMOTE", raising=False)
     return path
 
 
 def no_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point at a file that does not exist, which is the ordinary case."""
     monkeypatch.setenv("PYNIX_CONFIG", str(tmp_path / "absent.toml"))
+    monkeypatch.delenv("NIX_REMOTE", raising=False)
 
 
 KNOWN = frozenset(huggorm.list_settings())
@@ -121,6 +124,26 @@ def test_the_environment_beats_the_file(tmp_path: Path, monkeypatch: pytest.Monk
 
     assert store() == "local"
     assert nix_settings() == {"substituters": "https://env.example/"}
+
+
+def test_nix_remote_ranks_below_pynix_store_and_above_the_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`nix` reads `NIX_REMOTE` as the default of `store`, and pynix passes
+    `--store` to Nix explicitly, so Nix never reads it (nixidae/nixidae#888)."""
+    write_config(tmp_path, monkeypatch, '[defaults]\nstore = "local"\n')
+    monkeypatch.setenv("NIX_REMOTE", "dummy://")
+    assert store() == "dummy://"
+    assert build_command("--store", "daemon").store == "daemon"
+    monkeypatch.setenv("PYNIX_STORE", "local")
+    assert store() == "local"
+
+
+def test_an_empty_nix_remote_names_no_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    write_config(tmp_path, monkeypatch, '[defaults]\nstore = "daemon"\n')
+    monkeypatch.setenv("NIX_REMOTE", "")
+    assert store() == "daemon"
 
 
 def test_the_flag_beats_the_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

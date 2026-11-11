@@ -3,7 +3,8 @@
 Four layers, and the first one that names a value wins:
 
 1. the flag on the command line
-2. the environment, as ``PYNIX_<OPTION>`` and ``PYNIX_NIX_<SETTING>``
+2. the environment, as ``PYNIX_<OPTION>`` and ``PYNIX_NIX_<SETTING>``, then
+   ``NIX_REMOTE`` for ``store``
 3. ``$XDG_CONFIG_HOME/pynix/config.toml``
 4. the built-in default
 

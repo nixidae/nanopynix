@@ -3,7 +3,8 @@
 Four layers, and the first one that names a value wins:
 
 1. the flag on the command line
-2. the environment, as ``PYNIX_<OPTION>`` and ``PYNIX_NIX_<SETTING>``
+2. the environment, as ``PYNIX_<OPTION>`` and ``PYNIX_NIX_<SETTING>``, then
+   ``NIX_REMOTE`` for ``store``, as ``nix`` reads it
 3. ``$XDG_CONFIG_HOME/pynix/config.toml``
 4. the built-in default
 
@@ -72,6 +73,12 @@ DEFAULTS: Final[dict[str, str | bool | None]] = {
     "print_build_logs": False,
     "linux_builder_guest": None,
 }
+
+#: The variable that Nix reads as the default of an option, below
+#: ``PYNIX_<OPTION>`` and above the file. Nix's ``store`` setting defaults to
+#: ``NIX_REMOTE``, and pynix passes ``--store`` to Nix explicitly, so Nix never
+#: reads the variable itself.
+NIX_VARIABLES: Final[dict[str, str]] = {"store": "NIX_REMOTE"}
 
 # The spellings of true and false that the environment takes.
 _TRUE = frozenset({"1", "true", "yes", "on"})
@@ -146,10 +153,14 @@ def pynix_defaults(**named: Any) -> dict[str, str | bool | None]:
     for name, default in DEFAULTS.items():
         variable = f"{DEFAULTS_PREFIX}{name.upper()}"
         key = name.replace("_", "-")
+        nix_variable = NIX_VARIABLES.get(name)
         if name in named:
             resolved[name] = named[name]
         elif variable in os.environ:
             resolved[name] = _option(name, os.environ[variable], variable)
+        # An empty `NIX_REMOTE` is Nix's `auto` too, so it names nothing.
+        elif nix_variable is not None and os.environ.get(nix_variable):
+            resolved[name] = _option(name, os.environ[nix_variable], nix_variable)
         elif key in table:
             resolved[name] = _option(name, table[key], f"{key} in [{DEFAULTS_TABLE}]")
         else:
