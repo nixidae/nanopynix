@@ -161,7 +161,8 @@ ignore = [
 ]
 
 [lint.flake8-builtins]
-ignorelist = ["eval"]
+# A module of `pynix._impl` is named after the subcommand it runs.
+ignorelist = ["eval", "hash"]
 
 # Raw-asyncio APIs this codebase does not use, with the anyio replacement named
 # in the message so the fix is in the diagnostic rather than in someone's head.

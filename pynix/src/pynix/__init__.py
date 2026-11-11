@@ -24,6 +24,7 @@ from pynix.develop import Develop, PrintDevEnv
 from pynix.env import Env
 from pynix.eval import Eval
 from pynix.flake import Flake
+from pynix.hash import Hash
 from pynix.log import Log
 from pynix.path_info import PathInfo
 from pynix.registry import Registry
@@ -58,6 +59,7 @@ Pynix = group(
         Develop,
         Env,
         Flake,
+        Hash,
         Log,
         PathInfo,
         PrintDevEnv,

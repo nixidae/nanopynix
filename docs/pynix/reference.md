@@ -19,6 +19,7 @@ Build a Nix derivation value
 | `--args-json` | `str or None` | Pass each key of the JSON object JSON as an argument to the function that --file names. '@FILE' reads the object from FILE. (default: `None`) |
 | `--attr` | `list[str]` | Dot-separated attribute path within the evaluation result. Repeatable: each one is a target. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
+| `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
 | `--eval-store` | `str or None` | Store URI to evaluate with. Defaults to --store. (default: `None`) |
 | `--substituters` | `str or None` | Space-separated substituter URLs. (default: `None`) |
@@ -70,6 +71,7 @@ Copy the closure of a store path from one store to another
 | `--args-json` | `str or None` | Pass each key of the JSON object JSON as an argument to the function that --file names. '@FILE' reads the object from FILE. (default: `None`) |
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
+| `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
 | `--to` | `str or None` | Store URI to copy into. --store is the other side. (default: `None`) |
 | `--from` | `str or None` | Store URI to copy out of. --store is the other side. (default: `None`) |
 | `--check-sigs` | `bool` | Refuse a path that the destination store cannot verify a signature for. (default: `True`) |
@@ -92,7 +94,7 @@ Evaluate a Nix expression and print the result as JSON
 | `--store` | `str` | Store URI to evaluate with. (default: `'auto'`) |
 | `--apply` | `str or None` | Apply the function EXPR to the result before it is printed. (default: `None`) |
 | `--raw` | `bool` | Print the result as a string, with no quotes and no newline. A value that does not coerce to a string is an error. (default: `False`) |
-| `--impure` | `bool` | Allow access to mutable paths and the environment, as nix eval --impure does. (default: `False`) |
+| `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
 
 ### `pynix derivation`
 
@@ -116,6 +118,7 @@ Examples:
 | `--args-json` | `str or None` | Pass each key of the JSON object JSON as an argument to the function that --file names. '@FILE' reads the object from FILE. (default: `None`) |
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
+| `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
 | `--store` | `str` | Store URI to use. (default: `'auto'`) |
 
 ### `pynix develop`
@@ -139,6 +142,7 @@ Examples:
 | `--args-json` | `str or None` | Pass each key of the JSON object JSON as an argument to the function that --file names. '@FILE' reads the object from FILE. (default: `None`) |
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
+| `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
 | `--eval-store` | `str or None` | Store URI to evaluate with. Defaults to --store. (default: `None`) |
 | `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
@@ -166,6 +170,7 @@ Examples:
 | --- | --- | --- |
 | `installables` | `list[str]` | Flake references, or attribute paths of --file. (default: `[]`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
+| `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
 | `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--argjson` | `list[tuple[str, str]]` | Pass the JSON value JSON as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
@@ -243,6 +248,107 @@ Examples:
 | `--store` | `str` | Store URI to fetch the inputs into. (default: `'auto'`) |
 | `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 
+#### `pynix flake check`
+
+Check that a flake evaluates, and build its checks
+
+Each output is checked by its kind, as nix flake check does. The checks
+of this system are built. With --keep-going every failure is reported
+before the command fails; without it the first one ends it.
+
+Examples:
+  pynix flake check
+  pynix flake check --no-build ./path/to/flake
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `flake_ref` | `str` | Flake reference (default: '.'). (default: `'.'`) |
+| `--no-build` | `bool` | Do not build the checks; evaluate only, and write nothing to the store. (default: `False`) |
+| `--all-systems` | `bool` | Check the outputs of every system, not only this one. (default: `False`) |
+| `--keep-going` | `bool` | Report every failure, not only the first one. (default: `False`) |
+| `--store` | `str` | Store URI to evaluate and build with. (default: `'auto'`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
+
+### `pynix hash`
+
+Compute and convert cryptographic hashes
+
+#### `pynix hash convert`
+
+Convert between hash formats
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `hashes` | `list[str]` | Hashes to convert. (default: `[]`) |
+| `--from` | `Literal[base16, nix32, base32, base64, sri] or None` | Hash format (`base16`, `nix32`, `base64`, `sri`). (default: `None`) |
+| `--to` | `Literal[base16, nix32, base32, base64, sri]` | Hash format (`base16`, `nix32`, `base64`, `sri`). Default: `sri`. (default: `'sri'`) |
+| `--algo` | `Literal[blake3, md5, sha1, sha256, sha512] or None` | Hash algorithm (`blake3`, `md5`, `sha1`, `sha256`, or `sha512`). Can be omitted for SRI hashes. (default: `None`) |
+
+#### `pynix hash path`
+
+Print cryptographic hash of the NAR serialisation of a path
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `paths` | `list[str]` | Paths to hash. (default: `[]`) |
+| `--type` | `Literal[blake3, md5, sha1, sha256, sha512]` | Hash algorithm (`blake3`, `md5`, `sha1`, `sha256`, or `sha512`). (default: `'sha256'`) |
+| `--sri` | `bool` | Print the hash in SRI format. (default: `False`) |
+| `--base64` | `bool` | Print the hash in base-64 format. (default: `False`) |
+| `--base32` | `bool` | Print the hash in base-32 (Nix-specific) format. (default: `False`) |
+| `--base16` | `bool` | Print the hash in base-16 format. (default: `False`) |
+| `--algo` | `Literal[blake3, md5, sha1, sha256, sha512] or None` | Hash algorithm (`blake3`, `md5`, `sha1`, `sha256`, or `sha512`). (default: `None`) |
+| `--mode` | `Literal[flat, nar, git]` | How to compute the hash of the input. (default: `'nar'`) |
+| `--format` | `Literal[base16, nix32, base32, base64, sri] or None` | Hash format (`base16`, `nix32`, `base64`, `sri`). Default: `sri`. (default: `None`) |
+
+#### `pynix hash file`
+
+Print cryptographic hash of a regular file
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `paths` | `list[str]` | Paths to hash. (default: `[]`) |
+| `--type` | `Literal[blake3, md5, sha1, sha256, sha512]` | Hash algorithm (`blake3`, `md5`, `sha1`, `sha256`, or `sha512`). (default: `'sha256'`) |
+| `--sri` | `bool` | Print the hash in SRI format. (default: `False`) |
+| `--base64` | `bool` | Print the hash in base-64 format. (default: `False`) |
+| `--base32` | `bool` | Print the hash in base-32 (Nix-specific) format. (default: `False`) |
+| `--base16` | `bool` | Print the hash in base-16 format. (default: `False`) |
+
+#### `pynix hash to-base16`
+
+Convert a hash to base-16 representation (deprecated, use `nix hash convert` instead)
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `strings` | `list[str]` | Hashes to convert. (default: `[]`) |
+| `--type` | `Literal[blake3, md5, sha1, sha256, sha512] or None` | Hash algorithm (`blake3`, `md5`, `sha1`, `sha256`, or `sha512`). (default: `None`) |
+
+#### `pynix hash to-base32`
+
+Convert a hash to base-32 representation (deprecated, use `nix hash convert` instead)
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `strings` | `list[str]` | Hashes to convert. (default: `[]`) |
+| `--type` | `Literal[blake3, md5, sha1, sha256, sha512] or None` | Hash algorithm (`blake3`, `md5`, `sha1`, `sha256`, or `sha512`). (default: `None`) |
+
+#### `pynix hash to-base64`
+
+Convert a hash to base-64 representation (deprecated, use `nix hash convert` instead)
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `strings` | `list[str]` | Hashes to convert. (default: `[]`) |
+| `--type` | `Literal[blake3, md5, sha1, sha256, sha512] or None` | Hash algorithm (`blake3`, `md5`, `sha1`, `sha256`, or `sha512`). (default: `None`) |
+
+#### `pynix hash to-sri`
+
+Convert a hash to SRI representation (deprecated, use `nix hash convert` instead)
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `strings` | `list[str]` | Hashes to convert. (default: `[]`) |
+| `--type` | `Literal[blake3, md5, sha1, sha256, sha512] or None` | Hash algorithm (`blake3`, `md5`, `sha1`, `sha256`, or `sha512`). (default: `None`) |
+
 ### `pynix log`
 
 Show the build log for a store path
@@ -278,6 +384,7 @@ Examples:
 | `--args-json` | `str or None` | Pass each key of the JSON object JSON as an argument to the function that --file names. '@FILE' reads the object from FILE. (default: `None`) |
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
+| `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
 | `--eval-store` | `str or None` | Store URI to evaluate with. Defaults to --store. (default: `None`) |
 | `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
@@ -365,6 +472,7 @@ Examples:
 | `--args-json` | `str or None` | Pass each key of the JSON object JSON as an argument to the function that --file names. '@FILE' reads the object from FILE. (default: `None`) |
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
+| `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
 | `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--print-build-logs` | `bool` | Print build log lines to stderr. (default: `False`) |
@@ -396,6 +504,7 @@ Examples:
 | `--args-json` | `str or None` | Pass each key of the JSON object JSON as an argument to the function that --file names. '@FILE' reads the object from FILE. (default: `None`) |
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
+| `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
 | `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--print-build-logs` | `bool` | Print build log lines to stderr. (default: `False`) |
@@ -416,6 +525,7 @@ Search the NixOS options and the packages of one target.
 | `--args-json` | `str or None` | Pass each key of the JSON object JSON as an argument to the function that --file names. '@FILE' reads the object from FILE. (default: `None`) |
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
+| `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
 | `--options` | `bool` | Search the NixOS module options only. Without this and --packages, the search reads whichever of the two the target offers. (default: `False`) |
 | `--packages` | `bool` | Search the packages only. Without this and --options, the search reads whichever of the two the target offers. (default: `False`) |
 | `--options-attr` | `str or None` | Attribute path to the options tree, relative to the target. The default tries 'options'. (default: `None`) |

@@ -5,7 +5,8 @@ extend = "nix/shared/ruff.toml"
 "test-support/**" = "py312"
 
 [lint.flake8-builtins]
-ignorelist = ["eval"]
+# A module of `pynix._impl` is named after the subcommand it runs.
+ignorelist = ["eval", "hash"]
 
 [lint.per-file-ignores]
 # `**/tests/**` and not `tests/**`: issue #130 gives each project its own
