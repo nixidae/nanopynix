@@ -358,6 +358,48 @@ Show the build log for a store path
 | `path` | `str` | Store path whose build log should be printed. *(required)* |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
+### `pynix nar`
+
+Create or inspect NAR files
+
+#### `pynix nar cat`
+
+Print the contents of a file inside a NAR file on stdout
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `nar` | `Path` | NAR file to read. *(required)* |
+| `path` | `str` | Path of the file inside the NAR. *(required)* |
+
+#### `pynix nar dump-path`
+
+Serialise a path to stdout in NAR format (deprecated alias for `nar pack`)
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `path` | `Path` | Path to serialise. *(required)* |
+
+#### `pynix nar ls`
+
+Show information about a path inside a NAR file
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `nar` | `Path` | NAR file to read. *(required)* |
+| `path` | `str` | Path inside the NAR. *(required)* |
+| `--recursive` | `bool` | List subdirectories recursively. (default: `False`) |
+| `--long` | `bool` | Show detailed file information. (default: `False`) |
+| `--directory` | `bool` | Show directories rather than their contents. (default: `False`) |
+| `--json` | `bool` | Produce output in JSON format. (default: `False`) |
+
+#### `pynix nar pack`
+
+Serialise a path to stdout in NAR format
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `path` | `Path` | Path to serialise. *(required)* |
+
 ### `pynix path-info`
 
 Show information about a store path

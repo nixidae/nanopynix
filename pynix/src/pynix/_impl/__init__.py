@@ -39,6 +39,7 @@ from pynix._impl import (
     log as log,
     main as main,
     merged_tui as merged_tui,
+    nar as nar,
     options_tui as options_tui,
     package_tui as package_tui,
     path_info as path_info,

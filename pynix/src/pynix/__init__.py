@@ -26,6 +26,7 @@ from pynix.eval import Eval
 from pynix.flake import Flake
 from pynix.hash import Hash
 from pynix.log import Log
+from pynix.nar import Nar
 from pynix.path_info import PathInfo
 from pynix.registry import Registry
 from pynix.repl import Repl
@@ -61,6 +62,7 @@ Pynix = group(
         Flake,
         Hash,
         Log,
+        Nar,
         PathInfo,
         PrintDevEnv,
         Registry,
