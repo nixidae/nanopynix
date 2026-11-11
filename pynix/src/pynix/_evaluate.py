@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Awaitable, Callable
+from typing import Final
 
 import huggorm
 import structlog
@@ -333,6 +335,58 @@ async def configuration_kind(state: AsyncEvalState, value: AsyncValue) -> tuple[
     if not isinstance(class_name, str):
         return None
     return CONFIGURATION_KINDS.get(class_name)
+
+
+async def is_derivation(state: AsyncEvalState, value: AsyncValue) -> bool:
+    """libexpr's ``isDerivation``: an attribute set whose ``type`` is ``"derivation"``."""
+    await state.force(value)
+    return (
+        await value.type_name() == "attrs"
+        and await value.has("type")
+        and await _attr_json(value, "type") == "derivation"
+    )
+
+
+_ATTR_PATH_COMPONENT: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_+-]*")
+
+
+def _join_attr_path(prefix: str, name: str) -> str:
+    return f"{prefix}.{name}" if prefix else name
+
+
+async def derivations(state: AsyncEvalState, value: AsyncValue, prefix: str = "") -> list[tuple[str, AsyncValue]]:
+    """The derivations *value* holds, each with its attribute path, as
+    ``nix build`` expands a value that is not a derivation.
+
+    ``getDerivations`` (``src/libexpr/get-drvs.cc``): a derivation is itself.
+    A set gives each member that is a derivation, in sorted order, and goes
+    into a member set only when it carries ``recurseForDerivations = true``;
+    a name that is not ``[A-Za-z_][A-Za-z0-9_+-]*`` is skipped. A list gives
+    each element, and goes into every element that is not a derivation.
+    Anything else is the type error Nix raises.
+    """
+    if await is_derivation(state, value):
+        return [(prefix, value)]
+    kind = await value.type_name()
+    found: list[tuple[str, AsyncValue]] = []
+    if kind == "attrs":
+        for name in sorted(await value.names()):
+            if not _ATTR_PATH_COMPONENT.fullmatch(name):
+                continue
+            member = await value.get(name)
+            path = _join_attr_path(prefix, name)
+            if await is_derivation(state, member):
+                found.append((path, member))
+            elif await optional_attr(state, member, "recurseForDerivations") is True:
+                found.extend(await derivations(state, member, path))
+    elif kind == "list":
+        for index in range(await value.length()):
+            element = await value.at(index)
+            await state.force(element)
+            found.extend(await derivations(state, element, _join_attr_path(prefix, str(index))))
+    else:
+        raise EvaluationTargetError("expression does not evaluate to a derivation (or a set or list of those)")
+    return found
 
 
 async def derivation_path(state: AsyncEvalState, value: AsyncValue, *, selected: str | None = None) -> str:

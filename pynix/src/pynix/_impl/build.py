@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import difflib
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -46,7 +46,7 @@ from pynix._build_monitor import BuildPlan, MonitorState
 from pynix._impl.copy import StoreEnds, closure_of, copy_verified
 from pynix._impl.linux_builder import LinuxBuilderError, linux_builder, requested_guest
 from pynix._util import (
-    build_derivation,
+    build_derivations,
     configured_nix_settings,
     error_console,
     error_exit,
@@ -86,9 +86,29 @@ def _server_options(overlay: Path | Temporary, settings: Mapping[str, str], sand
     return ServerOptions(settings=options, load_config=True, overlay=overlay)
 
 
-async def _copy_outputs(
-    store: AsyncStore, destination: AsyncStore, outputs: dict[str, str], uri: str
-) -> dict[str, Any]:
+@dataclass(frozen=True, slots=True)
+class BuiltTarget:
+    """One derivation that a build built, and the attribute path that named it."""
+
+    attr: str
+    drv_path: str
+    outputs: dict[str, str]
+
+
+def output_report(built: Sequence[BuiltTarget]) -> dict[str, str] | dict[str, dict[str, str]]:
+    """The ``outputs`` of the report: one target's outputs as they are, and
+    several keyed by attribute path, because two targets can each have an
+    ``out`` (nixidae/nixidae#891)."""
+    if len(built) == 1:
+        return dict(built[0].outputs)
+    return {target.attr: dict(target.outputs) for target in built}
+
+
+def _output_paths(built: Sequence[BuiltTarget]) -> list[str]:
+    return [path for target in built for path in target.outputs.values()]
+
+
+async def _copy_outputs(store: AsyncStore, destination: AsyncStore, outputs: Sequence[str], uri: str) -> dict[str, Any]:
     """Copy the closure of *outputs* from *store* to *destination*, which *uri* names, and report what arrived.
 
     Signature checking is off because these paths were built here a moment
@@ -97,7 +117,7 @@ async def _copy_outputs(
     path that it refuses quietly is caught by
     :func:`pynix._impl.copy.copy_verified`.
     """
-    requested = sorted(set(outputs.values()))
+    requested = sorted(set(outputs))
     closure = await closure_of(store, requested)
     ends = StoreEnds(store, destination, check_sigs=False)
     present, arrived = await copy_verified(ends, requested, closure, uri)
@@ -132,30 +152,36 @@ class BuildSession:
     state: AsyncEvalState
 
 
-async def _evaluate_build_target(target: EvaluationTarget, state: AsyncEvalState) -> AsyncValue:
+async def _evaluate_build_target(target: EvaluationTarget, state: AsyncEvalState) -> list[tuple[str, AsyncValue]]:
+    """The derivations *target* names, each with its attribute path."""
     try:
         root = await _evaluate.evaluate_target(
             target, state, auto_call_file=True, attr_search=_evaluate.base_attr_search()
         )
     except EvaluationTargetError as exc:
         raise BuildTargetError(str(exc)) from exc
-    # **Before the build, and not after it.** Nix answers a configuration with
-    # `selected value is not a derivation`, which is true and is the end of the
-    # road: it says neither what the value is nor which path would work. The
-    # test costs two attribute reads, and only a value that is an attribute set
+    # **Before the build, and not after it.** Nix builds nothing for a
+    # configuration and says nothing: it holds no derivation at the top level.
+    # That says neither what the value is nor which path would work. The test
+    # costs two attribute reads, and only a value that is an attribute set
     # reaches even the first one.
     kind = await _evaluate.configuration_kind(state, root)
     if kind is not None:
         raise BuildTargetError(configuration_message(kind, target.selected_attr()))
-    return root
+    try:
+        return await _evaluate.derivations(state, root, target.selected_attr() or "")
+    except EvaluationTargetError as exc:
+        raise BuildTargetError(str(exc)) from exc
 
 
-async def _plan(build: BuildSession, drv_path: str) -> BuildPlan:
+async def _plan(build: BuildSession, drv_paths: Sequence[str]) -> BuildPlan:
     """:func:`plan_build` on huggorm's stores."""
-    missing = await build.build_store.query_missing([await build.build_store.parse_derived_path(f"{drv_path}^*")])
+    missing = await build.build_store.query_missing(
+        [await build.build_store.parse_derived_path(f"{drv_path}^*") for drv_path in drv_paths]
+    )
     builds = frozenset([await build.build_store.print_store_path(p) for p in missing.will_build()])
     downloads = frozenset([await build.build_store.print_store_path(p) for p in missing.will_substitute()])
-    store_dir = drv_path.rsplit("/", 1)[0]
+    store_dir = drv_paths[0].rsplit("/", 1)[0]
     paths: dict[str, frozenset[str]] = {}
 
     async def input_drvs(path: str) -> list[str]:
@@ -180,7 +206,7 @@ async def _plan(build: BuildSession, drv_path: str) -> BuildPlan:
 
     children: dict[str, tuple[str, ...]] = {}
     outputs: dict[str, frozenset[str]] = {}
-    for node in (drv_path, *sorted(builds - {drv_path})):
+    for node in (*drv_paths, *sorted(builds - set(drv_paths))):
         outputs[node] = await output_paths(node)
         kids: list[str] = []
         for input_drv in await input_drvs(node):
@@ -190,7 +216,7 @@ async def _plan(build: BuildSession, drv_path: str) -> BuildPlan:
                 outputs[input_drv] = input_outputs
                 kids.append(input_drv)
         children[node] = tuple(kids)
-    return BuildPlan(roots=(drv_path,), children=children, outputs=outputs, builds=builds, downloads=downloads)
+    return BuildPlan(roots=tuple(drv_paths), children=children, outputs=outputs, builds=builds, downloads=downloads)
 
 
 async def _drv_path(build: BuildSession, root: AsyncValue) -> str:
@@ -223,43 +249,67 @@ async def _updated_source(source_file: Path, mismatch: FodHashMismatch) -> str:
     return updated
 
 
+async def _build_all(
+    build: BuildSession, found: Sequence[tuple[str, AsyncValue]], monitor: MonitorState | None
+) -> list[BuiltTarget]:
+    """Build every derivation in *found* in one request, as ``nix build a b`` does.
+
+    A derivation that two attribute paths name builds once, and each path
+    reports it.
+    """
+    named = [(attr, await _drv_path(build, value)) for attr, value in dict(found).items()]
+    if not named:
+        return []
+    drv_paths = list(dict.fromkeys(drv_path for _, drv_path in named))
+    if monitor is not None:
+        monitor.plan = await _plan_or_none(build, drv_paths)
+    outputs = await build_derivations(build.build_store, drv_paths, eval_store=build.evaluation_store)
+    return [BuiltTarget(attr, drv_path, outputs[drv_path]) for attr, drv_path in named]
+
+
+async def _names_the_fod(
+    build: BuildSession, found: Sequence[tuple[str, AsyncValue]], mismatch: FodHashMismatch
+) -> bool:
+    for _, value in found:
+        if await mismatch_is_target_fod(build.evaluation_store, build.state, value, mismatch):
+            return True
+    return False
+
+
 async def _build_target(
-    target: EvaluationTarget,
+    targets: Sequence[EvaluationTarget],
     build: BuildSession,
     *,
     update_fod: bool,
     dry_run: bool,
     monitor: MonitorState | None = None,
-) -> tuple[dict[str, str], int]:
-    """Build a target, applying only unambiguous plain-string FOD updates.
+) -> tuple[list[BuiltTarget], int]:
+    """Build the targets, applying only unambiguous plain-string FOD updates.
 
     Each attempt evaluates again, after the evaluator forgets every file it
     read, so it reads its own edit. A mismatch that names a derivation must be
-    a fixed-output member of the target's closure before the source changes.
+    a fixed-output member of a target's closure before the source changes.
+    Every target names the same ``--file``, so the first one's is the source.
     """
-    reference = await target.file_reference()
+    reference = await targets[0].file_reference()
     source_file = reference.local_path if reference is not None else None
     updates = 0
     while True:
-        root: AsyncValue | None = None
+        found: list[tuple[str, AsyncValue]] = []
         # A failed dependency's cause is not in the error of the target that
         # needed it. It arrives on the process stream, and only a capture has
         # all of it when the build returns.
         async with build.session.capture_process(level=_CAUSE_LEVEL) as logs:
             try:
-                root = await _evaluate_build_target(target, build.state)
-                drv_path = await _drv_path(build, root)
-                if monitor is not None:
-                    monitor.plan = await _plan_or_none(build, drv_path)
-                return await build_derivation(build.build_store, drv_path, eval_store=build.evaluation_store), updates
+                for target in targets:
+                    found.extend(await _evaluate_build_target(target, build.state))
+                return await _build_all(build, found, monitor), updates
             except NixError as exc:
                 error = exc
         mismatch = extract_fod_hash_mismatch(str(error)) or extract_unique_fod_hash_mismatch(_messages(logs))
         if not update_fod or mismatch is None:
             raise error
-        if mismatch.drv_path is not None and (
-            root is None or not await mismatch_is_target_fod(build.evaluation_store, build.state, root, mismatch)
-        ):
+        if mismatch.drv_path is not None and not await _names_the_fod(build, found, mismatch):
             raise BuildTargetError(
                 "fixed-output hash mismatch was not found in the evaluated target derivation closure"
             ) from error
@@ -270,7 +320,7 @@ async def _build_target(
         updated = await _updated_source(source_file, mismatch)
         updates += 1
         if dry_run:
-            return {}, updates
+            return [], updates
         await AnyioPath(source_file).write_text(updated)
         for path in await build.state.cached_files():
             await build.state.forget_file(path)
@@ -286,8 +336,8 @@ class _StoreUris:
 
 
 async def _build_on_huggorm(
-    command: Build, target: EvaluationTarget, settings: dict[str, str], uris: _StoreUris
-) -> tuple[dict[str, str], int, dict[str, Any] | None]:
+    command: Build, targets: Sequence[EvaluationTarget], settings: dict[str, str], uris: _StoreUris
+) -> tuple[list[BuiltTarget], int, dict[str, Any] | None]:
     monitor = MonitorState(started=time.monotonic(), print_build_logs=command.print_build_logs) if command.nom else None
     async with huggorm_build_session(
         uris.build,
@@ -298,30 +348,31 @@ async def _build_on_huggorm(
         monitor=monitor,
     ) as (session, build_store, eval_store, state):
         logger.info("pynix build evaluating target")
-        outputs, updates = await _build_target(
-            target,
+        built, updates = await _build_target(
+            targets,
             BuildSession(session, build_store, eval_store, state),
             update_fod=command.update_fod,
             dry_run=command.dry_run,
             monitor=monitor,
         )
         logger.info("pynix build finished")
+        outputs = _output_paths(built)
         if uris.copy_back is not None and outputs:
             await _copy_outputs(build_store, session.store(uris.copy_back), outputs, uris.copy_back)
         copied = None
         if command.copy is not None and outputs:
             copied = await _copy_outputs(build_store, session.store(command.copy), outputs, command.copy)
-    return outputs, updates, copied
+    return built, updates, copied
 
 
-async def _plan_or_none(build: BuildSession, drv_path: str) -> BuildPlan | None:
-    """The plan of *drv_path*, or None, which leaves the monitor a flat list.
+async def _plan_or_none(build: BuildSession, drv_paths: Sequence[str]) -> BuildPlan | None:
+    """The plan of *drv_paths*, or None, which leaves the monitor a flat list.
 
     A missing plan costs the tree and nothing else, so an error here must not
     stop the build.
     """
     try:
-        return await _plan(build, drv_path)
+        return await _plan(build, drv_paths)
     except NixError as exc:
         logger.warning("pynix build could not plan the dependency graph", error=str(exc))
         return None
@@ -345,13 +396,9 @@ def _print_diff(path: Path, before: str, after: str) -> None:
 
 async def run_build(command: Build) -> None:
     """The body of :meth:`pynix.build.Build.run`."""
-    target = EvaluationTarget.from_command(command)
-    try:
-        target.validate(required=True)
-    except EvaluationTargetError as exc:
-        report_and_exit(exc)
+    targets = _targets(command)
     if command.update_fod:
-        await _require_a_local_file(target)
+        await _require_a_local_file(targets[0])
     if command.dry_run and not command.update_fod:
         error_exit("--dry-run requires --update-fod")
     if command.dry_run and command.copy is not None:
@@ -369,27 +416,48 @@ async def run_build(command: Build) -> None:
     # --nom counts it in the last frame, and the message prints after that.
     try:
         if namespaced:
-            outputs, updates, copied = await _build_namespaced(command, target, settings)
+            built, updates, copied = await _build_namespaced(command, targets, settings)
         elif guest is not None:
-            outputs, updates, copied = await _build_on_linux_builder(command, target, settings, guest)
+            built, updates, copied = await _build_on_linux_builder(command, targets, settings, guest)
         else:
-            outputs, updates, copied = await _build_on_huggorm(
-                command, target, settings, _StoreUris(command.store, command.eval_store)
+            built, updates, copied = await _build_on_huggorm(
+                command, targets, settings, _StoreUris(command.store, command.eval_store)
             )
     except BuildTargetError as exc:
         report_and_exit(exc)
     except LinuxBuilderError as exc:
         error_exit(str(exc))
 
-    report: dict[str, Any] = {"outputs": outputs, "updatedFods": updates, "dryRun": command.dry_run}
+    report: dict[str, Any] = {"outputs": output_report(built), "updatedFods": updates, "dryRun": command.dry_run}
     if copied is not None:
         report["copy"] = copied
     print_json(report)
 
 
+def _targets(command: Build) -> list[EvaluationTarget]:
+    """One target for each ``--attr``, or one for the whole value, each validated."""
+    attrs: list[str | None] = [*command.attr] or [None]
+    targets = [
+        EvaluationTarget(
+            file=command.file,
+            attr=attr,
+            flake=command.flake,
+            arg=tuple(command.arg),
+            argstr=tuple(command.argstr),
+        )
+        for attr in attrs
+    ]
+    try:
+        for target in targets:
+            target.validate(required=True)
+    except EvaluationTargetError as exc:
+        report_and_exit(exc)
+    return targets
+
+
 async def _build_namespaced(
-    command: Build, target: EvaluationTarget, settings: dict[str, str]
-) -> tuple[dict[str, str], int, dict[str, Any] | None]:
+    command: Build, targets: Sequence[EvaluationTarget], settings: dict[str, str]
+) -> tuple[list[BuiltTarget], int, dict[str, Any] | None]:
     """Build in a huggorm server in its own user namespace, over an overlay store.
 
     The server is a process of its own because ``unshare`` needs a
@@ -417,14 +485,15 @@ async def _build_namespaced(
             monitor=monitor,
         ):
             logger.info("pynix build evaluating target")
-            outputs, updates = await _build_target(
-                target,
+            built, updates = await _build_target(
+                targets,
                 BuildSession(session, build_store, eval_store, state),
                 update_fod=command.update_fod,
                 dry_run=command.dry_run,
                 monitor=monitor,
             )
             logger.info("pynix build finished")
+            outputs = _output_paths(built)
             # The host store by name: in the namespace the server is root,
             # so "auto" would open the overlay at /nix/store instead.
             if command.copy_back and outputs:
@@ -433,12 +502,12 @@ async def _build_namespaced(
             if command.copy is not None and outputs:
                 destination = await session.store(command.copy)
                 copied = await _copy_outputs(build_store, destination, outputs, command.copy)
-    return outputs, updates, copied
+    return built, updates, copied
 
 
 async def _build_on_linux_builder(
-    command: Build, target: EvaluationTarget, settings: dict[str, str], guest: str
-) -> tuple[dict[str, str], int, dict[str, Any] | None]:
+    command: Build, targets: Sequence[EvaluationTarget], settings: dict[str, str], guest: str
+) -> tuple[list[BuiltTarget], int, dict[str, Any] | None]:
     """Build in a Linux VM, evaluating against the host store.
 
     The host store evaluates, so the derivations land in it and Nix copies
@@ -451,7 +520,7 @@ async def _build_on_linux_builder(
             command.eval_store or _HOST_STORE_URI,
             _HOST_STORE_URI if command.copy_back else None,
         )
-        return await _build_on_huggorm(command, target, settings, uris)
+        return await _build_on_huggorm(command, targets, settings, uris)
 
 
 def _resolve_linux_builder(command: Build, *, namespaced: bool) -> str | None:

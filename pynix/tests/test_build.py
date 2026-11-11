@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 from anyio import Path as AnyioPath
-from huggorm.errors import BuildError, EvalError
+from huggorm.errors import BuildError
 from huggorm.fod import replace_fod_hash as _real_replace_fod_hash
 from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, with_nixpkgs
 
@@ -316,15 +316,19 @@ async def test_build_names_the_activation_package_of_a_home_manager_configuratio
 
 
 @pytest.mark.parametrize("attribute", ["unknown_class", "plain_set"])
-async def test_build_keeps_the_message_of_nix_for_any_other_value(
+async def test_build_builds_nothing_for_a_set_that_holds_no_derivation(
     shared_nix_environment: NixTestEnvironment,
     tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
     attribute: str,
 ) -> None:
     """A `class` that is not one of the two named gets no guess.
 
     A set that holds `config` and `options` is any evaluation of the module
-    system, and there are more of those than the two that this knows.
+    system, and there are more of those than the two that this knows. Such a
+    set is an attribute set like any other, and `nix build --file other.nix
+    plain_set` builds the derivations in it: none, with `[]` and exit 0
+    (nixidae/nixidae#1002).
     """
     nix_file = tmp_path / "other.nix"
     nix_file.write_text(
@@ -342,11 +346,94 @@ async def test_build_keeps_the_message_of_nix_for_any_other_value(
     )
     cmd = parse(["build", "--file", str(nix_file), "--attr", attribute, *shared_nix_environment.pynix_store_args()])
 
-    # The message of Nix, and no hint added to it. `run()` is called directly
-    # here, so the error arrives as itself; `pynix._impl.main.run` is what turns
-    # it into one line for a user.
-    with pytest.raises(EvalError, match="selected value is not a derivation"):
+    await cmd.run()
+
+    assert json.loads(capsys.readouterr().out)["outputs"] == {}
+
+
+async def test_build_refuses_a_value_that_holds_no_derivation(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    nix_file = tmp_path / "number.nix"
+    nix_file.write_text("1")
+    cmd = parse(["build", "--file", str(nix_file), *shared_nix_environment.pynix_store_args()])
+
+    with pytest.raises(SystemExit):
         await cmd.run()
+
+    assert "does not evaluate to a derivation (or a set or list of those)" in strip_ansi(capsys.readouterr().err)
+
+
+def _trivial(name: str) -> str:
+    return (
+        f'derivation {{ name = "{name}"; system = builtins.currentSystem; builder = "/bin/sh"; '
+        f'args = [ "-c" "echo {name} > $out" ]; }}'
+    )
+
+
+async def _build_json(environment: NixTestEnvironment, capsys: pytest.CaptureFixture[str], *arguments: str) -> Any:
+    await parse(["build", *arguments, *environment.pynix_store_args()]).run()
+    return json.loads(capsys.readouterr().out)["outputs"]
+
+
+@LINUX_CHROOT_BUILD
+async def test_build_every_attr_and_key_the_outputs_by_attr(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`nix build --file two.nix a b` builds both (nixidae/nixidae#891)."""
+    nix_file = tmp_path / "two.nix"
+    nix_file.write_text(f"{{ a = {_trivial('pynix-attr-a')}; b = {_trivial('pynix-attr-b')}; }}")
+
+    outputs = await _build_json(shared_nix_environment, capsys, "--file", str(nix_file), "--attr", "a", "--attr", "b")
+
+    assert sorted(outputs) == ["a", "b"]
+    assert outputs["a"]["out"].endswith("-pynix-attr-a")
+    assert outputs["b"]["out"].endswith("-pynix-attr-b")
+
+
+@LINUX_CHROOT_BUILD
+async def test_build_one_attr_twice_keeps_the_flat_outputs(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    nix_file = tmp_path / "one.nix"
+    nix_file.write_text(f"{{ a = {_trivial('pynix-attr-twice')}; }}")
+
+    outputs = await _build_json(shared_nix_environment, capsys, "--file", str(nix_file), "--attr", "a", "--attr", "a")
+
+    assert outputs["out"].endswith("-pynix-attr-twice")
+
+
+@LINUX_CHROOT_BUILD
+async def test_build_a_set_builds_each_derivation_in_it(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`nix build --file . checks` (nixidae/nixidae#1002): one level, a member
+    set only with `recurseForDerivations`, and every other value skipped."""
+    nix_file = tmp_path / "checks.nix"
+    nix_file.write_text(
+        f"""{{
+  checks = {{
+    x = {_trivial("pynix-check-x")};
+    y = {_trivial("pynix-check-y")};
+    deeper = {{ recurseForDerivations = true; z = {_trivial("pynix-check-z")}; }};
+    hidden = {{ w = throw "a set without recurseForDerivations is not entered"; }};
+    number = 1;
+  }};
+}}"""
+    )
+
+    outputs = await _build_json(shared_nix_environment, capsys, "--file", str(nix_file), "--attr", "checks")
+
+    assert sorted(outputs) == ["checks.deeper.z", "checks.x", "checks.y"]
+    assert outputs["checks.deeper.z"]["out"].endswith("-pynix-check-z")
 
 
 @LINUX_CHROOT_BUILD
@@ -743,7 +830,7 @@ runCommand "payload" {
 
     async with _util.huggorm_build_session(shared_nix_environment.store_uri) as opened:
         with pytest.raises(BuildTargetError, match="not found in the evaluated target derivation closure"):
-            await _build_target(target, BuildSession(*opened), update_fod=True, dry_run=False)
+            await _build_target([target], BuildSession(*opened), update_fod=True, dry_run=False)
 
 
 async def test_build_target_requires_a_file_target_to_update_a_fod(
@@ -763,7 +850,7 @@ async def test_build_target_requires_a_file_target_to_update_a_fod(
 
     async with _util.huggorm_build_session(shared_nix_environment.store_uri) as opened:
         with pytest.raises(BuildTargetError, match="--update-fod currently requires --file"):
-            await _build_target(target, BuildSession(*opened), update_fod=True, dry_run=False)
+            await _build_target([target], BuildSession(*opened), update_fod=True, dry_run=False)
 
 
 @LINUX_CHROOT_BUILD
@@ -798,4 +885,4 @@ runCommand "payload" {
 
     async with _util.huggorm_build_session(shared_nix_environment.store_uri) as opened:
         with pytest.raises(BuildTargetError, match="stopped after 10 fixed-output hash updates"):
-            await _build_target(target, BuildSession(*opened), update_fod=True, dry_run=False)
+            await _build_target([target], BuildSession(*opened), update_fod=True, dry_run=False)

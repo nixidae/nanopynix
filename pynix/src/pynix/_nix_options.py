@@ -29,6 +29,7 @@ from libpynix import (
     arg_option as arg_option,
     argstr_option as argstr_option,
     attr_option as _attr_option,
+    attrs_option as _attrs_option,
     file_option as _file_option,
     flake_option as _flake_option,
 )
@@ -46,6 +47,12 @@ def file_option() -> str | None:
 def attr_option() -> str | None:
     """``--attr``, completing against the ``--file`` beside it."""
     return _attr_option(complete=complete_attr)
+
+
+@no_runtime_type_check  # see file_option
+def attrs_option() -> list[str]:
+    """``--attr``, repeatable, completing against the ``--file`` beside it."""
+    return _attrs_option(complete=complete_attr)
 
 
 @no_runtime_type_check  # see file_option

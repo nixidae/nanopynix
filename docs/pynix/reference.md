@@ -15,7 +15,7 @@ Build a Nix derivation value
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
-| `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
+| `--attr` | `list[str]` | Dot-separated attribute path within the evaluation result. Repeatable: each one is a target. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
 | `--eval-store` | `str or None` | Store URI to evaluate with. Defaults to --store. (default: `None`) |

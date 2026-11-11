@@ -5,7 +5,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 from typing import Any, NoReturn, TextIO
@@ -263,19 +263,39 @@ async def build_derivation(
     eval_store: huggorm.AsyncStore | None = None,
 ) -> dict[str, str]:
     """Build every output of *drv_path*, and give the path of each one."""
-    derived = await build_store.parse_derived_path(f"{drv_path}^*")
+    built = await build_derivations(build_store, [drv_path], eval_store=eval_store)
+    return built[drv_path]
+
+
+async def build_derivations(
+    build_store: huggorm.AsyncStore,
+    drv_paths: Sequence[str],
+    *,
+    eval_store: huggorm.AsyncStore | None = None,
+) -> dict[str, dict[str, str]]:
+    """Build every output of each of *drv_paths* in one request, and give
+    the path of each output by derivation.
+
+    One request, so the scheduler builds them at once. The first failure
+    raises, after every build has ended.
+    """
+    derived = [await build_store.parse_derived_path(f"{drv_path}^*") for drv_path in drv_paths]
     other_eval_store = None if eval_store is build_store else eval_store
-    [result] = await build_store.build_paths_with_results([derived], eval_store=other_eval_store)
-    error = result.error()
-    if error is not None:
-        raise error
-    success = result.success()
-    if success is None:
-        raise RuntimeError("a build reported neither success nor failure")
-    return {
-        name: await build_store.print_store_path(realisation.out_path())
-        for name, realisation in success.built_outputs().items()
-    }
+    # One result per target, in the order of the targets (`build_paths_with_results`).
+    results = await build_store.build_paths_with_results(derived, eval_store=other_eval_store)
+    built: dict[str, dict[str, str]] = {}
+    for drv_path, result in zip(drv_paths, results, strict=True):
+        error = result.error()
+        if error is not None:
+            raise error
+        success = result.success()
+        if success is None:
+            raise RuntimeError("a build reported neither success nor failure")
+        built[drv_path] = {
+            name: await build_store.print_store_path(realisation.out_path())
+            for name, realisation in success.built_outputs().items()
+        }
+    return built
 
 
 @asynccontextmanager
