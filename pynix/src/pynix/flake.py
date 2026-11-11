@@ -94,7 +94,35 @@ class Update(ConfiguredCommand):
         await _impl.flake.run_update(self)
 
 
+class Check(ConfiguredCommand):
+    """Check that a flake evaluates, and build its checks
+
+    Each output is checked by its kind, as nix flake check does. The checks
+    of this system are built. With --keep-going every failure is reported
+    before the command fails; without it the first one ends it.
+
+    Examples:
+      pynix flake check
+      pynix flake check --no-build ./path/to/flake"""
+
+    flake_ref: str = pos(default=".", help="Flake reference (default: '.').")
+
+    no_build: bool = opt(False, help="Do not build the checks; evaluate only, and write nothing to the store.")
+
+    all_systems: bool = opt(False, help="Check the outputs of every system, not only this one.")
+
+    keep_going: bool = opt(False, short="k", help="Report every failure, not only the first one.")
+
+    store: str = store_option("Store URI to evaluate and build with.")
+
+    verbosity: str | None = verbosity_option()
+
+    @override
+    async def run(self) -> None:
+        await _impl.flake_check.run_check(self)
+
+
 class Flake(PynixCommand):
     """Inspect and manage Nix flakes"""
 
-    subcommands = (Show, Metadata, Info, Lock, Update)
+    subcommands = (Show, Metadata, Info, Lock, Update, Check)
