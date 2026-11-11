@@ -37,6 +37,7 @@ from pynix._impl import (
     flake_check as flake_check,
     fmt as fmt,
     hash as hash,
+    key as key,
     linux_builder as linux_builder,
     log as log,
     main as main,
@@ -51,6 +52,7 @@ from pynix._impl import (
     sbom as sbom,
     search as search,
     settings as settings,
+    sigs as sigs,
     store as store,
     why_depends as why_depends,
 )

@@ -4,6 +4,16 @@ from typing import Literal, override
 
 from libpynix import opt, pos
 from pynix import _impl
+from pynix._nix_options import (
+    arg_option,
+    argjson_option,
+    args_json_option,
+    argstr_option,
+    attr_option,
+    file_option,
+    flake_option,
+    impure_option,
+)
 from pynix._settings import ConfiguredCommand, PynixCommand, store_option
 
 
@@ -394,6 +404,54 @@ class Verify(ConfiguredCommand):
         await _impl.store.run_verify(self)
 
 
+class StorePaths(ConfiguredCommand):
+    """The store paths that ``StorePathsCommand`` of Nix selects."""
+
+    paths: list[str] = pos(help="Store paths to operate on. Give none when --file or --flake names the target.")
+
+    file: str | None = file_option()
+
+    arg: list[tuple[str, str]] = arg_option()
+
+    argstr: list[tuple[str, str]] = argstr_option()
+
+    argjson: list[tuple[str, str]] = argjson_option()
+
+    args_json: str | None = args_json_option()
+
+    attr: str | None = attr_option()
+
+    flake: str | None = flake_option()
+
+    impure: bool = impure_option()
+
+    recursive: bool = opt(False, short="r", help="Apply operation to closure of the specified paths.")
+
+    all: bool = opt(False, help="Apply the operation to every store path.")
+
+    store: str = store_option("Store URI to operate on.")
+
+
+class Sign(StorePaths):
+    """Sign store paths with a local key"""
+
+    key_file: str = opt(None, short="k", required=True, metavar="file", help="File containing the secret signing key.")
+
+    @override
+    async def run(self) -> None:
+        await _impl.sigs.run_sign(self)
+
+
+class CopySigs(StorePaths):
+    """Copy store path signatures from substituters"""
+
+    substituter: list[str] = opt(short="s", metavar="store-uri", help="Copy signatures from the specified store.")
+
+    @override
+    async def run(self) -> None:
+        await _impl.sigs.run_copy_sigs(self)
+
+
 class Store(PynixCommand):
     """Manage the Nix store"""
 
@@ -424,4 +482,6 @@ class Store(PynixCommand):
         DiffClosures,
         Optimise,
         Verify,
+        Sign,
+        CopySigs,
     )

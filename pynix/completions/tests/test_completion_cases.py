@@ -45,6 +45,7 @@ ROOT_SUBCOMMANDS = frozenset(
         "flake",
         "fmt",
         "hash",
+        "key",
         "log",
         "nar",
         "path-info",
@@ -108,6 +109,7 @@ STORE_SUBCOMMANDS = frozenset(
         "add-temp-root",
         "cat",
         "compute-fs-closure",
+        "copy-sigs",
         "diff-closures",
         "dirs",
         "ensure-path",
@@ -125,6 +127,7 @@ STORE_SUBCOMMANDS = frozenset(
         "query-referrers",
         "query-substitutable-paths",
         "query-valid-derivers",
+        "sign",
         "verify",
     }
 )

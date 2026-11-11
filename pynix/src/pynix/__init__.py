@@ -27,6 +27,7 @@ from pynix.eval import Eval
 from pynix.flake import Flake
 from pynix.fmt import Fmt
 from pynix.hash import Hash
+from pynix.key import Key
 from pynix.log import Log
 from pynix.nar import Nar
 from pynix.path_info import PathInfo
@@ -65,6 +66,7 @@ Pynix = group(
         Flake,
         Fmt,
         Hash,
+        Key,
         Log,
         Nar,
         PathInfo,
