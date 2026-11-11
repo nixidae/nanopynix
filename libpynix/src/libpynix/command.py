@@ -92,6 +92,9 @@ class Spec:
     #: `--attr a --attr b` selected `b` alone, and a caller who meant both
     #: got exit 0 (nixidae/nixidae#1050).
     once: bool = False
+    #: The names of the values in the help, as `("NAME", "EXPR")` for
+    #: `--arg NAME EXPR`. `None` leaves argparse to spell them.
+    metavar: tuple[str, ...] | None = None
 
 
 #: The default of a positional that the caller must give. Not `None`, which is
@@ -111,6 +114,7 @@ def opt(  # noqa: PLR0913 -- one keyword for each thing a declaration can say; c
     complete: Completer | None = None,
     remainder: bool = False,
     once: bool = False,
+    metavar: tuple[str, ...] | None = None,
 ) -> Any:
     """Declare an option.
 
@@ -123,6 +127,9 @@ def opt(  # noqa: PLR0913 -- one keyword for each thing a declaration can say; c
 
     *remainder* makes the option take every argument after it; see
     :attr:`Spec.remainder`. *once* refuses a second use; see :attr:`Spec.once`.
+
+    A `list[tuple[str, str]]` field takes two values for each use, as
+    `--arg NAME EXPR` does, and collects one tuple for each.
     """
     if required and configured:
         raise ValueError("an option cannot be both required and configured; see Spec.required")
@@ -136,6 +143,7 @@ def opt(  # noqa: PLR0913 -- one keyword for each thing a declaration can say; c
         complete=complete,
         remainder=remainder,
         once=once,
+        metavar=metavar,
     )
 
 
@@ -341,6 +349,25 @@ class _Remainder(argparse.Action):
         setattr(namespace, _REMAINDER_FIELD, self.dest)
 
 
+class _AppendTuple(argparse.Action):
+    """Append the values of one use as a tuple.
+
+    argparse's own `append` with `nargs` appends a list, and the field
+    declares a tuple.
+    """
+
+    @override
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: str | Sequence[Any] | None,
+        option_string: str | None = None,
+    ) -> None:
+        collected = [*getattr(namespace, self.dest, []), tuple(values or ())]
+        setattr(namespace, self.dest, collected)
+
+
 class _Once(argparse.Action):
     """Store the value, and refuse a second one."""
 
@@ -403,12 +430,16 @@ def _option_kwargs(field: str, spec: Spec, inner: Any, *, repeated: bool) -> dic
         kwargs["action"] = argparse.BooleanOptionalAction
     elif inner is bool:
         kwargs["action"] = "store_true"
+    elif repeated and typing.get_origin(element := _element(inner)) is tuple:
+        kwargs |= {"action": _AppendTuple, "nargs": len(typing.get_args(element))}
     elif repeated:
         kwargs["action"] = "append"
     elif spec.once:
         kwargs["action"] = _Once
     if spec.required:
         kwargs["required"] = True
+    if spec.metavar is not None:
+        kwargs["metavar"] = spec.metavar
     return kwargs
 
 

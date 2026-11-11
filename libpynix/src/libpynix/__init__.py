@@ -75,6 +75,8 @@ from libpynix.command import (
     pos as pos,
 )
 from libpynix.nix_options import (
+    arg_option as arg_option,
+    argstr_option as argstr_option,
     attr_option as attr_option,
     file_option as file_option,
     flake_option as flake_option,

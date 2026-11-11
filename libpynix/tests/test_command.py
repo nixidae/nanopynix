@@ -112,6 +112,28 @@ def test_a_repeated_option_collects_every_occurrence() -> None:
     assert parse(Leaf, "--tags", "a", "--tags", "b").tags == ["a", "b"]  # type: ignore[attr-defined]  # see above
 
 
+def test_a_pair_option_collects_a_tuple_for_each_use() -> None:
+    class Caller(Command):
+        """Call a thing."""
+
+        arg: list[tuple[str, str]] = opt(metavar=("NAME", "EXPR"), help="An argument.")
+
+    assert parse(Caller, "--arg", "a", "1", "--arg", "b", "2").arg == [("a", "1"), ("b", "2")]  # type: ignore[attr-defined]  # see above
+    assert parse(Caller).arg == []  # type: ignore[attr-defined]  # see above
+    assert "--arg NAME EXPR" in build_parser(Caller).format_help()
+
+
+def test_a_pair_option_refuses_one_value(capsys: pytest.CaptureFixture[str]) -> None:
+    class Caller(Command):
+        """Call a thing."""
+
+        arg: list[tuple[str, str]] = opt(help="An argument.")
+
+    with pytest.raises(SystemExit):
+        parse(Caller, "--arg", "a")
+    assert "expected 2 arguments" in capsys.readouterr().err
+
+
 def test_a_repeated_option_gets_a_new_list_for_each_command() -> None:
     """A shared default would keep what a previous run appended to it."""
     first = parse(Leaf)

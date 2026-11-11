@@ -9,7 +9,16 @@ from __future__ import annotations
 
 import pytest
 
-from libpynix import Command, attr_option, build_parser, dispatch, file_option, flake_option
+from libpynix import (
+    Command,
+    arg_option,
+    argstr_option,
+    attr_option,
+    build_parser,
+    dispatch,
+    file_option,
+    flake_option,
+)
 
 
 class Evaluating(Command):
@@ -18,6 +27,14 @@ class Evaluating(Command):
     file: str | None = file_option()
     attr: str | None = attr_option()
     flake: str | None = flake_option()
+
+
+class Calling(Command):
+    """A command that passes arguments to a file."""
+
+    file: str | None = file_option()
+    arg: list[tuple[str, str]] = arg_option()
+    argstr: list[tuple[str, str]] = argstr_option()
 
 
 def parse(*arguments: str) -> Evaluating:
@@ -47,6 +64,14 @@ def test_a_flake_reference_is_a_string_and_keeps_every_separator() -> None:
     ``https:/example.com/x.tar.gz`` and failed.
     """
     assert parse("--file", "https://example.com/x.tar.gz").file == "https://example.com/x.tar.gz"
+
+
+def test_arg_and_argstr_collect_each_use_in_order() -> None:
+    parser = build_parser(Calling)
+    command = dispatch(parser, parser.parse_args(["--arg", "a", "1", "--argstr", "b", "x", "--arg", "a", "2"]))
+    assert isinstance(command, Calling)
+    assert command.arg == [("a", "1"), ("a", "2")]
+    assert command.argstr == [("b", "x")]
 
 
 def test_none_of_the_three_is_required() -> None:

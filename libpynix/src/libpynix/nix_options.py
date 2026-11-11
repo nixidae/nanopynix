@@ -4,9 +4,10 @@
 that evaluates Nix, and two programs in this organisation had declared them
 separately: ``pynix._settings`` and ``easykubenix``'s ``NixCommand``. The help
 of ``--attr`` was the same string in both, character for character. Issue #222
-is why there is one copy now.
+is why there is one copy now. ``--arg`` and ``--argstr`` are here for the
+same reason: they give the arguments of a ``--file`` that is a function.
 
-**This module declares the three, and reads none of them.** That split is the
+**This module declares the options, and reads none of them.** That split is the
 whole reason it can be here. Reading a target means an evaluator, and issue
 #123 measured what an evaluator costs a start that evaluates nothing: 101 ms,
 because ``pynix.target`` pulls ``structlog`` and the exception tree of
@@ -70,5 +71,25 @@ def flake_option(*, complete: Completer | None = None) -> str | None:
         help="Evaluate FLAKE, optionally with a '#'-separated attribute path.",
         complete=complete,
         once=True,
+    )
+    return value
+
+
+@no_runtime_type_check  # see file_option
+def arg_option() -> list[tuple[str, str]]:
+    """Declare ``--arg NAME EXPR``, the arguments of a ``--file`` that is a function."""
+    value: list[tuple[str, str]] = opt(
+        metavar=("NAME", "EXPR"),
+        help="Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable.",
+    )
+    return value
+
+
+@no_runtime_type_check  # see file_option
+def argstr_option() -> list[tuple[str, str]]:
+    """Declare ``--argstr NAME STRING``, as :func:`arg_option` with a string."""
+    value: list[tuple[str, str]] = opt(
+        metavar=("NAME", "STRING"),
+        help="Pass the string STRING as the argument NAME to the function that --file names. Repeatable.",
     )
     return value
