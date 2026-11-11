@@ -10,7 +10,9 @@ from __future__ import annotations
 import contextlib
 import json
 from dataclasses import dataclass
+from pathlib import Path
 
+import anyio
 import huggorm
 import structlog
 from huggorm import AsyncEvalState, AsyncValue
@@ -156,34 +158,70 @@ async def run_info(command: Info) -> None:
     await _print_flake_metadata(command.flake_ref, store_uri=command.store)
 
 
-async def _lock(flake_ref: str, *, store_uri: str, update_inputs: bool | list[str]) -> None:
+async def _lock(
+    flake_ref: str,
+    *,
+    store_uri: str,
+    verbosity: str | None,
+    update_inputs: bool | list[str],
+    fail_on_unlocked: bool,
+) -> None:
     """Lock *flake_ref* and write its lock file, as ``nix flake lock`` does.
 
     ``lockFlake`` itself writes the file, and it reports each added or moved
-    input as a warning, so nothing here renders a diff. An unchanged lock
-    file is not written, and Nix reports nothing about it.
+    input as a warning, so nothing here renders a diff. Nix writes no
+    unchanged lock file and says nothing about it; pynix says so at
+    ``talkative``. The bytes before and after decide that, because Nix
+    also writes nothing for a flake that is not on this machine.
 
     ``tarball-ttl`` is 0, as both commands of Nix set it: a cached tarball
     of a moving reference would otherwise lock the old revision again.
     """
-    async with huggorm_build_session(store_uri, settings=configured_nix_settings(tarball_ttl="0")) as (
+    ref = huggorm.parse_flake_ref(flake_ref)
+    lock_file = ref.lock_file_path()
+    before = await _read_lock_file(lock_file)
+    async with huggorm_build_session(
+        store_uri, settings=configured_nix_settings(tarball_ttl="0"), verbosity=verbosity
+    ) as (
         _session,
         _store,
         _eval,
         state,
     ):
         locked = await state.lock_flake(
-            huggorm.parse_flake_ref(flake_ref),
+            ref,
             recreate=update_inputs is True,
             update=update_inputs if isinstance(update_inputs, list) else None,
             write_lock_file=True,
+            fail_on_unlocked=fail_on_unlocked,
         )
         await locked.aclose()
+        if lock_file is not None and before is not None and before == await _read_lock_file(lock_file):
+            logger.info("pynix flake lock file is unchanged", path=str(lock_file))
+
+
+async def _read_lock_file(path: Path | None) -> bytes | None:
+    if path is None:
+        return None
+    try:
+        return await anyio.Path(path).read_bytes()
+    except FileNotFoundError:
+        return None
 
 
 async def run_lock(command: Lock) -> None:
-    """The body of :meth:`pynix.flake.Lock.run`."""
-    await _lock(command.flake_ref, store_uri=command.store, update_inputs=False)
+    """The body of :meth:`pynix.flake.Lock.run`.
+
+    Only ``lock`` refuses an unlocked input, as ``CmdFlakeLock`` alone sets
+    ``failOnUnlocked``; ``update`` warns and writes nothing.
+    """
+    await _lock(
+        command.flake_ref,
+        store_uri=command.store,
+        verbosity=command.verbosity,
+        update_inputs=False,
+        fail_on_unlocked=True,
+    )
 
 
 async def run_update(command: Update) -> None:
@@ -193,4 +231,10 @@ async def run_update(command: Update) -> None:
     inputs it updates those alone (``CmdFlakeUpdate``). ``update_inputs``
     carries the same two cases.
     """
-    await _lock(command.flake, store_uri=command.store, update_inputs=command.inputs or True)
+    await _lock(
+        command.flake,
+        store_uri=command.store,
+        verbosity=command.verbosity,
+        update_inputs=command.inputs or True,
+        fail_on_unlocked=False,
+    )

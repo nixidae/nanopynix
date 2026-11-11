@@ -222,6 +222,7 @@ Examples:
 | --- | --- | --- |
 | `flake_ref` | `str` | Flake reference (default: '.'). (default: `'.'`) |
 | `--store` | `str` | Store URI to fetch the inputs into. (default: `'auto'`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 
 #### `pynix flake update`
 
@@ -240,6 +241,7 @@ Examples:
 | `inputs` | `list[str]` | Inputs to update, such as 'nixpkgs' or 'a/b'. Omit to update every input. (default: `[]`) |
 | `--flake` | `str` | Flake reference whose lock file to update (default: '.'). (default: `'.'`) |
 | `--store` | `str` | Store URI to fetch the inputs into. (default: `'auto'`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 
 ### `pynix log`
 

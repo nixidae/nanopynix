@@ -4,7 +4,7 @@ from typing import override
 
 from libpynix import opt, pos
 from pynix import _impl
-from pynix._settings import ConfiguredCommand, PynixCommand, store_option
+from pynix._settings import ConfiguredCommand, PynixCommand, store_option, verbosity_option
 
 
 class Show(ConfiguredCommand):
@@ -63,6 +63,8 @@ class Lock(ConfiguredCommand):
 
     store: str = store_option("Store URI to fetch the inputs into.")
 
+    verbosity: str | None = verbosity_option()
+
     @override
     async def run(self) -> None:
         await _impl.flake.run_lock(self)
@@ -84,6 +86,8 @@ class Update(ConfiguredCommand):
     flake: str = opt(".", help="Flake reference whose lock file to update (default: '.').")
 
     store: str = store_option("Store URI to fetch the inputs into.")
+
+    verbosity: str | None = verbosity_option()
 
     @override
     async def run(self) -> None:

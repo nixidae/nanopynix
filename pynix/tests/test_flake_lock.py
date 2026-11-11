@@ -15,12 +15,16 @@ from typing import Any
 import huggorm
 import pygit2
 import pytest
+from huggorm.errors import NixError
 from huggorm.testing.environment import NixTestEnvironment
+from structlog.testing import capture_logs
 
 from pynix import parse
 from support.nix_oracle import require_matching_nix_cli
 from test_support.git_fixtures import LinkedFlakes, commit_files, init_linked_flakes
 from test_support.subprocess_output import run_process
+
+_UNCHANGED = "pynix flake lock file is unchanged"
 
 
 @pytest.fixture(autouse=True)
@@ -107,6 +111,68 @@ async def test_update_with_no_input_updates_every_input(
 
     assert _locked_rev(flakes, "leaf") == new_leaf
     assert _locked_rev(flakes, "mid") == new_mid
+
+
+async def test_lock_refuses_an_unlocked_input(shared_nix_environment: NixTestEnvironment, tmp_path: Path) -> None:
+    """An uncommitted change leaves ``leaf`` with no revision to lock."""
+    flakes = init_linked_flakes(tmp_path)
+    (flakes.leaf / "flake.nix").write_text('{ outputs = { ... }: { marker = "dirty"; }; }\n', encoding="utf-8")
+
+    with pytest.raises(NixError, match="because it has an unlocked input"):
+        await _pynix(shared_nix_environment, "flake", "lock", str(flakes.root))
+
+    assert not (flakes.root / "flake.lock").exists()
+
+
+async def test_update_warns_about_an_unlocked_input(
+    shared_nix_environment: NixTestEnvironment, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``CmdFlakeUpdate`` does not set ``failOnUnlocked``, so it only warns."""
+    flakes = init_linked_flakes(tmp_path)
+    (flakes.leaf / "flake.nix").write_text('{ outputs = { ... }: { marker = "dirty"; }; }\n', encoding="utf-8")
+
+    await _pynix(shared_nix_environment, "flake", "update", "--flake", str(flakes.root))
+
+    assert not (flakes.root / "flake.lock").exists()
+    assert "not writing lock file of flake" in capsys.readouterr().err
+
+
+async def _unchanged_events(environment: NixTestEnvironment, root: Path) -> list[tuple[str, str]]:
+    """What ``flake lock`` reports as unchanged. Captured after ``parse``,
+    which may configure structlog itself."""
+    command = parse(["flake", "lock", str(root), *environment.pynix_store_args()])
+    with capture_logs() as logs:
+        await command.run()
+    return [(str(e["log_level"]), str(e["path"])) for e in logs if e["event"] == _UNCHANGED]
+
+
+async def test_an_unchanged_lock_file_is_an_info_event_and_stderr_stays_quiet(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Nix prints nothing when the lock file needs no change. An info event of
+    pynix shows from ``talkative`` up (``test_nix_logs.py`` tests that gate).
+
+    The lock file is committed first: Nix itself warns about a dirty tree.
+    """
+    flakes = init_linked_flakes(tmp_path)
+    await _pynix(shared_nix_environment, "flake", "lock", str(flakes.root))
+    commit_files(pygit2.Repository(str(flakes.root)), flakes.root / "flake.lock", message="lock")
+    capsys.readouterr()
+
+    events = await _unchanged_events(shared_nix_environment, flakes.root)
+
+    assert capsys.readouterr().err == ""
+    assert events == [("info", str(flakes.root / "flake.lock"))]
+
+
+async def test_a_new_lock_file_is_not_reported_as_unchanged(
+    shared_nix_environment: NixTestEnvironment, tmp_path: Path
+) -> None:
+    flakes = init_linked_flakes(tmp_path)
+
+    assert await _unchanged_events(shared_nix_environment, flakes.root) == []
 
 
 async def test_lock_file_matches_nix(shared_nix_environment: NixTestEnvironment, tmp_path: Path) -> None:
