@@ -12,7 +12,7 @@ import sys
 
 import structlog
 
-from pynix._evaluate import base_attr_search, evaluate_target
+from pynix._evaluate import base_attr_search, call, evaluate_target
 from pynix._util import error_exit, huggorm_eval_session, print_json, report_and_exit
 from pynix.eval import Eval
 from pynix.target import EvaluationTarget, EvaluationTargetError
@@ -47,5 +47,10 @@ async def run_eval(command: Eval) -> None:
             )
         except EvaluationTargetError as exc:
             report_and_exit(exc)
+        if command.apply is not None:
+            root = await call(await state.eval_expr(command.apply), root)
+        if command.raw:
+            sys.stdout.write(await root.coerce_to_string())
+            return
         # Nix's `printValueAsJSON`, as `nix eval --json` prints it.
         print_json(json.loads(await root.to_json()))

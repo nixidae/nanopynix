@@ -21,6 +21,17 @@ class Eval(ConfiguredCommand):
 
     store: str = store_option("Store URI to evaluate with.")
 
+    apply: str | None = opt(None, help="Apply the function EXPR to the result before it is printed.")
+
+    raw: bool = opt(
+        False,
+        help="Print the result as a string, with no quotes and no newline. A value that does not coerce to a string is an error.",
+    )
+
+    # pynix evaluates impurely already (nixidae/nixidae#1109). The flag makes a
+    # `nix eval` command line parse.
+    impure: bool = opt(False, help="Allow access to mutable paths and the environment, as nix eval --impure does.")
+
     @override
     async def run(self) -> None:
         await _impl.eval.run_eval(self)

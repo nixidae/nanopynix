@@ -78,6 +78,9 @@ Evaluate a Nix expression and print the result as JSON
 | `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
 | `--store` | `str` | Store URI to evaluate with. (default: `'auto'`) |
+| `--apply` | `str or None` | Apply the function EXPR to the result before it is printed. (default: `None`) |
+| `--raw` | `bool` | Print the result as a string, with no quotes and no newline. A value that does not coerce to a string is an error. (default: `False`) |
+| `--impure` | `bool` | Allow access to mutable paths and the environment, as nix eval --impure does. (default: `False`) |
 
 ### `pynix derivation`
 

@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 import pytest
+from huggorm.errors import NixTypeError
 from huggorm.testing.environment import NixTestEnvironment
 
 from pynix import parse
@@ -124,3 +125,83 @@ async def test_eval_file_missing_attr_errors(
         await cmd.run()
     captured = capsys.readouterr()
     assert "attribute 'missing' not found" in strip_ansi(captured.err)
+
+
+async def test_eval_raw_prints_string_unquoted(
+    shared_nix_environment: NixTestEnvironment,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cmd = parse(["eval", "--raw", "--expr", '"a b"', *shared_nix_environment.pynix_store_args()])
+    await cmd.run()
+    assert capsys.readouterr().out == "a b"
+
+
+async def test_eval_raw_coerces_a_set_through_outpath(
+    shared_nix_environment: NixTestEnvironment,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cmd = parse(["eval", "--raw", "--expr", '{ outPath = "x"; }', *shared_nix_environment.pynix_store_args()])
+    await cmd.run()
+    assert capsys.readouterr().out == "x"
+
+
+@pytest.mark.parametrize(("expr", "type_name"), [("{ }", "a set"), ("1", "an integer")])
+async def test_eval_raw_refuses_a_value_that_does_not_coerce(
+    shared_nix_environment: NixTestEnvironment,
+    capsys: pytest.CaptureFixture[str],
+    expr: str,
+    type_name: str,
+) -> None:
+    cmd = parse(["eval", "--raw", "--expr", expr, *shared_nix_environment.pynix_store_args()])
+    with pytest.raises(NixTypeError, match=f"cannot coerce {type_name} to a string"):
+        await cmd.run()
+    assert capsys.readouterr().out == ""
+
+
+async def test_eval_apply_calls_the_function_on_the_result(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    nix_file = tmp_path / "test.nix"
+    nix_file.write_text("{ b = 1; a = 2; }")
+    cmd = parse(
+        [
+            "eval",
+            "--file",
+            str(nix_file),
+            "--apply",
+            "builtins.attrNames",
+            *shared_nix_environment.pynix_store_args(),
+        ],
+    )
+    await cmd.run()
+    assert _parse_json_output(capsys.readouterr().out) == ["a", "b"]
+
+
+async def test_eval_apply_with_raw(
+    shared_nix_environment: NixTestEnvironment,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cmd = parse(
+        [
+            "eval",
+            "--raw",
+            "--expr",
+            "[ 1 2 ]",
+            "--apply",
+            'l: builtins.concatStringsSep "," (map toString l)',
+            *shared_nix_environment.pynix_store_args(),
+        ],
+    )
+    await cmd.run()
+    assert capsys.readouterr().out == "1,2"
+
+
+async def test_eval_accepts_impure(
+    shared_nix_environment: NixTestEnvironment,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cmd = parse(["eval", "--impure", "--expr", "builtins ? currentSystem", *shared_nix_environment.pynix_store_args()])
+    await cmd.run()
+    assert _parse_json_output(capsys.readouterr().out) is True
