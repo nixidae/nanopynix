@@ -34,6 +34,7 @@ from pynix.target import (
     CONFIGURATION_KINDS,
     AutoArg,
     AutoArgKind,
+    AutoArgOptions,
     EvaluationTarget,
     EvaluationTargetError,
     FileReference,
@@ -442,13 +443,73 @@ def test_a_repeated_argument_keeps_its_last_value() -> None:
 
 
 def test_a_name_in_both_arg_and_argstr_is_refused() -> None:
-    with pytest.raises(EvaluationTargetError, match="both give the argument a"):
-        EvaluationTarget(file="x.nix", attr=None, flake=None, arg=(("a", "1"),), argstr=(("a", "x"),)).validate()
+    with pytest.raises(EvaluationTargetError, match="--arg and --argstr both give the argument a"):
+        auto_args([("a", "1")], [("a", "x")])
 
 
-def test_an_argument_without_a_file_is_refused() -> None:
+@pytest.mark.parametrize(
+    "arguments",
+    [AutoArgOptions(argstr=(("a", "x"),)), AutoArgOptions(argjson=(("a", "1"),)), AutoArgOptions(args_json="{}")],
+)
+def test_an_argument_without_a_file_is_refused(arguments: AutoArgOptions) -> None:
+    """An empty `--args-json` object counts too: the option is given."""
     with pytest.raises(EvaluationTargetError, match="require --file"):
-        EvaluationTarget(file=None, attr=None, flake="nixpkgs#hello", argstr=(("a", "x"),)).validate()
+        EvaluationTarget(file=None, attr=None, flake="nixpkgs#hello", arguments=arguments).validate()
+
+
+def test_no_argument_option_is_given_by_default() -> None:
+    assert not AutoArgOptions()
+
+
+def test_argjson_keeps_the_last_value_and_the_json_text() -> None:
+    assert auto_args([], [], [("a", "1"), ("a", ' {"b": [2]} ')]) == (AutoArg("a", AutoArgKind.JSON, ' {"b": [2]} '),)
+
+
+@pytest.mark.parametrize("text", ["{", "NaN", "-Infinity", "[1, NaN]"])
+def test_argjson_that_is_not_json_is_refused_with_its_name(text: str) -> None:
+    """Python's json reads NaN and Infinity, and JSON has neither."""
+    with pytest.raises(EvaluationTargetError, match="--argjson a is not valid JSON"):
+        auto_args([], [], [("a", text)])
+
+
+def test_args_json_gives_each_key_as_a_json_argument() -> None:
+    assert auto_args([], [], [], '{"a": {"b": [1, null]}, "c": "s"}') == (
+        AutoArg("a", AutoArgKind.JSON, '{"b": [1, null]}'),
+        AutoArg("c", AutoArgKind.JSON, '"s"'),
+    )
+
+
+@pytest.mark.parametrize(("text", "kind"), [("[{}]", "list"), ('"a"', "str"), ("1", "int"), ("null", "NoneType")])
+def test_args_json_that_is_not_an_object_is_refused(text: str, kind: str) -> None:
+    """A list has no meaning yet; nixidae/nixidae#1255 leaves one call per element open."""
+    with pytest.raises(EvaluationTargetError, match=f"must be a JSON object, not {kind}"):
+        auto_args([], [], [], text)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (([("a", "1")], [], [], '{"a": 1}'), "--arg and --args-json"),
+        (([], [("a", "x")], [("a", "1")], None), "--argstr and --argjson"),
+        (([], [], [("a", "1")], '{"a": 1}'), "--argjson and --args-json"),
+    ],
+)
+def test_a_name_in_two_argument_options_is_refused(
+    arguments: tuple[list[tuple[str, str]], list[tuple[str, str]], list[tuple[str, str]], str | None], message: str
+) -> None:
+    with pytest.raises(EvaluationTargetError, match=f"{message} both give the argument a"):
+        auto_args(*arguments)
+
+
+async def test_args_json_reads_the_file_after_an_at_sign(tmp_path: Path) -> None:
+    arguments = tmp_path / "arguments.json"
+    arguments.write_text('{"a": 1}')
+    assert await AutoArgOptions(args_json=f"@{arguments}").resolve() == (AutoArg("a", AutoArgKind.JSON, "1"),)
+
+
+async def test_args_json_names_a_file_it_cannot_read(tmp_path: Path) -> None:
+    with pytest.raises(EvaluationTargetError, match=r"--args-json: cannot read .*missing\.json: No such file"):
+        await AutoArgOptions(args_json=f"@{tmp_path / 'missing.json'}").resolve()
 
 
 def test_the_configuration_message_names_the_kind_and_the_path() -> None:

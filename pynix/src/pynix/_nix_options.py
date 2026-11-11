@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from libpynix import (
     arg_option as arg_option,
+    argjson_option as argjson_option,
+    args_json_option as args_json_option,
     argstr_option as argstr_option,
     attr_option as _attr_option,
     attrs_option as _attrs_option,

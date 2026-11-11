@@ -61,6 +61,8 @@ ROOT_SUBCOMMANDS = frozenset(
 BUILD_OPTIONS = frozenset(
     {
         "--arg",
+        "--args-json",
+        "--argjson",
         "--argstr",
         "--attr",
         "--copy",

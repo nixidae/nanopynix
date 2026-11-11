@@ -284,3 +284,52 @@ async def test_eval_argstr_is_a_string_and_never_nix_source(
     nix_file.write_text(_FUNCTION)
     got = await _eval_file(shared_nix_environment, capsys, nix_file, "--argstr", "c", '"; throw "x"; "')
     assert got == {"a": "da", "b": "db", "c": '"; throw "x"; "'}
+
+
+async def test_eval_argjson_passes_a_structured_value(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    nix_file = tmp_path / "f.nix"
+    nix_file.write_text(_FUNCTION)
+    got = await _eval_file(
+        shared_nix_environment, capsys, nix_file, "--argjson", "c", '{"x": [1, true, null], "y": 1.5}'
+    )
+    assert got == {"a": "da", "b": "db", "c": {"x": [1, True, None], "y": 1.5}}
+
+
+async def test_eval_argjson_is_a_value_and_never_nix_source(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Spliced into Nix source, the string would interpolate and throw (nixidae/nixidae#1255)."""
+    nix_file = tmp_path / "f.nix"
+    nix_file.write_text(_FUNCTION)
+    got = await _eval_file(shared_nix_environment, capsys, nix_file, "--argjson", "c", r'"${throw \"x\"}"')
+    assert got == {"a": "da", "b": "db", "c": '${throw "x"}'}
+
+
+async def test_eval_args_json_gives_each_key_of_the_object(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    nix_file = tmp_path / "f.nix"
+    nix_file.write_text(_FUNCTION)
+    got = await _eval_file(shared_nix_environment, capsys, nix_file, "--args-json", '{"c": [1], "a": "s"}')
+    assert got == {"a": "s", "b": "db", "c": [1]}
+
+
+async def test_eval_args_json_reads_the_file_after_an_at_sign(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    nix_file = tmp_path / "f.nix"
+    nix_file.write_text(_FUNCTION)
+    arguments = tmp_path / "arguments.json"
+    arguments.write_text('{"c": {"n": 1}, "b": "${throw \\"b\\"}"}')
+    got = await _eval_file(shared_nix_environment, capsys, nix_file, "--args-json", f"@{arguments}")
+    assert got == {"a": "da", "b": '${throw "b"}', "c": {"n": 1}}

@@ -58,6 +58,7 @@ from pynix._util import (
 )
 from pynix.build import Build
 from pynix.target import (
+    AutoArgOptions,
     EvaluationTarget,
     EvaluationTargetError,
     configuration_message,
@@ -442,8 +443,7 @@ def _targets(command: Build) -> list[EvaluationTarget]:
             file=command.file,
             attr=attr,
             flake=command.flake,
-            arg=tuple(command.arg),
-            argstr=tuple(command.argstr),
+            arguments=AutoArgOptions.from_command(command),
         )
         for attr in attrs
     ]

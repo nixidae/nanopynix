@@ -20,7 +20,7 @@ from pynix import _evaluate
 from pynix._store_layout import StoreLayout
 from pynix._util import error_exit, huggorm_build_session, report_and_exit
 from pynix.env import Shell
-from pynix.target import EvaluationTarget, EvaluationTargetError
+from pynix.target import AutoArgOptions, EvaluationTarget, EvaluationTargetError
 
 #: The file whose store paths ``nix shell`` also puts on ``PATH``.
 _PROPAGATED = "nix-support/propagated-user-env-packages"
@@ -88,13 +88,13 @@ async def output_paths(state: AsyncEvalState, value: AsyncValue) -> list[str]:
 
 
 def _targets(command: Shell) -> list[EvaluationTarget]:
-    arg, argstr = tuple(command.arg), tuple(command.argstr)
+    arguments = AutoArgOptions.from_command(command)
     if command.file is not None:
         return [
-            EvaluationTarget(file=command.file, attr=attr, flake=None, arg=arg, argstr=argstr)
+            EvaluationTarget(file=command.file, attr=attr, flake=None, arguments=arguments)
             for attr in command.installables
         ]
-    return [EvaluationTarget(file=None, attr=None, flake=ref, arg=arg, argstr=argstr) for ref in command.installables]
+    return [EvaluationTarget(file=None, attr=None, flake=ref, arguments=arguments) for ref in command.installables]
 
 
 async def prepare_shell(command: Shell) -> ShellEnvironment:

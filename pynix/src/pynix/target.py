@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import itertools
+import json
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -187,10 +189,11 @@ def _is_lookup_path(candidate: str) -> bool:
 
 
 class AutoArgKind(Enum):
-    """How the text of an ``--arg`` or an ``--argstr`` becomes a value."""
+    """How the text of an argument option becomes a value."""
 
-    EXPR = "arg"
-    STRING = "argstr"
+    EXPR = "--arg"
+    STRING = "--argstr"
+    JSON = "--argjson"
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,21 +205,92 @@ class AutoArg:
     text: str
 
 
-def auto_args(arg: Sequence[tuple[str, str]], argstr: Sequence[tuple[str, str]]) -> tuple[AutoArg, ...]:
-    """The arguments that ``--arg`` and ``--argstr`` give, one for each name.
+def _refuse_constant(constant: str) -> object:
+    # Python's json reads NaN and Infinity; JSON and builtins.fromJSON do not.
+    raise ValueError(f"{constant} is not JSON")
 
-    A repeated name keeps its last value, as Nix's ``insert_or_assign`` does.
-    A name in both options is refused: two separate options lose the order
-    between them, and Nix keeps the later of the two.
+
+def _parse_json(flag: str, text: str) -> object:
+    try:
+        return json.loads(text, parse_constant=_refuse_constant)
+    except ValueError as exc:
+        raise EvaluationTargetError(f"{flag} is not valid JSON: {exc}") from exc
+
+
+def _args_json_object(text: str) -> dict[str, str]:
+    """Each key of the ``--args-json`` object, with its value as JSON text."""
+    parsed = _parse_json("--args-json", text)
+    # A list could mean one call for each element (nixidae/nixidae#1255). No
+    # use case asks for that yet, so a list is refused with any other value.
+    if not isinstance(parsed, dict):
+        raise EvaluationTargetError(f"--args-json must be a JSON object, not {type(parsed).__name__}")
+    try:
+        return {name: json.dumps(value, allow_nan=False) for name, value in parsed.items()}
+    except ValueError as exc:
+        raise EvaluationTargetError(f"--args-json is not valid JSON: {exc}") from exc
+
+
+def auto_args(
+    arg: Sequence[tuple[str, str]],
+    argstr: Sequence[tuple[str, str]],
+    argjson: Sequence[tuple[str, str]] = (),
+    args_json: str | None = None,
+) -> tuple[AutoArg, ...]:
+    """The arguments that the four argument options give, one for each name.
+
+    *args_json* is the text of the ``--args-json`` object, already read from
+    its file. A repeated name keeps its last value, as Nix's
+    ``insert_or_assign`` does. A name in two options is refused: separate
+    options lose the order between them, and Nix keeps the later of the two.
     """
-    exprs = dict(arg)
-    strings = dict(argstr)
-    if both := sorted(exprs.keys() & strings.keys()):
-        raise EvaluationTargetError(f"--arg and --argstr both give the argument {', '.join(both)}")
-    return (
-        *(AutoArg(name, AutoArgKind.EXPR, text) for name, text in exprs.items()),
-        *(AutoArg(name, AutoArgKind.STRING, text) for name, text in strings.items()),
-    )
+    for name, text in argjson:
+        _parse_json(f"--argjson {name}", text)
+    sources = {
+        AutoArgKind.EXPR: dict(arg),
+        AutoArgKind.STRING: dict(argstr),
+        AutoArgKind.JSON: dict(argjson),
+    }
+    from_object = _args_json_object(args_json) if args_json is not None else {}
+    flags = [(kind.value, values) for kind, values in sources.items()] + [("--args-json", from_object)]
+    for (first, first_values), (second, second_values) in itertools.combinations(flags, 2):
+        if both := sorted(first_values.keys() & second_values.keys()):
+            raise EvaluationTargetError(f"{first} and {second} both give the argument {', '.join(both)}")
+    sources[AutoArgKind.JSON] |= from_object
+    return tuple(AutoArg(name, kind, text) for kind, values in sources.items() for name, text in values.items())
+
+
+@dataclass(frozen=True, slots=True)
+class AutoArgOptions:
+    """What the four argument options of a command hold, as given."""
+
+    arg: tuple[tuple[str, str], ...] = ()
+    argstr: tuple[tuple[str, str], ...] = ()
+    argjson: tuple[tuple[str, str], ...] = ()
+    args_json: str | None = None
+    """The ``--args-json`` text: an object, or ``@`` and the file that holds one."""
+
+    @classmethod
+    def from_command(cls, command: Any) -> AutoArgOptions:
+        """Read the options from a command that declares all four."""
+        return cls(
+            arg=tuple(command.arg),
+            argstr=tuple(command.argstr),
+            argjson=tuple(command.argjson),
+            args_json=command.args_json,
+        )
+
+    def __bool__(self) -> bool:
+        return bool(self.arg or self.argstr or self.argjson or self.args_json is not None)
+
+    async def resolve(self) -> tuple[AutoArg, ...]:
+        """See :func:`auto_args`. This reads the file of ``--args-json @FILE``."""
+        text = self.args_json
+        if text is not None and text.startswith("@"):
+            try:
+                text = await AsyncPath(text[1:]).read_text()
+            except OSError as exc:
+                raise EvaluationTargetError(f"--args-json: cannot read {text[1:]}: {exc.strerror}") from exc
+        return auto_args(self.arg, self.argstr, self.argjson, text)
 
 
 @dataclass(frozen=True)
@@ -226,8 +300,8 @@ class EvaluationTarget:
     file: str | None
     attr: str | None
     flake: str | None
-    arg: tuple[tuple[str, str], ...] = ()
-    argstr: tuple[tuple[str, str], ...] = ()
+    arguments: AutoArgOptions = AutoArgOptions()
+    """The arguments for the function that ``--file`` names."""
 
     @classmethod
     def from_command(cls, command: Any) -> EvaluationTarget:
@@ -236,13 +310,8 @@ class EvaluationTarget:
             file=command.file,
             attr=command.attr,
             flake=command.flake,
-            arg=tuple(command.arg),
-            argstr=tuple(command.argstr),
+            arguments=AutoArgOptions.from_command(command),
         )
-
-    def auto_args(self) -> tuple[AutoArg, ...]:
-        """See :func:`auto_args`."""
-        return auto_args(self.arg, self.argstr)
 
     async def file_reference(self) -> FileReference | None:
         """Resolve ``--file``, or return ``None`` when there is no ``--file``."""
@@ -270,10 +339,10 @@ class EvaluationTarget:
             raise EvaluationTargetError("either --file or --flake is required")
         if self.attr is not None and self.file is None and self.flake is None:
             raise EvaluationTargetError("--attr requires --file or --flake")
-        # Nix ignores both for a flake. A flake takes no arguments, so the
-        # value would not reach anything.
-        if self.auto_args() and self.file is None:
-            raise EvaluationTargetError("--arg and --argstr require --file")
+        # Nix ignores them for a flake. A flake takes no arguments, so the
+        # values would not reach anything.
+        if self.arguments and self.file is None:
+            raise EvaluationTargetError("--arg, --argstr, --argjson and --args-json require --file")
 
 
 #: What the module system stamps on the result of `nixosSystem` and of

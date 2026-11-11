@@ -6,7 +6,7 @@ from typing import override
 
 from libpynix import opt, pos
 from pynix import _impl
-from pynix._nix_options import arg_option, argstr_option, file_option
+from pynix._nix_options import arg_option, argjson_option, args_json_option, argstr_option, file_option
 from pynix._settings import ConfiguredCommand, PynixCommand, print_build_logs_option, store_option, verbosity_option
 
 
@@ -29,6 +29,10 @@ class Shell(ConfiguredCommand):
     arg: list[tuple[str, str]] = arg_option()
 
     argstr: list[tuple[str, str]] = argstr_option()
+
+    argjson: list[tuple[str, str]] = argjson_option()
+
+    args_json: str | None = args_json_option()
 
     store: str = store_option("Store URI to build with.")
 

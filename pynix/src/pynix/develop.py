@@ -29,7 +29,15 @@ from typing import override
 
 from libpynix import opt, pos
 from pynix import _impl
-from pynix._nix_options import arg_option, argstr_option, attr_option, file_option, flake_option
+from pynix._nix_options import (
+    arg_option,
+    argjson_option,
+    args_json_option,
+    argstr_option,
+    attr_option,
+    file_option,
+    flake_option,
+)
 from pynix._settings import (
     ConfiguredCommand,
     eval_store_option,
@@ -51,6 +59,10 @@ class PrintDevEnv(ConfiguredCommand):
     arg: list[tuple[str, str]] = arg_option()
 
     argstr: list[tuple[str, str]] = argstr_option()
+
+    argjson: list[tuple[str, str]] = argjson_option()
+
+    args_json: str | None = args_json_option()
 
     attr: str | None = attr_option()
 
@@ -87,6 +99,10 @@ class Develop(ConfiguredCommand):
     arg: list[tuple[str, str]] = arg_option()
 
     argstr: list[tuple[str, str]] = argstr_option()
+
+    argjson: list[tuple[str, str]] = argjson_option()
+
+    args_json: str | None = args_json_option()
 
     attr: str | None = attr_option()
 
