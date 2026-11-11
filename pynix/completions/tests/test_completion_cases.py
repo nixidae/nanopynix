@@ -114,6 +114,7 @@ STORE_SUBCOMMANDS = frozenset(
         "ls",
         "optimise",
         "path-from-hash-part",
+        "prefetch-file",
         "query-derivation-outputs",
         "query-missing",
         "query-referrers",

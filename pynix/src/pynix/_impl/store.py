@@ -12,11 +12,23 @@ import sys
 from collections.abc import Iterable
 from pathlib import Path
 
+import anyio
 import structlog
-from huggorm import AsyncStore, ContentAddressMethod, DerivedPathBuilt, GCAction, GCOptions, HashAlgorithm, StorePath
+from huggorm import (
+    AsyncStore,
+    ContentAddress,
+    ContentAddressMethod,
+    DerivedPathBuilt,
+    GCAction,
+    GCOptions,
+    Hash,
+    HashAlgorithm,
+    StorePath,
+    aio,
+)
 from huggorm.errors import BadStorePath
 
-from pynix._util import huggorm_local_store_path, huggorm_store_session, print_json
+from pynix._util import error_exit, huggorm_local_store_path, huggorm_store_session, print_json
 from pynix.store import (
     Add,
     AddFile,
@@ -36,6 +48,7 @@ from pynix.store import (
     Ls,
     Optimise,
     PathFromHashPart,
+    PrefetchFile,
     PrintAlive,
     PrintDead,
     PrintRoots,
@@ -364,6 +377,57 @@ async def run_add_path(command: AddPath) -> None:
         dry_run=command.dry_run,
         store_uri=command.store,
     )
+
+
+async def run_prefetch_file(command: PrefetchFile) -> None:
+    """The body of :meth:`pynix.store.PrefetchFile.run`: ``prefetchFile`` of ``src/nix/prefetch.cc``."""
+    algorithm = HashAlgorithm(command.hash_type)
+    expected = None if command.expected_hash is None else await aio.parse_hash(command.expected_hash, algorithm)
+    if expected is not None:
+        algorithm = HashAlgorithm(expected.algorithm())
+    method = ContentAddressMethod.NAR if command.unpack or command.executable else ContentAddressMethod.FLAT
+    name = command.name if command.name is not None else await aio.url_last_path_segment(command.url)
+    if not name:
+        error_exit(f"cannot figure out file name for '{command.url}'")
+    async with huggorm_store_session(command.store) as (_session, store):
+        held = (
+            None
+            if expected is None
+            else await store.make_fixed_output_path_from_ca(name, ContentAddress(method, expected))
+        )
+        if held is not None and expected is not None and await store.is_valid_path(held):
+            path, digest = held, expected
+        else:
+            path, digest = await _download_to_store(store, command, name, method, algorithm, expected)
+        print_json({"storePath": await store.print_store_path(path), "hash": digest.sri()})
+
+
+async def _download_to_store(  # noqa: PLR0913 -- one argument for each input of prefetchFile
+    store: AsyncStore,
+    command: PrefetchFile,
+    name: str,
+    method: ContentAddressMethod,
+    algorithm: HashAlgorithm,
+    expected: Hash | None,
+) -> tuple[StorePath, Hash]:
+    async with anyio.TemporaryDirectory() as directory:
+        downloaded = Path(directory) / "tmp"
+        await aio.download_file(command.url, downloaded, command.executable)
+        source = downloaded
+        if command.unpack:
+            unpacked = anyio.Path(directory) / "unpacked"
+            await unpacked.mkdir()
+            await aio.unpack_tarfile(downloaded, Path(unpacked))
+            entries = [entry async for entry in unpacked.iterdir()]
+            if not entries:
+                error_exit(f"archive '{command.url}' is empty")
+            # A single top-level file or directory is the root, as Nix does.
+            source = Path(entries[0] if len(entries) == 1 else unpacked)
+        info = await store.add_to_store_slow(name, str(source), method, algorithm, expected)
+    address = info.ca()
+    if address is None:
+        raise RuntimeError(f"the store gave no content address for {name}")
+    return info.path(), address.hash()
 
 
 async def run_diff_closures(command: DiffClosures) -> None:

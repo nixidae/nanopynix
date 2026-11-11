@@ -325,6 +325,37 @@ class AddPath(ConfiguredCommand):
         await _impl.store.run_add_path(self)
 
 
+class PrefetchFile(ConfiguredCommand):
+    """Download a file into the Nix store"""
+
+    url: str = pos(help="URL of the file to download.")
+
+    name: str | None = opt(
+        None, help="Override the name component of the resulting store path. It defaults to the base name of URL."
+    )
+
+    expected_hash: str | None = opt(
+        None,
+        help="The expected hash of the file. When the store already holds a file with this hash, nothing is downloaded.",
+    )
+
+    hash_type: Literal["md5", "sha1", "sha256", "sha512", "blake3"] = opt(
+        "sha256", help="Hash algorithm to use. It also reads a bare --expected-hash."
+    )
+
+    executable: bool = opt(
+        False, help="Make the resulting file executable. The hash is then a NAR hash, not a flat file hash."
+    )
+
+    unpack: bool = opt(False, help="Unpack the archive (a tarball or a zip file) and add the result to the store.")
+
+    store: str = store_option("Store URI to use.")
+
+    @override
+    async def run(self) -> None:
+        await _impl.store.run_prefetch_file(self)
+
+
 class DiffClosures(ConfiguredCommand):
     """Compare two filesystem closures"""
 
@@ -389,6 +420,7 @@ class Store(PynixCommand):
         Add,
         AddFile,
         AddPath,
+        PrefetchFile,
         DiffClosures,
         Optimise,
         Verify,

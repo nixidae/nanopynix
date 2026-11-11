@@ -662,6 +662,20 @@ Add a path to a Nix store using NAR ingestion
 | `--dry-run` | `bool` | Compute the store path without adding the content. (default: `False`) |
 | `--store` | `str` | Store URI to use. (default: `'auto'`) |
 
+#### `pynix store prefetch-file`
+
+Download a file into the Nix store
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `url` | `str` | URL of the file to download. *(required)* |
+| `--name` | `str or None` | Override the name component of the resulting store path. It defaults to the base name of URL. (default: `None`) |
+| `--expected-hash` | `str or None` | The expected hash of the file. When the store already holds a file with this hash, nothing is downloaded. (default: `None`) |
+| `--hash-type` | `Literal[md5, sha1, sha256, sha512, blake3]` | Hash algorithm to use. It also reads a bare --expected-hash. (default: `'sha256'`) |
+| `--executable` | `bool` | Make the resulting file executable. The hash is then a NAR hash, not a flat file hash. (default: `False`) |
+| `--unpack` | `bool` | Unpack the archive (a tarball or a zip file) and add the result to the store. (default: `False`) |
+| `--store` | `str` | Store URI to use. (default: `'auto'`) |
+
 #### `pynix store diff-closures`
 
 Compare two filesystem closures
