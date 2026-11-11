@@ -63,11 +63,15 @@ async def build_inventory(command: Sbom) -> tuple[Inventory, dict[str, str]]:
     The second value holds the text of each patch, by path.
     """
     try:
+        evaluation = EvaluationTarget.from_command(command)
         async with huggorm_build_session(
-            command.store, verbosity=command.verbosity, print_build_logs=command.print_build_logs
+            command.store,
+            verbosity=command.verbosity,
+            print_build_logs=command.print_build_logs,
+            pure=evaluation.pure(impure=command.impure),
         ) as (_session, store, _eval_store, state):
             value = await _evaluate.evaluate_target(
-                EvaluationTarget.from_command(command),
+                evaluation,
                 state,
                 auto_call_file=True,
                 attr_search=_evaluate.base_attr_search(),

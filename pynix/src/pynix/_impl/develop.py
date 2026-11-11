@@ -216,6 +216,7 @@ async def build_dev_env(
         eval_store_uri=command.eval_store,
         verbosity=command.verbosity,
         print_build_logs=command.print_build_logs,
+        pure=target.pure(impure=command.impure),
     ) as (_session, build_store, eval_store, state):
         shell: InteractiveShell | None = None
         # The lock is kept past the evaluation because the interactive shell

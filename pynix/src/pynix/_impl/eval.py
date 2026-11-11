@@ -38,7 +38,9 @@ async def run_eval(command: Eval) -> None:
         expr = sys.stdin.read()
         logger.info("reading expression from stdin")
 
-    async with huggorm_eval_session(command.store) as (_session, _store, state):
+    # An expression is impure, as `nix eval --expr` is.
+    pure = expr is None and target.pure(impure=command.impure)
+    async with huggorm_eval_session(command.store, pure=pure) as (_session, _store, state):
         try:
             root = (
                 await evaluate_target(target, state, auto_call_file=True, attr_search=base_attr_search())

@@ -180,7 +180,8 @@ async def run_copy(command: Copy) -> None:
     """The body of :meth:`pynix.copy.Copy.run`."""
     source_uri, destination_uri = _endpoints(command)
 
-    async with huggorm_eval_session(source_uri) as (session, source, state):
+    pure = EvaluationTarget.from_command(command).pure(impure=command.impure)
+    async with huggorm_eval_session(source_uri, pure=pure) as (session, source, state):
         requested = sorted({*command.paths, *await _evaluated_paths(command, state, source, source_uri)})
         if not requested:
             error_exit("name a store path, or name --file or --flake")

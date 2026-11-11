@@ -13,6 +13,7 @@ from pynix._nix_options import (
     attrs_option,
     file_option,
     flake_option,
+    impure_option,
 )
 from pynix._settings import (
     ConfiguredCommand,
@@ -40,6 +41,8 @@ class Build(ConfiguredCommand):
     attr: list[str] = attrs_option()
 
     flake: str | None = flake_option()
+
+    impure: bool = impure_option()
 
     store: str = store_option("Store URI to build with.")
 

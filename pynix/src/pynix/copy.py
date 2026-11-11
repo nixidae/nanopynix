@@ -12,6 +12,7 @@ from pynix._nix_options import (
     attr_option,
     file_option,
     flake_option,
+    impure_option,
 )
 from pynix._settings import ConfiguredCommand, store_option
 
@@ -36,6 +37,8 @@ class Copy(ConfiguredCommand):
     attr: str | None = attr_option()
 
     flake: str | None = flake_option()
+
+    impure: bool = impure_option()
 
     to: str | None = opt(None, help="Store URI to copy into. --store is the other side.")
 

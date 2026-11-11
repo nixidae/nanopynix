@@ -319,6 +319,14 @@ class EvaluationTarget:
             return None
         return await resolve_file_reference(self.file)
 
+    def pure(self, *, impure: bool) -> bool:
+        """Whether ``nix`` evaluates this target in pure mode.
+
+        A flake is pure unless *impure*; a ``--file`` is impure always
+        (``installables.cc`` turns ``pure-eval`` off for it).
+        """
+        return self.flake is not None and not impure
+
     def selected_attr(self) -> str | None:
         """The attribute path the caller named, or ``None`` when it named none.
 

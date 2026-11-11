@@ -12,6 +12,7 @@ from pynix._nix_options import (
     attr_option,
     file_option,
     flake_option,
+    impure_option,
 )
 from pynix._settings import ConfiguredCommand, store_option
 
@@ -44,9 +45,7 @@ class Eval(ConfiguredCommand):
         help="Print the result as a string, with no quotes and no newline. A value that does not coerce to a string is an error.",
     )
 
-    # pynix evaluates impurely already (nixidae/nixidae#1109). The flag makes a
-    # `nix eval` command line parse.
-    impure: bool = opt(False, help="Allow access to mutable paths and the environment, as nix eval --impure does.")
+    impure: bool = impure_option()
 
     @override
     async def run(self) -> None:

@@ -195,17 +195,35 @@ def apply_nix_settings(settings: Mapping[str, str] | None = None) -> None:
         huggorm.set_setting(name, value)
 
 
+def evaluator_settings(settings: Mapping[str, str] | None = None, *, pure: bool) -> dict[str, str] | None:
+    """The settings of an evaluator of its own, over the process's.
+
+    ``pure-eval`` when *pure*, as ``nix`` sets it for every command
+    (``main.cc:428``), unless a pynix layer names ``pure-eval``: that one
+    reached the process already, and wins. *settings* are the ones the
+    session applies, and None means the configured ones.
+    """
+    configured = configured_nix_settings() if settings is None else settings
+    if pure and "pure-eval" not in configured:
+        return {"pure-eval": "true"}
+    return None
+
+
 @asynccontextmanager
 async def huggorm_eval_session(
     store_uri: str,
     *,
     print_build_logs: bool = False,
+    pure: bool = False,
 ) -> AsyncGenerator[tuple[huggorm.AsyncSession, huggorm.AsyncStore, AsyncEvalState]]:
-    """Open a huggorm session, store and evaluator, forwarding logs for the duration of the block."""
+    """Open a huggorm session, store and evaluator, forwarding logs for the duration of the block.
+
+    *pure* evaluates in pure mode, as ``nix`` evaluates a flake.
+    """
     apply_nix_settings()
     async with huggorm.AsyncSession(store_uri) as session:
         store = session.store()
-        state = session.eval(store)
+        state = session.eval(store, evaluator_settings(pure=pure))
         async with forward_state_logs(session, state, print_build_logs=print_build_logs):
             yield session, store, state
 
@@ -233,23 +251,26 @@ async def huggorm_build_session(  # noqa: PLR0913 -- keyword-only, one per sessi
     verbosity: VerbosityInput | None = None,
     print_build_logs: bool = False,
     monitor: MonitorState | None = None,
+    pure: bool = False,
 ) -> AsyncGenerator[tuple[huggorm.AsyncSession, huggorm.AsyncStore, huggorm.AsyncStore, AsyncEvalState]]:
     """Open a huggorm session for a build, forwarding logs for the duration of the block.
 
     Yields the session, the store that builds, the store that evaluates, and
     the evaluator. The two stores are one store unless *eval_store_uri* names
     another. *settings* is in ``nix.conf`` spelling, and None means the
-    configured ones (:func:`apply_nix_settings`).
+    configured ones (:func:`apply_nix_settings`). *pure* evaluates in pure
+    mode, as ``nix`` evaluates a flake.
     """
     apply_nix_settings(settings)
+    own = evaluator_settings(settings, pure=pure)
     async with huggorm.AsyncSession(store_uri) as session:
         build_store = session.store()
         if eval_store_uri is None:
             eval_store = build_store
-            state = session.eval(eval_store)
+            state = session.eval(eval_store, own)
         else:
             eval_store = session.store(eval_store_uri)
-            state = session.eval(eval_store, None, build_store)
+            state = session.eval(eval_store, own, build_store)
         async with forward_state_logs(
             session, state, verbosity=verbosity, print_build_logs=print_build_logs, monitor=monitor
         ):

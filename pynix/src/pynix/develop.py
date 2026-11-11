@@ -37,6 +37,7 @@ from pynix._nix_options import (
     attr_option,
     file_option,
     flake_option,
+    impure_option,
 )
 from pynix._settings import (
     ConfiguredCommand,
@@ -67,6 +68,8 @@ class PrintDevEnv(ConfiguredCommand):
     attr: str | None = attr_option()
 
     flake: str | None = flake_option(search="dev-shell")
+
+    impure: bool = impure_option()
 
     store: str = store_option("Store URI to build with.")
 
@@ -107,6 +110,8 @@ class Develop(ConfiguredCommand):
     attr: str | None = attr_option()
 
     flake: str | None = flake_option(search="dev-shell")
+
+    impure: bool = impure_option()
 
     store: str = store_option("Store URI to build with.")
 

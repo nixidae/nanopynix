@@ -14,6 +14,7 @@ from pynix._nix_options import (
     attr_option,
     file_option,
     flake_option,
+    impure_option,
 )
 from pynix._settings import ConfiguredCommand, print_build_logs_option, store_option, verbosity_option
 
@@ -43,6 +44,8 @@ class Sbom(ConfiguredCommand):
     attr: str | None = attr_option()
 
     flake: str | None = flake_option()
+
+    impure: bool = impure_option()
 
     store: str = store_option("Store URI to build with.")
 

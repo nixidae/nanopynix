@@ -40,10 +40,12 @@ def search_flake(tmp_path: Path) -> Path:
     """
     flake_dir = tmp_path / "search-flake"
     flake_dir.mkdir()
-    (flake_dir / "flake.nix").write_text("""
+    # A literal system: a flake is pure, and has no `builtins.currentSystem`.
+    (flake_dir / "flake.nix").write_text(
+        """
     {
       outputs = { ... }:
-      let system = builtins.currentSystem; in
+      let system = "SYSTEM"; in
       {
         packages.${system} = {
           hello = "packages-hello";
@@ -59,7 +61,8 @@ def search_flake(tmp_path: Path) -> Path:
         notAnAttrset = "a string";
       };
     }
-    """)
+    """.replace("SYSTEM", huggorm.get_setting("system") or "")
+    )
     return flake_dir
 
 

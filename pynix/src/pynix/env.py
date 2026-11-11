@@ -6,7 +6,7 @@ from typing import override
 
 from libpynix import opt, pos
 from pynix import _impl
-from pynix._nix_options import arg_option, argjson_option, args_json_option, argstr_option, file_option
+from pynix._nix_options import arg_option, argjson_option, args_json_option, argstr_option, file_option, impure_option
 from pynix._settings import ConfiguredCommand, PynixCommand, print_build_logs_option, store_option, verbosity_option
 
 
@@ -25,6 +25,8 @@ class Shell(ConfiguredCommand):
     installables: list[str] = pos(help="Flake references, or attribute paths of --file.")
 
     file: str | None = file_option()
+
+    impure: bool = impure_option()
 
     arg: list[tuple[str, str]] = arg_option()
 

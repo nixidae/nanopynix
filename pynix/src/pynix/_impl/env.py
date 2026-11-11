@@ -103,7 +103,11 @@ async def prepare_shell(command: Shell) -> ShellEnvironment:
         error_exit("name at least one installable")
     try:
         async with huggorm_build_session(
-            command.store, verbosity=command.verbosity, print_build_logs=command.print_build_logs
+            command.store,
+            verbosity=command.verbosity,
+            print_build_logs=command.print_build_logs,
+            # The installables are flakes unless --file names a file.
+            pure=command.file is None and not command.impure,
         ) as (_session, store, _eval_store, state):
             roots: list[str] = []
             for target in _targets(command):

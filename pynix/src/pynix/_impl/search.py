@@ -413,7 +413,11 @@ def _values(command: Search, target: EvaluationTarget, found: Found) -> OptionVa
 
     @asynccontextmanager
     async def open_trees() -> AsyncGenerator[Trees]:
-        async with huggorm_eval_session(command.store) as (_session, _store, state):
+        async with huggorm_eval_session(command.store, pure=target.pure(impure=command.impure)) as (
+            _session,
+            _store,
+            state,
+        ):
             yield await _option_trees(command, target, state)
 
     return OptionValues(open_trees)
@@ -483,7 +487,11 @@ async def _build_index(command: Search, target: EvaluationTarget, ask: Wanted, c
         system=_system(command),
         paths=dict(cached.paths),
     )
-    async with huggorm_eval_session(command.store) as (_session, _store, state):
+    async with huggorm_eval_session(command.store, pure=target.pure(impure=command.impure)) as (
+        _session,
+        _store,
+        state,
+    ):
         try:
             value = await evaluate_target(target, state, auto_call_file=True)
             where = await resolve(

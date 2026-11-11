@@ -120,6 +120,7 @@ async def resolve_program(command: Run, where: _Where | None = None) -> Resolved
             settings=where.settings,
             verbosity=command.verbosity,
             print_build_logs=command.print_build_logs,
+            pure=target.pure(impure=command.impure),
         ) as (_session, store, _eval_store, state):
             value, locked, selected = await _evaluate.evaluate_target_selected(
                 target, state, auto_call_file=True, attr_search=_evaluate.app_attr_search()

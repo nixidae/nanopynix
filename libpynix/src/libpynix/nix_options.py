@@ -76,6 +76,21 @@ def attrs_option(*, complete: Completer | None = None) -> list[str]:
 
 
 @no_runtime_type_check  # see file_option
+def impure_option() -> bool:
+    """Declare the common ``--impure`` option.
+
+    ``nix`` evaluates a flake in pure mode, and ``--impure`` turns that off
+    (``common-eval-args.cc``). A ``--file`` or an expression is impure with or
+    without it.
+    """
+    value: bool = opt(
+        False,
+        help="Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem.",
+    )
+    return value
+
+
+@no_runtime_type_check  # see file_option
 def flake_option(*, complete: Completer | None = None) -> str | None:
     """Declare the common ``--flake`` option."""
     value: str | None = opt(

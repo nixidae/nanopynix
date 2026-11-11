@@ -23,6 +23,7 @@ import tempfile
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
+import huggorm
 import pytest
 import structlog
 
@@ -216,7 +217,8 @@ async def git_flake(nixpkgs_path: str) -> AsyncIterator[Path]:
           inputs.nixpkgs.url = "path:{nixpkgs_path}";
           outputs = {{ nixpkgs, ... }}:
           let
-            system = builtins.currentSystem;
+            # A literal: a flake is pure, and has no `builtins.currentSystem`.
+            system = "{huggorm.get_setting("system")}";
             pkgs = nixpkgs.legacyPackages.${{system}};
           in
           {{

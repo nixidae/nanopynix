@@ -31,7 +31,7 @@ async def run_show(command: Show) -> None:
     except EvaluationTargetError as exc:
         report_and_exit(exc)
 
-    async with huggorm_eval_session(command.store) as (_session, store, state):
+    async with huggorm_eval_session(command.store, pure=target.pure(impure=command.impure)) as (_session, store, state):
         try:
             root = await evaluate_target(target, state, auto_call_file=True, attr_search=base_attr_search())
             drv_path = await derivation_path(state, root, selected=target.selected_attr())

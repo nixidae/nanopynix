@@ -71,6 +71,7 @@ BUILD_OPTIONS = frozenset(
         "--eval-store",
         "--file",
         "--flake",
+        "--impure",
         "--linux-builder",
         "--linux-builder-guest",
         "--namespaced",

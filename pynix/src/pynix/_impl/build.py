@@ -50,6 +50,7 @@ from pynix._util import (
     configured_nix_settings,
     error_console,
     error_exit,
+    evaluator_settings,
     forward_state_logs,
     huggorm_build_session,
     print_json,
@@ -347,6 +348,7 @@ async def _build_on_huggorm(
         verbosity=command.verbosity,
         print_build_logs=command.print_build_logs,
         monitor=monitor,
+        pure=targets[0].pure(impure=command.impure),
     ) as (session, build_store, eval_store, state):
         logger.info("pynix build evaluating target")
         built, updates = await _build_target(
@@ -469,14 +471,15 @@ async def _build_namespaced(
     # A directory the user named survives, which is the point of naming one.
     overlay = command.overlay_dir if command.overlay_dir is not None else TEMPORARY
     options = _server_options(overlay, settings, command.sandbox_path or [])
+    own = evaluator_settings(settings, pure=targets[0].pure(impure=command.impure))
     async with worker(options) as session:
         build_store = await session.store()
         if command.eval_store is None:
             eval_store = build_store
-            state = await session.eval(eval_store)
+            state = await session.eval(eval_store, own)
         else:
             eval_store = await session.store(command.eval_store)
-            state = await session.eval(eval_store, None, build_store)
+            state = await session.eval(eval_store, own, build_store)
         async with forward_state_logs(
             session,
             state,

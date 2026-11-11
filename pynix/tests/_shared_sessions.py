@@ -65,8 +65,10 @@ class SharedSessions:
         self._lock = anyio.Lock()
         self._huggorm: huggorm.AsyncSession | None = None
         # Keyed by _store_key, not by URI alone -- see that function.
-        self._huggorm_states: dict[tuple[str, tuple[int, int] | None], tuple[Any, Any]] = {}
-        self._huggorm_builds: dict[tuple[Any, Any], tuple[Any, Any, Any]] = {}
+        # And by purity: `pure-eval` is read when an evaluator is built, so a
+        # store has one pure and one impure evaluator.
+        self._huggorm_states: dict[tuple[tuple[str, tuple[int, int] | None], bool], tuple[Any, Any]] = {}
+        self._huggorm_builds: dict[tuple[Any, Any, bool], tuple[Any, Any, Any]] = {}
         self._originals = {name: getattr(pynix_util, name) for name in _PATCHED_NAMES}
 
     # ── shared object construction ─────────────────────────────────────
@@ -83,28 +85,31 @@ class SharedSessions:
             self._huggorm = await self._stack.enter_async_context(huggorm.AsyncSession())
         return self._huggorm
 
-    async def _shared_build(self, store_uri: str, eval_store_uri: str | None) -> tuple[Any, Any, Any, Any]:
+    async def _shared_build(
+        self, store_uri: str, eval_store_uri: str | None, *, pure: bool
+    ) -> tuple[Any, Any, Any, Any]:
         session = await self._shared_huggorm()
-        key = (_store_key(store_uri), None if eval_store_uri is None else _store_key(eval_store_uri))
+        key = (_store_key(store_uri), None if eval_store_uri is None else _store_key(eval_store_uri), pure)
         triple = self._huggorm_builds.get(key)
         if triple is None:
+            own = pynix_util.evaluator_settings(pure=pure)
             build_store = session.store(store_uri)
             if eval_store_uri is None:
-                triple = (build_store, build_store, session.eval(build_store))
+                triple = (build_store, build_store, session.eval(build_store, own))
             else:
                 eval_store = session.store(eval_store_uri)
-                triple = (build_store, eval_store, session.eval(eval_store, None, build_store))
+                triple = (build_store, eval_store, session.eval(eval_store, own, build_store))
             self._huggorm_builds[key] = triple
         build_store, eval_store, state = triple
         return session, build_store, eval_store, state
 
-    async def _shared_state(self, store_uri: str) -> tuple[huggorm.AsyncSession, Any, Any]:
+    async def _shared_state(self, store_uri: str, *, pure: bool = False) -> tuple[huggorm.AsyncSession, Any, Any]:
         session = await self._shared_huggorm()
-        key = _store_key(store_uri)
+        key = (_store_key(store_uri), pure)
         pair = self._huggorm_states.get(key)
         if pair is None:
             store = session.store(store_uri)
-            pair = (store, session.eval(store))
+            pair = (store, session.eval(store, pynix_util.evaluator_settings(pure=pure)))
             self._huggorm_states[key] = pair
         store, state = pair
         return session, store, state
@@ -117,9 +122,10 @@ class SharedSessions:
         store_uri: str,
         *,
         print_build_logs: bool = False,
+        pure: bool = False,
     ) -> AsyncGenerator[tuple[Any, Any, Any]]:
         async with self._lock:
-            session, store, state = await self._shared_state(store_uri)
+            session, store, state = await self._shared_state(store_uri, pure=pure)
         async with pynix_util.forward_state_logs(session, state, print_build_logs=print_build_logs):
             yield session, store, state
 
@@ -145,6 +151,7 @@ class SharedSessions:
         verbosity: VerbosityInput | None = None,
         print_build_logs: bool = False,
         monitor: MonitorState | None = None,
+        pure: bool = False,
     ) -> AsyncGenerator[tuple[Any, Any, Any, Any]]:
         if settings:
             # A setting is a process global, and a shared evaluator was built
@@ -158,6 +165,7 @@ class SharedSessions:
                     verbosity=verbosity,
                     print_build_logs=print_build_logs,
                     monitor=monitor,
+                    pure=pure,
                 ) as quad:
                     yield quad
             finally:
@@ -166,7 +174,7 @@ class SharedSessions:
                         huggorm.set_setting(name, value)
             return
         async with self._lock:
-            session, build_store, eval_store, state = await self._shared_build(store_uri, eval_store_uri)
+            session, build_store, eval_store, state = await self._shared_build(store_uri, eval_store_uri, pure=pure)
         async with pynix_util.forward_state_logs(
             session, state, verbosity=verbosity, print_build_logs=print_build_logs, monitor=monitor
         ):

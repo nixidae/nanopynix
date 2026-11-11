@@ -21,6 +21,7 @@ from libpynix import (
     dispatch,
     file_option,
     flake_option,
+    impure_option,
 )
 
 
@@ -30,6 +31,7 @@ class Evaluating(Command):
     file: str | None = file_option()
     attr: str | None = attr_option()
     flake: str | None = flake_option()
+    impure: bool = impure_option()
 
 
 class Calling(Command):
@@ -54,6 +56,11 @@ def test_the_three_options_take_their_long_spelling() -> None:
     assert command.file == "./x.nix"
     assert command.attr == "a.b"
     assert command.flake == "nixpkgs#hello"
+
+
+def test_impure_is_off_unless_named() -> None:
+    assert parse("--flake", "f").impure is False
+    assert parse("--flake", "f", "--impure").impure is True
 
 
 def test_file_and_attr_have_the_short_spelling_that_nix_uses() -> None:

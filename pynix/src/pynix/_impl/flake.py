@@ -112,7 +112,7 @@ async def _print_flake_metadata(flake_ref: str, *, store_uri: str) -> None:
     graph is a graph, and a flat map of the top level could never carry a
     transitive node or a ``follows`` edge.
     """
-    async with huggorm_eval_session(store_uri) as (_session, _store, state):
+    async with huggorm_eval_session(store_uri, pure=True) as (_session, _store, state):
         locked = await state.lock_flake(huggorm.parse_flake_ref(flake_ref), write_lock_file=False)
         try:
             print_json(json.loads(await state.flake_metadata_json(locked)))
@@ -125,7 +125,7 @@ async def run_show(command: Show) -> None:
     base_ref, _, raw_attr = command.flake_ref.partition("#")
     flake_attr: str | None = raw_attr or None
 
-    async with huggorm_eval_session(command.store) as (_session, _store, state):
+    async with huggorm_eval_session(command.store, pure=True) as (_session, _store, state):
         locked = await state.lock_flake(huggorm.parse_flake_ref(base_ref), write_lock_file=False)
         try:
             outputs = await flake_outputs(state, await state.call_flake(locked))
@@ -182,7 +182,7 @@ async def _lock(
     lock_file = ref.lock_file_path()
     before = await _read_lock_file(lock_file)
     async with huggorm_build_session(
-        store_uri, settings=configured_nix_settings(tarball_ttl="0"), verbosity=verbosity
+        store_uri, settings=configured_nix_settings(tarball_ttl="0"), verbosity=verbosity, pure=True
     ) as (
         _session,
         _store,

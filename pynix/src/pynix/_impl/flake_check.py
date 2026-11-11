@@ -413,7 +413,7 @@ class _Checker:
 async def run_check(command: Check) -> None:
     """The body of :meth:`pynix.flake.Check.run`."""
     settings = configured_nix_settings(keep_going="true" if command.keep_going else None)
-    async with huggorm_build_session(command.store, settings=settings, verbosity=command.verbosity) as (
+    async with huggorm_build_session(command.store, settings=settings, verbosity=command.verbosity, pure=True) as (
         _session,
         store,
         _eval_store,
