@@ -22,7 +22,7 @@ from pynix.copy import Copy
 from pynix.derivation import Derivation
 from pynix.develop import Develop, PrintDevEnv
 from pynix.edit import Edit
-from pynix.env import Env
+from pynix.env import Env, Shell
 from pynix.eval import Eval
 from pynix.flake import Flake
 from pynix.fmt import Fmt
@@ -76,6 +76,8 @@ Pynix = group(
         Run,
         Sbom,
         Search,
+        # `nix shell` is an alias of `nix env shell` (`src/nix/main.cc:166`), and so is this.
+        Shell,
         Store,
         WhyDepends,
     ],

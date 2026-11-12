@@ -55,6 +55,7 @@ ROOT_SUBCOMMANDS = frozenset(
         "run",
         "sbom",
         "search",
+        "shell",
         "store",
         "why-depends",
     }

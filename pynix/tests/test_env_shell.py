@@ -59,13 +59,14 @@ rec {
 """
 
 
-def _shell(store_uri: str, nix_file: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _shell(
+    store_uri: str, nix_file: Path, *args: str, spelling: tuple[str, ...] = ("env", "shell")
+) -> subprocess.CompletedProcess[str]:
     argv = [
         sys.executable,
         "-c",
         "import sys; from pynix import main; sys.argv = ['pynix', *sys.argv[1:]]; main()",
-        "env",
-        "shell",
+        *spelling,
         "--file",
         str(nix_file),
         "--store",
@@ -111,3 +112,10 @@ def test_the_exit_status_of_the_command_reaches_the_caller(
 ) -> None:
     result = _shell(shared_nix_environment.store_uri, packages, "tool", "-c", "sh", "-c", "exit 42")
     assert result.returncode == 42, result.stderr
+
+
+def test_shell_is_env_shell(shared_nix_environment: NixTestEnvironment, packages: Path) -> None:
+    """``nix shell`` is an alias of ``nix env shell`` (``main.cc:166``)."""
+    argv = ("tool", "--command", "pynix-test-tool", "x")
+    result = _shell(shared_nix_environment.store_uri, packages, *argv, spelling=("shell",))
+    assert (result.returncode, result.stdout) == (0, "tool x\n"), result.stderr

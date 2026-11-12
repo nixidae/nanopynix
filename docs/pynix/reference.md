@@ -646,6 +646,33 @@ Search the NixOS options and the packages of one target.
 | `--tui` | `bool or None` | Browse the results in a full-screen interface. The default opens it for a person at a terminal who gave no query, and prints a list otherwise. (default: `None`) |
 | `--store` | `str` | Store URI to evaluate with. (default: `'auto'`) |
 
+### `pynix shell`
+
+Run a shell in which the named packages are available
+
+Each package's bin directory goes on PATH, with the packages it
+propagates. Without --file, each installable is a flake reference;
+with --file, each is an attribute path in that file.
+
+Examples:
+  pynix env shell nixpkgs#jq nixpkgs#hello
+  pynix env shell nixpkgs#git --command git log -- README.md
+  pynix env shell --file '<nixpkgs>' jq --command jq --version
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `installables` | `list[str]` | Flake references, or attribute paths of --file. (default: `[]`) |
+| `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
+| `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
+| `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--argjson` | `list[tuple[str, str]]` | Pass the JSON value JSON as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--args-json` | `str or None` | Pass each key of the JSON object JSON as an argument to the function that --file names. '@FILE' reads the object from FILE. (default: `None`) |
+| `--store` | `str` | Store URI to build with. (default: `'auto'`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
+| `--print-build-logs` | `bool` | Print build log lines to stderr. (default: `False`) |
+| `--command` | `list[str]` | Command and arguments to run, instead of $SHELL. Takes every argument after it. (default: `None`) |
+
 ### `pynix store`
 
 Manage the Nix store
