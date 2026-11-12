@@ -427,7 +427,9 @@ async def _pynix(tmp_path: Path, *arguments: str, **environment: str) -> Complet
 
 async def test_a_nix_setting_from_the_environment_reaches_an_evaluation(tmp_path: Path) -> None:
     """``PYNIX_NIX_*`` reached ``pynix build`` only (nixidae/nixidae#1055)."""
-    result = await _pynix(tmp_path, "eval", "--expr", "builtins.currentSystem", PYNIX_NIX_SYSTEM="riscv64-linux")
+    result = await _pynix(
+        tmp_path, "eval", "--impure", "--expr", "builtins.currentSystem", PYNIX_NIX_SYSTEM="riscv64-linux"
+    )
 
     assert result.returncode == 0, result.stderr.decode()
     assert json.loads(result.stdout) == "riscv64-linux"

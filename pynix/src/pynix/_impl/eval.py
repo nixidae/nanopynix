@@ -40,8 +40,10 @@ async def run_eval(command: Eval) -> None:
         expr = sys.stdin.read()
         logger.info("reading expression from stdin")
 
-    # An expression is impure, as `nix eval --expr` is.
-    pure = expr is None and target.pure(impure=command.impure)
+    # `--expr` is pure unless `--impure`, as Nix has it (`installables.cc:457`
+    # turns `pure-eval` off for a file only). An expression on standard input
+    # is `nix eval --file -`, so it is a file, and impure.
+    pure = not command.impure if command.expr is not None else target.pure(impure=command.impure)
     async with huggorm_eval_session(command.store, pure=pure) as (_session, _store, state):
         with read_only_mode(command.read_only):
             try:

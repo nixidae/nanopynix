@@ -1,12 +1,14 @@
 """A flake evaluates in pure mode, as ``nix`` evaluates it (nixidae/nixidae#1109).
 
 ``nix`` sets ``pure-eval`` for every command (``main.cc``), ``--impure`` turns it
-off, and ``--file`` and an expression evaluate impurely always
-(``installables.cc``). ``builtins ? currentSystem`` tells the two modes apart.
+off, and ``--file`` evaluates impurely always (``installables.cc:457``). So
+``--expr`` is pure unless ``--impure``, and an expression on standard input is
+``--file -``, impure. ``builtins ? currentSystem`` tells the two modes apart.
 """
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import pytest
@@ -49,7 +51,15 @@ async def test_a_file_is_impure(
     assert await _eval(shared_nix_environment, capsys, "--file", str(probe)) == "true"
 
 
-async def test_an_expression_is_impure(
-    shared_nix_environment: NixTestEnvironment, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(("flags", "expected"), [([], "false"), (["--impure"], "true")], ids=["pure", "impure"])
+async def test_an_expression_is_pure_unless_impure(
+    shared_nix_environment: NixTestEnvironment, capsys: pytest.CaptureFixture[str], flags: list[str], expected: str
 ) -> None:
-    assert await _eval(shared_nix_environment, capsys, "--expr", _PROBE) == "true"
+    assert await _eval(shared_nix_environment, capsys, *flags, "--expr", _PROBE) == expected
+
+
+async def test_an_expression_on_standard_input_is_impure(
+    shared_nix_environment: NixTestEnvironment, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO(_PROBE))
+    assert await _eval(shared_nix_environment, capsys) == "true"
