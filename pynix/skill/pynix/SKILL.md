@@ -14,9 +14,14 @@ a gap or a bug found here is a pynix issue, not a reason to drop it quietly.
 | nix | pynix |
 |---|---|
 | `nix eval --file . a.b` | `pynix eval --file . --attr a.b` or `--file '.#a.b'` |
-| `nix eval --expr E` | `pynix eval --expr E`, or E on stdin (below) |
-| `nix build --file . a` | `pynix build --file . --attr a` |
+| `nix eval --expr E` | `pynix eval --expr E` (pure unless `--impure`), or E on stdin (impure, below) |
+| `nix eval --json ...` | `pynix eval --json ...`: nix's compact line; default is indented JSON |
+| `nix build --file . a b` | `pynix build --file . --attr a --attr b` |
+| `nix build --expr E a` | `pynix build --expr E --attr a` (pure unless `--impure`) |
+| `nix build --no-link --print-out-paths ...` | same flags: one path per line; `--no-link` changes nothing |
+| `nix build --keep-going` / `-k` | same |
 | `nix build .#a` | `pynix build --flake .#a` |
+| `nix run`, `nix shell` | `pynix run`, `pynix shell` (= `pynix env shell`) |
 | `nix develop --file . a -c CMD` | `pynix develop --file . --attr a -- CMD` |
 | `nix print-dev-env` | `pynix print-dev-env [--json]` |
 | `nix path-info P` | `pynix path-info P` (one path) |
@@ -30,15 +35,14 @@ a gap or a bug found here is a pynix issue, not a reason to drop it quietly.
 Differences that bite:
 
 - No positional attribute: `pynix build --file . foo` is a usage error. Use
-  `--attr foo` or `--file '.#foo'`.
-- One target per call: a second `--attr`, `--file` or `--flake` is a usage
-  error. `nix build --file . a b` is one `pynix build` for each attribute.
+  `--attr foo` or `--file '.#foo'`. `build` repeats `--attr`; other commands
+  take one target.
 - `--file` takes a path, `<name>` lookup path, URL or flake ref, each with an
   optional `#attr`. A bare word (`nixpkgs`) tries `NIX_PATH` first, then the
   registry; write local paths with `./`.
-- `build` writes no `result` link. Its stdout is
-  `{"outputs": {"out": "/nix/store/..."}, ...}`: take the path with `jq -r .outputs.out`.
-- `eval` always prints JSON. For `--raw`, pipe through `jq -r`.
+- `build` writes no `result` link unless `--out-link`. Its stdout is
+  `{"outputs": {"out": "/nix/store/..."}, ...}`; `--print-out-paths` prints nix's lines instead.
+- `eval` prints indented JSON; `--json` prints nix's compact line; `--raw` prints the string.
 - `build --dry-run` belongs to `--update-fod`; alone it builds nothing and prints nothing.
 - Store selection is `--store URI`, plus `--eval-store` on build and develop.
 
@@ -81,14 +85,10 @@ EOF
 
 ## Fall back to nix
 
-Use `nix` only for what pynix lacks, and say so in the reply:
+Use `nix` only for what pynix lacks, and say so in the reply: a subcommand
+missing from `pynix --help`, or a flag its `--help` lacks.
 
-- `nix run`, `nix shell` (#113)
-- `--arg`, `--argstr` (#524)
-- `nix fmt`, `nix edit` (#118)
-- any other subcommand missing from `pynix --help`
-
-Before falling back for a gap not listed here, or after a pynix failure that
+Before falling back, or after a pynix failure that
 nix does not share, search `gh issue list -R nixidae/nixidae --search "pynix ..."`.
 If no issue covers it, file one in nixidae/nixidae with label
 `source: nanopynix`: the command, the nix command that works, the stderr log.
