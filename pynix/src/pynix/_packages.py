@@ -40,11 +40,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+import structlog
 from huggorm import AsyncEvalState, AsyncValue
+from huggorm.errors import NixError
 
-from pynix._evaluate import call, to_python
+from pynix._evaluate import JsonValue, call, to_python
 
-#: The walk, as one Nix function of `lib` and `pkgs`.
+logger = structlog.get_logger("pynix.packages")
+
+#: The walk, as a Nix function of `lib`: `walk pkgs` reads every attribute in
+#: one pass, and `entry name value` reads one.
 #:
 #: **Every attribute goes through `builtins.tryEval`.** nixpkgs holds packages
 #: that throw when they are evaluated at all: one that its licence forbids, one
@@ -54,11 +59,12 @@ from pynix._evaluate import call, to_python
 #: option whose default only a realized system can evaluate.
 #:
 #: **`tryEval` does not catch every failure**, and its own documentation says
-#: so: it stops a `throw` and an `assert`, and not an error that a builtin
-#: raises. `isDerivation` is a check of one attribute and raises none of those,
-#: so the guard holds for the question this walk asks.
+#: so: it stops a `throw` and an `assert`, and not a missing attribute, a type
+#: error or a failed import from derivation. An overlay that names a missing
+#: input is one (nixidae/nixidae#1304). So when `walk` fails, the caller reads
+#: each attribute through `entry` and skips the ones that raise.
 _COLLECT_PACKAGE_METADATA = """
-lib: pkgs:
+lib:
   let
     entry = name: value:
       let
@@ -78,7 +84,10 @@ lib: pkgs:
       in
         if probed.success then probed.value else null;
   in
-    builtins.filter (x: x != null) (lib.mapAttrsToList entry pkgs)
+  {
+    inherit entry;
+    walk = pkgs: builtins.filter (x: x != null) (lib.mapAttrsToList entry pkgs);
+  }
 """
 
 
@@ -117,11 +126,17 @@ async def fetch_package_list(
     *lib_value* must be a nixpkgs `lib`, and ordinarily the one that
     *pkgs_value* itself carries.
 
-    The walk runs inside the evaluator and returns one list, so this costs two
-    round trips whatever the size of nixpkgs.
+    The walk runs inside the evaluator and returns one list, so this costs a
+    few round trips whatever the size of nixpkgs. When an attribute raises an
+    error that `tryEval` does not catch, the walk reads each attribute from
+    here and skips that one, where `nix search` skips it only in a flake's
+    `legacyPackages` (`search.cc:183`).
     """
-    collector = await state.eval_expr(_COLLECT_PACKAGE_METADATA)
-    raw = await to_python(await call(collector, lib_value, pkgs_value))
+    collector = await call(await state.eval_expr(_COLLECT_PACKAGE_METADATA), lib_value)
+    try:
+        raw = await to_python(await call(await collector.get("walk"), pkgs_value))
+    except NixError:
+        raw = await _each_entry(state, await collector.get("entry"), pkgs_value)
     if not isinstance(raw, list):
         raise TypeError(f"package metadata walk must return a list, got {type(raw).__name__}")
     records: list[PackageRecord] = []
@@ -130,6 +145,20 @@ async def fetch_package_list(
             raise TypeError(f"each package metadata entry must be an object, got {type(entry).__name__}")
         records.append(_parse_record(cast("Mapping[str, object]", entry)))
     return records
+
+
+async def _each_entry(state: AsyncEvalState, entry: AsyncValue, pkgs_value: AsyncValue) -> list[JsonValue]:
+    """What `walk` returns, one attribute at a time, without the attributes that raise."""
+    entries: list[JsonValue] = []
+    for name in await pkgs_value.names():
+        try:
+            probed = await to_python(await call(entry, await state.make_string(name), await pkgs_value.get(name)))
+        except NixError as exc:
+            logger.info("skipped an attribute that fails to evaluate", attr=name, error=exc.message)
+            continue
+        if probed is not None:
+            entries.append(probed)
+    return entries
 
 
 def _record_fields(record: PackageRecord) -> dict[str, object]:

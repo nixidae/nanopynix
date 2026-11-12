@@ -71,6 +71,19 @@ def test_a_package_that_throws_does_not_end_the_walk(packages: list[PackageRecor
     assert {"ripgrep", "hello-no-main", "broken", "unfree"} <= attrs
 
 
+async def test_an_error_tryeval_misses_skips_one_attribute(
+    shared_nix_environment: NixTestEnvironment, packages: list[PackageRecord]
+) -> None:
+    """A missing attribute escapes `builtins.tryEval`, and costs only its own
+    entry (nixidae/nixidae#1304). `nix search --file` aborts here instead."""
+    target = EvaluationTarget(file=str(_PKGSET.with_name("pkgset-missing-attr.nix")), attr=None, flake=None)
+    async with util_module.huggorm_eval_session(shared_nix_environment.store_uri) as (_session, _store, state):
+        root = await evaluate_target(target, state, auto_call_file=True)
+        lib_value = await select_attr(state, root, "lib")
+        records = await fetch_package_list(state, root, lib_value)
+    assert records == packages
+
+
 def test_an_attribute_that_is_not_a_derivation_is_skipped(packages: list[PackageRecord]) -> None:
     attrs = {record.attr for record in packages}
     assert "notADerivation" not in attrs
