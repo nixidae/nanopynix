@@ -31,6 +31,10 @@ _LOG_LINE_RESULTS = frozenset({huggorm.ResultType.BUILD_LOG_LINE, huggorm.Result
 _MONITOR_REDRAW_SECONDS = 0.25
 #: What `nix` logs at when no flag names a level (`nix::verbosity`, lvlInfo).
 DEFAULT_VERBOSITY = huggorm.Verbosity.INFO
+# `ANSI_RED`, `ANSI_MAGENTA` and `ANSI_NORMAL` of `libutil/ansicolor.hh`: an error's prefix and its arguments.
+_ANSI_RED = "\x1b[31;1m"
+_ANSI_MAGENTA = "\x1b[35;1m"
+_ANSI_NORMAL = "\x1b[0m"
 
 _config_loaded = False
 
@@ -70,6 +74,12 @@ def error_exit(message: str | Text, *, cause: BaseException | None = None) -> No
     """
     error_console.print("[red]Error:[/red]", Text.from_ansi(message) if isinstance(message, str) else message)
     raise SystemExit(1) from cause
+
+
+def print_nix_error(exc: huggorm.errors.NixError) -> None:
+    """``logError(e.info())``: the lines Nix prints for *exc*, in Nix's colours (see `error_exit`)."""
+    # `soft_wrap`: a build log in the message keeps Nix's own line breaks.
+    error_console.print(Text.from_ansi(exc.colored), soft_wrap=True)
 
 
 def report_and_exit(exc: EvaluationTargetError) -> NoReturn:
@@ -350,18 +360,23 @@ async def build_derivations(
     """Build every output of each of *drv_paths* in one request, and give
     the path of each output by derivation.
 
-    One request, so the scheduler builds them at once. The first failure
-    raises, after every build has ended.
+    One request, so the scheduler builds them at once. A failure raises
+    after every build has ended, as ``throwBuildErrors`` raises it.
     """
     derived = [await build_store.parse_derived_path(f"{drv_path}^*") for drv_path in drv_paths]
     other_eval_store = None if eval_store is build_store else eval_store
-    # One result per target, in the order of the targets (`build_paths_with_results`).
+    # Keyed by the request, not by position: without `keep-going` a build that
+    # the first failure stopped has no result at all. Measured on 2.35: two
+    # failing derivations at `max-jobs = 1` gave one result.
     results = await build_store.build_paths_with_results(derived, eval_store=other_eval_store)
     built: dict[str, dict[str, str]] = {}
-    for drv_path, result in zip(drv_paths, results, strict=True):
+    failed: list[tuple[str, huggorm.errors.NixError]] = []
+    for result in results:
+        drv_path = drv_paths[derived.index(result.path())]
         error = result.error()
         if error is not None:
-            raise error
+            failed.append((drv_path, error))
+            continue
         success = result.success()
         if success is None:
             raise RuntimeError("a build reported neither success nor failure")
@@ -369,7 +384,31 @@ async def build_derivations(
             name: await build_store.print_store_path(realisation.out_path())
             for name, realisation in success.built_outputs().items()
         }
+    _raise_build_errors(failed)
+    if missing := [drv_path for drv_path in drv_paths if drv_path not in built]:
+        raise RuntimeError(f"a build gave no result for {', '.join(missing)}, and nothing failed")
     return built
+
+
+def _raise_build_errors(failed: Sequence[tuple[str, huggorm.errors.NixError]]) -> None:
+    """``throwBuildErrors`` (``libcmd/installables.cc:548``): one failure is
+    itself; more, under ``keep-going``, each print, and one error names them.
+
+    Nix names each request as it asked for it, ``<drv>^out``; pynix asks for
+    ``<drv>^*``, and names that.
+    """
+    if not failed:
+        return
+    if len(failed) == 1:
+        raise failed[0][1]
+    for _, error in failed:
+        if error.message:
+            print_nix_error(error)
+    paths = ", ".join(f"'{drv_path}^*'" for drv_path in sorted(drv_path for drv_path, _ in failed))
+    raise huggorm.errors.NixError(
+        f"error: build of {paths} failed",
+        colored=f"{_ANSI_RED}error:{_ANSI_NORMAL} build of {_ANSI_MAGENTA}{paths}{_ANSI_NORMAL} failed",
+    )
 
 
 @asynccontextmanager

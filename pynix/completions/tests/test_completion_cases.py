@@ -78,6 +78,7 @@ BUILD_OPTIONS = frozenset(
         "--file",
         "--flake",
         "--impure",
+        "--keep-going",
         "--linux-builder",
         "--linux-builder-guest",
         "--namespaced",
@@ -100,7 +101,7 @@ BUILD_OPTIONS = frozenset(
 
 #: The short aliases of `pynix build`. Offered where the caller has typed
 #: nothing, and filtered out by the shell as soon as they type `--`.
-BUILD_SHORT = frozenset({"-A", "-f", "-o"})
+BUILD_SHORT = frozenset({"-A", "-f", "-k", "-o"})
 
 #: Every subcommand of `pynix store`.
 STORE_SUBCOMMANDS = frozenset(

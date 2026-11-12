@@ -15,10 +15,9 @@ import sys
 
 from huggorm import AsyncStore, PathInfo, Signature, Verbosity, log_message
 from huggorm.errors import InvalidPath, NixError
-from rich.text import Text
 
 from pynix._impl.sigs import selected_paths
-from pynix._util import error_console, huggorm_eval_session
+from pynix._util import huggorm_eval_session, print_nix_error
 from pynix.store import Verify
 from pynix.target import EvaluationTarget
 
@@ -28,11 +27,6 @@ _MAX_SIGS = sys.maxsize
 _CORRUPTED = 1
 _UNTRUSTED = 2
 _FAILED = 4
-
-
-def _log_error(exc: NixError) -> None:
-    """``logError(e.info())``: the line Nix prints for the error."""
-    error_console.print(Text.from_ansi(exc.colored), soft_wrap=True)
 
 
 async def _modified(store: AsyncStore, info: PathInfo) -> bool:
@@ -86,7 +80,7 @@ async def _lent(substituter: AsyncStore, info: PathInfo) -> PathInfo | None:
     except InvalidPath:
         return None
     except NixError as exc:
-        _log_error(exc)
+        print_nix_error(exc)
         return None
 
 
@@ -108,7 +102,7 @@ async def run_verify(command: Verify) -> None:
                     untrusted += 1
                     log_message(Verbosity.ERROR, f"path '{printed}' is untrusted")
             except NixError as exc:
-                _log_error(exc)
+                print_nix_error(exc)
                 failed += 1
     code = (_CORRUPTED if corrupted else 0) | (_UNTRUSTED if untrusted else 0) | (_FAILED if failed else 0)
     if code:

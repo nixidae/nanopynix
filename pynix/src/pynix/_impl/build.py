@@ -414,6 +414,7 @@ async def run_build(command: Build) -> None:
     settings = configured_nix_settings(
         substituters=command.substituters,
         trusted_public_keys=command.trusted_public_keys,
+        keep_going="true" if command.keep_going else None,
     )
 
     # Outside the session, so the error passes through its log forwarding:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,7 @@ from typing import Any
 import anyio
 import pytest
 from anyio import Path as AnyioPath
-from huggorm.errors import BuildError
+from huggorm.errors import BuildError, NixError
 from huggorm.fod import replace_fod_hash as _real_replace_fod_hash
 from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, with_nixpkgs
 
@@ -497,6 +498,55 @@ async def test_build_print_out_paths_prints_what_nix_prints(
     )
     assert ours == theirs.stdout.decode()
     assert len(ours.splitlines()) == 2
+
+
+@LINUX_CHROOT_BUILD
+@pytest.mark.parametrize("keep_going", [False, True], ids=["stop", "keep-going"])
+async def test_build_keep_going_builds_past_a_failure_as_nix_does(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    keep_going: bool,
+) -> None:
+    """Two failing builds, one job: Nix stops after the first, unless it keeps going."""
+    await require_matching_nix_cli()
+    nix_file = tmp_path / "two.nix"
+    failing = (
+        'derivation {{ name = "{0}"; system = builtins.currentSystem; builder = "/bin/sh"; args = [ "-c" "exit 1" ]; }}'
+    )
+    await AnyioPath(nix_file).write_text(
+        f"{{ a = {failing.format('pynix-keep-going-a')}; b = {failing.format('pynix-keep-going-b')}; }}"
+    )
+    monkeypatch.setenv("PYNIX_NIX_MAX_JOBS", "1")
+    store = shared_nix_environment.pynix_store_args()
+    flag = ["--keep-going"] if keep_going else []
+    with pytest.raises(NixError) as raised:
+        await parse(["build", "--file", str(nix_file), "--attr", "a", "--attr", "b", *flag, *store]).run()
+    # What a run prints: the logged failures, then `main` prints the raised error.
+    ours = strip_ansi(capsys.readouterr().err + raised.value.colored)
+    theirs = await anyio.run_process(
+        [
+            "nix",
+            "--extra-experimental-features",
+            "nix-command",
+            "build",
+            "--no-link",
+            *flag,
+            "--file",
+            str(nix_file),
+            "a",
+            "b",
+            *store,
+        ],
+        check=False,
+        # `use-cgroups` from a host's nix.conf fails every local build of a user (nixidae/nixidae#1037).
+        env={**os.environ, "NIX_CONFIG": "max-jobs = 1\nuse-cgroups = false"},
+    )
+    nix_err = strip_ansi(theirs.stderr.decode())
+    assert ours.count("Cannot build '") == nix_err.count("Cannot build '") == (2 if keep_going else 1)
+    # `throwBuildErrors` names every failed request once more than one failed.
+    assert ("error: build of '" in ours) == ("error: build of '" in nix_err) == keep_going
 
 
 @LINUX_CHROOT_BUILD

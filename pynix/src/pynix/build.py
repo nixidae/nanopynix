@@ -71,6 +71,10 @@ class Build(ConfiguredCommand):
         ),
     )
 
+    keep_going: bool = opt(
+        False, short="k", help="Keep going in case of failed builds, to the greatest extent possible."
+    )
+
     update_fod: bool = opt(False, help="Update plain fixed-output hash literals after a hash mismatch.")
 
     dry_run: bool = opt(False, help="Show --update-fod changes without writing or rebuilding.")
