@@ -97,6 +97,7 @@ Evaluate a Nix expression and print the result as JSON
 | `--store` | `str` | Store URI to evaluate with. (default: `'auto'`) |
 | `--apply` | `str or None` | Apply the function EXPR to the result before it is printed. (default: `None`) |
 | `--raw` | `bool` | Print the result as a string, with no quotes and no newline. A value that does not coerce to a string is an error. (default: `False`) |
+| `--json` | `bool` | Print the result as nix eval --json prints it: compact JSON on one line, in place of indented JSON. (default: `False`) |
 | `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
 | `--read-only` | `bool` | Do not instantiate each evaluated derivation. This improves performance, but can cause errors when accessing store paths of derivations during evaluation. (default: `False`) |
 

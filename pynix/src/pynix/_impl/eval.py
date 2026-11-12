@@ -22,6 +22,8 @@ logger = structlog.get_logger("pynix.eval")
 
 async def run_eval(command: Eval) -> None:
     """The body of :meth:`pynix.eval.Eval.run`."""
+    if command.json and command.raw:
+        error_exit("--json and --raw contradict each other")
     target = EvaluationTarget.from_command(command)
     try:
         target.validate()
@@ -56,4 +58,8 @@ async def run_eval(command: Eval) -> None:
                 sys.stdout.write(await root.coerce_to_string())
                 return
             # Nix's `printValueAsJSON`, as `nix eval --json` prints it.
-            print_json(json.loads(await root.to_json()))
+            rendered = await root.to_json()
+            if command.json:
+                sys.stdout.write(f"{rendered}\n")
+                return
+            print_json(json.loads(rendered))

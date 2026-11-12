@@ -5,6 +5,7 @@ import json
 import re
 from pathlib import Path
 
+import anyio
 import huggorm
 import pytest
 from huggorm.errors import NixTypeError
@@ -12,6 +13,7 @@ from huggorm.testing.environment import NixTestEnvironment
 
 from pynix import parse
 from support.ansi import strip_ansi
+from support.nix_oracle import require_matching_nix_cli
 
 
 def _parse_json_output(out: str) -> object:
@@ -80,6 +82,26 @@ async def test_eval_json_sorted_keys(
     captured = capsys.readouterr()
     result = _parse_json_output(captured.out)
     assert json.dumps(result, sort_keys=True, indent=2) + "\n" in captured.out
+
+
+async def test_eval_json_prints_what_nix_eval_json_prints(
+    shared_nix_environment: NixTestEnvironment, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    await require_matching_nix_cli()
+    nix_file = tmp_path / "test.nix"
+    nix_file.write_text('{ z = 1; a = [ "x" { b = null; } ]; s = "\\u00e9"; }')
+    store = shared_nix_environment.pynix_store_args()
+    await parse(["eval", "--json", "--file", str(nix_file), *store]).run()
+    theirs = await anyio.run_process(
+        ["nix", "--extra-experimental-features", "nix-command", "eval", "--json", "--file", str(nix_file), *store]
+    )
+    assert capsys.readouterr().out == theirs.stdout.decode()
+
+
+async def test_eval_refuses_json_with_raw(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        await parse(["eval", "--json", "--raw", "--expr", "1"]).run()
+    assert "--json and --raw contradict each other" in capsys.readouterr().err
 
 
 async def test_eval_attr_without_file_or_flake_errors(capsys: pytest.CaptureFixture[str]) -> None:

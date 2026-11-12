@@ -45,6 +45,11 @@ class Eval(ConfiguredCommand):
         help="Print the result as a string, with no quotes and no newline. A value that does not coerce to a string is an error.",
     )
 
+    json: bool = opt(
+        False,
+        help="Print the result as nix eval --json prints it: compact JSON on one line, in place of indented JSON.",
+    )
+
     impure: bool = impure_option()
 
     read_only: bool = opt(
