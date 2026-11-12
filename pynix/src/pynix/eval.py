@@ -47,6 +47,12 @@ class Eval(ConfiguredCommand):
 
     impure: bool = impure_option()
 
+    read_only: bool = opt(
+        False,
+        help="Do not instantiate each evaluated derivation. This improves performance, "
+        "but can cause errors when accessing store paths of derivations during evaluation.",
+    )
+
     @override
     async def run(self) -> None:
         await _impl.eval.run_eval(self)

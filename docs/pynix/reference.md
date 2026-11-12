@@ -95,6 +95,7 @@ Evaluate a Nix expression and print the result as JSON
 | `--apply` | `str or None` | Apply the function EXPR to the result before it is printed. (default: `None`) |
 | `--raw` | `bool` | Print the result as a string, with no quotes and no newline. A value that does not coerce to a string is an error. (default: `False`) |
 | `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
+| `--read-only` | `bool` | Do not instantiate each evaluated derivation. This improves performance, but can cause errors when accessing store paths of derivations during evaluation. (default: `False`) |
 
 ### `pynix derivation`
 
@@ -955,7 +956,7 @@ Copy store path signatures from substituters
 | `--recursive` | `bool` | Apply operation to closure of the specified paths. (default: `False`) |
 | `--all` | `bool` | Apply the operation to every store path. (default: `False`) |
 | `--store` | `str` | Store URI to operate on. (default: `'auto'`) |
-| `--substituter` | `list[str]` | Copy signatures from the specified store. (default: `[]`) |
+| `--substituter` | `list[str]` | Copy signatures from the specified store. (default: `None`) |
 
 ### `pynix why-depends`
 

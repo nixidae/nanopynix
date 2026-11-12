@@ -5,6 +5,7 @@ import json
 import re
 from pathlib import Path
 
+import huggorm
 import pytest
 from huggorm.errors import NixTypeError
 from huggorm.testing.environment import NixTestEnvironment
@@ -333,3 +334,25 @@ async def test_eval_args_json_reads_the_file_after_an_at_sign(
     arguments.write_text('{"c": {"n": 1}, "b": "${throw \\"b\\"}"}')
     got = await _eval_file(shared_nix_environment, capsys, nix_file, "--args-json", f"@{arguments}")
     assert got == {"a": "da", "b": '${throw "b"}', "c": {"n": 1}}
+
+
+_DRV_PATH = '(derivation { name = "read-only"; system = "x"; builder = "/bin/sh"; }).drvPath'
+
+
+@pytest.mark.parametrize("read_only", [True, False])
+async def test_eval_read_only_writes_no_derivation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], read_only: bool
+) -> None:
+    """``nix eval --read-only`` (``MixReadOnlyOption``) gives the same path
+    and writes no ``.drv`` file to the store."""
+    store = str(tmp_path / "store")
+    flags = ["--read-only"] if read_only else []
+    await parse(["eval", "--expr", _DRV_PATH, "--store", store, *flags]).run()
+    drv_path = _parse_json_output(capsys.readouterr().out)
+    assert isinstance(drv_path, str)
+    assert drv_path.endswith("-read-only.drv")
+    async with huggorm.AsyncSession(store) as session:
+        opened = session.store()
+        written = await opened.is_valid_path(await opened.parse_store_path(drv_path))
+    assert written is not read_only
+    assert not huggorm.read_only_mode()
