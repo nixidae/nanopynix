@@ -88,7 +88,7 @@ def _host_nix_conf_stays_out() -> Iterator[None]:
 @pytest.fixture(scope="module", autouse=True)
 async def _shared_pynix_sessions(
     anyio_backend: str,  # noqa: ARG001 -- see below; requested for its side effect on the fixture closure
-) -> AsyncIterator[None]:
+) -> AsyncIterator[SharedSessions | None]:
     """Share one Nix session/store/evaluator across pynix commands, unless CI
     asked for the faithful per-command path -- see _shared_sessions.py beside this file.
 
@@ -107,15 +107,36 @@ async def _shared_pynix_sessions(
     fixture here pulls it into every test's closure and settles it.
     """
     if os.environ.get(FAITHFUL_SESSIONS_ENV_VAR):
-        yield
+        yield None
         return
     shared = SharedSessions()
     with pytest.MonkeyPatch.context() as monkeypatch:
         shared.install(monkeypatch)
         try:
-            yield
+            yield shared
         finally:
             await shared.aclose()
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        "fresh_evaluator: each pynix command gets its own evaluator, as the real CLI and CI do",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _fresh_evaluator(
+    request: pytest.FixtureRequest,
+    _shared_pynix_sessions: SharedSessions | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under ``fresh_evaluator``, this test's commands do not share one.
+
+    For a test whose answer depends on what an evaluator read before, such
+    as the symbol order of an attribute set."""
+    if _shared_pynix_sessions is not None and request.node.get_closest_marker("fresh_evaluator"):
+        _shared_pynix_sessions.uninstall(monkeypatch)
 
 
 @pytest.fixture(autouse=True)

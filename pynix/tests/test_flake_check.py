@@ -1,10 +1,9 @@
 """``pynix flake check`` (nixidae/nixidae#111), held to ``nix flake check``.
 
 The oracle is the set of error blocks each command prints, whole: the
-message, every frame, each position and the code there. Under
-``--keep-going`` each command visits the outputs in its own order, so the
-blocks are compared as a set. Without it the two can stop at different
-failures, so those tests have one failing output.
+message, every frame, each position and the code there, compared as a
+set. Without ``--keep-going`` both stop at the first failure in symbol
+order.
 """
 
 from __future__ import annotations
@@ -369,6 +368,20 @@ async def test_each_error_prints_as_nix_prints_it(
     blocks = _blocks(capsys.readouterr().err)
     assert blocks == _blocks(nix_err)
     assert any("flake.nix:2:" in block for block in blocks), blocks
+
+
+@pytest.mark.fresh_evaluator
+async def test_the_first_failure_is_the_one_nix_stops_at(
+    shared_nix_environment: NixTestEnvironment, broken: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``broken`` names its outputs out of alphabetical order, so a walk
+    in name order stops at another failure than Nix's. Symbol order is the
+    order an evaluator first read each name, so this needs a fresh one."""
+    code, nix_err = await _nix_check(shared_nix_environment, broken, "--no-build")
+    assert await _check(shared_nix_environment, broken, "--no-build") == code == 1
+    blocks = _blocks(capsys.readouterr().err)
+    assert blocks == _blocks(nix_err)
+    assert len(blocks) == 1, blocks
 
 
 @pytest.mark.parametrize("show_trace", [False, True], ids=["short", "show-trace"])

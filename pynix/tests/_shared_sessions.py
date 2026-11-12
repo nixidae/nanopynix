@@ -210,6 +210,15 @@ class SharedSessions:
                 f"importing these helpers; set {FAITHFUL_SESSIONS_ENV_VAR} to run without the fast path.",
             )
 
+    def uninstall(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Rebind the real helpers where :meth:`install` put the shared ones."""
+        for module_name, module in list(sys.modules.items()):
+            if not module_name.startswith("pynix"):
+                continue
+            for name in _PATCHED_NAMES:
+                if getattr(getattr(module, name, None), "__self__", None) is self:
+                    monkeypatch.setattr(module, name, self._originals[name])
+
     async def aclose(self) -> None:
         await self._stack.aclose()
 

@@ -7,9 +7,9 @@ for each output, the same messages, and the same two error modes. Without
 its innermost frame, and the command fails at the end.
 
 Each frame goes on Nix's own error, at the position Nix gives it, and Nix
-renders the result, so a failure prints as Nix prints it. The outputs come
-in name order, and Nix's come in symbol order, so without ``keep-going``
-the first failure can be another one than Nix's.
+renders the result, so a failure prints as Nix prints it. Each set is
+walked in symbol order, as Nix's loops walk it, so without ``keep-going``
+the check stops at Nix's first failure.
 """
 
 from __future__ import annotations
@@ -212,7 +212,7 @@ class _Checker:
 
     async def members(self, value: AsyncValue) -> list[tuple[str, AsyncValue]]:
         await self.force_attrs(value)
-        return [(name, await value.get(name)) for name in await value.names()]
+        return [(name, await value.get(name)) for name in await value.names_in_symbol_order()]
 
     async def check_system_name(self, parent: AsyncValue, system: str) -> None:
         if "-" not in system:
@@ -266,7 +266,7 @@ class _Checker:
                     logger.warning("app lacks attribute 'meta.description'", app=attr_path)
             else:
                 logger.warning("app lacks attribute 'meta'", app=attr_path)
-            for name in await value.names():
+            for name in await value.names_in_symbol_order():
                 if name not in ("type", "program", "meta"):
                     raise CheckError.raised("app '%s' has unsupported attribute '%s'", attr_path, name)
 
@@ -320,7 +320,7 @@ class _Checker:
             if not await value.has("description"):
                 raise CheckError.raised("template '%s' lacks attribute 'description'", attr_path)
             await self.force_string_no_context(await value.get("description"))
-            for name in await value.names():
+            for name in await value.names_in_symbol_order():
                 if name not in ("path", "description", "welcomeText"):
                     raise CheckError.raised("template '%s' has unsupported attribute '%s'", attr_path, name)
 
@@ -403,8 +403,10 @@ class _Checker:
                 logger.warning("unknown flake output", output=name)
 
     async def outputs(self, outputs: AsyncValue) -> None:
-        """Each output, ``hydraJobs`` first, as ``enumerateOutputs`` orders them."""
-        names = await outputs.names()
+        """Each output, ``hydraJobs`` first, as ``enumerateOutputs`` orders them.
+
+        ``sorted`` is stable, so the rest keep their symbol order."""
+        names = await outputs.names_in_symbol_order()
         # `enableImportFromDerivation.setDefault(name != "hydraJobs")`
         # (flake.cc:600): a default, so a setting someone gave wins.
         ifd_given = _IFD in huggorm.list_settings(overridden_only=True)
