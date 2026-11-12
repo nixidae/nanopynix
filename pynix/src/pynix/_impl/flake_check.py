@@ -6,8 +6,9 @@ for each output, the same messages, and the same two error modes. Without
 "while checking" frame on it. With ``keep-going`` each failure prints with
 its innermost frame, and the command fails at the end.
 
-Two parts of Nix's output are absent. A frame names no position, because no
-huggorm value answers the position of an attribute. The outputs come in
+Two parts of Nix's output are absent. A frame names no position and shows
+no source lines, because Nix's error printer draws them and pynix adds its
+frames to an error that Nix has already rendered. The outputs come in
 name order, and Nix's come in symbol order, so without ``keep-going`` the
 first failure can be another one than Nix's.
 """
@@ -24,7 +25,7 @@ from typing import Final
 import anyio
 import huggorm
 import structlog
-from huggorm import AsyncEvalState, AsyncStore, AsyncValue
+from huggorm import AsyncEvalState, AsyncStore, AsyncValue, Position
 from huggorm.attrpath import AttrPathError, flake_outputs, select_attr
 from huggorm.errors import NixError
 from rich.text import Text
@@ -134,6 +135,14 @@ def _print(colored: str) -> None:
     error_console.print(Text.from_ansi(colored), soft_wrap=True)
 
 
+def _show_position(pos: Position | None) -> str:
+    """A position as ``Pos::print`` writes it with its origin (``position.cc:64``)."""
+    if pos is None:
+        return "«none»:0"
+    column = f":{pos.column()}" if pos.column() > 0 else ""
+    return f"{pos.file()}:{pos.line()}{column}"
+
+
 def _arg_has_name(name: str, expected: str) -> bool:
     return name in (expected, "_") or (name.startswith("_") and name[1:] == expected)
 
@@ -200,10 +209,10 @@ class _Checker:
         await self.force_attrs(value)
         return [(name, await value.get(name)) for name in await value.names()]
 
-    def check_system_name(self, system: str) -> None:
-        # Nix adds ", at <position>"; huggorm answers no attribute's position.
+    async def check_system_name(self, parent: AsyncValue, system: str) -> None:
         if "-" not in system:
-            self.report(CheckError.raised(f"{_quote(system)} is not a valid system type"))
+            where = _show_position(await parent.attr_pos(system))
+            self.report(CheckError.raised(f"{_quote(system)} is not a valid system type, at {where}"))
 
     def check_system_type(self, system: str) -> bool:
         if not self.all_systems and system != self.local_system:
@@ -215,7 +224,7 @@ class _Checker:
         """The members of a per-system output that this run checks."""
         checked: list[tuple[str, AsyncValue]] = []
         for system, member in await self.members(value):
-            self.check_system_name(system)
+            await self.check_system_name(value, system)
             if self.check_system_type(system):
                 checked.append((system, member))
         return checked
@@ -356,7 +365,7 @@ class _Checker:
                     await self.app(f"{name}.{system}", member)
             elif name == "legacyPackages":
                 for system, _member in await self.members(value):
-                    self.check_system_name(system)
+                    await self.check_system_name(value, system)
                     self.check_system_type(system)
             elif name == "overlay":
                 await self.overlay(name, value)

@@ -91,13 +91,16 @@ async def _check(environment: NixTestEnvironment, flake: Path, *flags: str) -> i
     return 0
 
 
-def _failures(stderr: str) -> set[str]:
-    """Each "while checking" frame and each error message, with no position."""
+def _failures(stderr: str, *, positions: bool = False) -> set[str]:
+    """Each "while checking" frame and each error message. A message keeps
+    its ", at <position>" only with *positions*: the store path in it is
+    known only to a test that runs both programs."""
+    message_pattern = r"\s*error: (.+)$" if positions else r"\s*error: (.+?)(?:, at /.*)?$"
     found: set[str] = set()
     for line in strip_ansi(stderr).splitlines():
         if frame := re.match(r"\s*… (while checking .*)$", line):
             found.add(frame[1])
-        elif (message := re.match(r"\s*error: (.+?)(?:, at /.*)?$", line)) and line.strip() != _SUMMARY:
+        elif (message := re.match(message_pattern, line)) and line.strip() != _SUMMARY:
             found.add(message[1])
     return found
 
@@ -140,6 +143,10 @@ async def test_a_broken_output_reports_every_failure_with_keep_going(
     assert await _check(shared_nix_environment, broken, "--keep-going", *flags) == 1
     err = capsys.readouterr().err
     assert _failures(err) == {failure.format(system=_system()) for failure in _BROKEN_FAILURES}
+    # `checks.nosystem` starts line 4, column 3 of the flake `_flake` writes.
+    assert re.search(
+        r"'nosystem' is not a valid system type, at /\S+/flake\.nix:4:3$", strip_ansi(err), re.MULTILINE
+    ), err
     assert strip_ansi(err).rstrip().endswith(_SUMMARY)
 
 
@@ -211,7 +218,7 @@ async def test_the_failures_are_the_ones_nix_reports(
         ],
     )
     assert await _check(shared_nix_environment, broken, "--keep-going", "--no-build") == result.returncode == 1
-    assert _failures(capsys.readouterr().err) == _failures(result.stderr)
+    assert _failures(capsys.readouterr().err, positions=True) == _failures(result.stderr, positions=True)
 
 
 async def test_hydra_jobs_import_no_derivation(
