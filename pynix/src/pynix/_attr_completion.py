@@ -381,6 +381,11 @@ def complete_file(*, prefix: str, **_: Any) -> Sequence[str]:
     return [f"{path}#{candidate}" for candidate in _answer(path, fragment)]
 
 
+def complete_path(*, prefix: str, **_: Any) -> Sequence[str]:
+    """Candidates for an option that Nix gives ``Args::completePath``."""
+    return _paths(prefix)
+
+
 def _flake_search(name: FlakeSearch) -> AttrPathSearch:
     """The :class:`~huggorm.attrpath.AttrPathSearch` that *name* stands for.
 

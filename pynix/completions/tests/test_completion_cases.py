@@ -83,6 +83,7 @@ BUILD_OPTIONS = frozenset(
         "--no-copy-back",
         "--no-print-build-logs",
         "--nom",
+        "--out-link",
         "--overlay-dir",
         "--print-build-logs",
         "--sandbox-path",
@@ -96,7 +97,7 @@ BUILD_OPTIONS = frozenset(
 
 #: The short aliases of `pynix build`. Offered where the caller has typed
 #: nothing, and filtered out by the shell as soon as they type `--`.
-BUILD_SHORT = frozenset({"-A", "-f"})
+BUILD_SHORT = frozenset({"-A", "-f", "-o"})
 
 #: Every subcommand of `pynix store`.
 STORE_SUBCOMMANDS = frozenset(

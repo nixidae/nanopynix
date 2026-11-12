@@ -25,6 +25,8 @@ this module exists to keep off a start that evaluates nothing.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from libpynix import (
     arg_option as arg_option,
     argjson_option as argjson_option,
@@ -35,9 +37,27 @@ from libpynix import (
     file_option as _file_option,
     flake_option as _flake_option,
     impure_option as impure_option,
+    opt,
 )
 from libpynix._typecheck import no_runtime_type_check
-from pynix._attr_completion import FlakeSearch, complete_attr, complete_file, flake_completer
+from pynix._attr_completion import FlakeSearch, complete_attr, complete_file, complete_path, flake_completer
+
+
+@no_runtime_type_check  # a declaration returns a Spec, not the annotated type; see libpynix.nix_options
+def out_link_option() -> Path | None:
+    """``--out-link``/``-o``, as ``MixOutLinkBase`` declares it.
+
+    Opt-in: ``nix build`` links ``./result`` by default, and pynix links
+    nothing unless asked."""
+    value: Path | None = opt(
+        None,
+        short="o",
+        metavar="path",
+        help="Use PATH as prefix for the symlinks to the results. Each one is a garbage collector root. "
+        "By default, no out links are created.",
+        complete=complete_path,
+    )
+    return value
 
 
 @no_runtime_type_check  # a declaration returns a Spec, not the annotated type; see libpynix.nix_options

@@ -14,6 +14,7 @@ from pynix._nix_options import (
     file_option,
     flake_option,
     impure_option,
+    out_link_option,
 )
 from pynix._settings import (
     ConfiguredCommand,
@@ -114,6 +115,8 @@ class Build(ConfiguredCommand):
             "build succeeds. Without it the outputs are gone when the worker or the VM exits."
         ),
     )
+
+    out_link: Path | None = out_link_option()
 
     copy: str | None = opt(
         None,

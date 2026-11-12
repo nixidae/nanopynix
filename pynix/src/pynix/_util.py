@@ -228,6 +228,24 @@ async def huggorm_eval_session(
             yield session, store, state
 
 
+def out_links(prefix: Path, built: Sequence[Mapping[str, str]]) -> list[tuple[Path, str]]:
+    """Each link and the output it names, as ``createOutLinks`` names them
+    (``libcmd/command.cc``): *prefix* for the first result, ``-N`` after it
+    for result N, and ``-OUTPUT`` for every output but ``out``."""
+    bases = [str(prefix) if index == 0 else f"{prefix}-{index}" for index in range(len(built))]
+    return [
+        (Path(base if output == "out" else f"{base}-{output}"), outputs[output])
+        for base, outputs in zip(bases, built, strict=True)
+        for output in sorted(outputs)
+    ]
+
+
+async def create_out_links(store: huggorm.AsyncStore, prefix: Path, built: Sequence[Mapping[str, str]]) -> None:
+    """Link every output of *built* under *prefix*, each a root in *store*."""
+    for link, path in out_links(prefix, built):
+        await store.add_perm_root(await store.parse_store_path(path), str(await anyio.Path(link).absolute()))
+
+
 @contextmanager
 def read_only_mode(enabled: bool) -> Iterator[None]:
     """Nix's ``settings.readOnlyMode`` for the block, when *enabled*: an

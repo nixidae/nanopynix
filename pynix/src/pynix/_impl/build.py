@@ -48,11 +48,13 @@ from pynix._impl.linux_builder import LinuxBuilderError, linux_builder, requeste
 from pynix._util import (
     build_derivations,
     configured_nix_settings,
+    create_out_links,
     error_console,
     error_exit,
     evaluator_settings,
     forward_state_logs,
     huggorm_build_session,
+    huggorm_store_session,
     print_json,
     record_message,
     report_and_exit,
@@ -409,6 +411,7 @@ async def run_build(command: Build) -> None:
 
     namespaced = _resolve_namespaced(command)
     guest = _resolve_linux_builder(command, namespaced=namespaced)
+    _refuse_an_out_link_with_nothing_to_link(command, elsewhere=namespaced or guest is not None)
 
     settings = configured_nix_settings(
         substituters=command.substituters,
@@ -431,10 +434,26 @@ async def run_build(command: Build) -> None:
     except LinuxBuilderError as exc:
         error_exit(str(exc))
 
+    if command.out_link is not None and built:
+        # The store the outputs are in now: a namespaced or VM build copied them to the host's.
+        linked = _HOST_STORE_URI if namespaced or guest is not None else command.store
+        async with huggorm_store_session(linked) as (_session, store):
+            await create_out_links(store, command.out_link, [target.outputs for target in built])
+
     report: dict[str, Any] = {"outputs": output_report(built), "updatedFods": updates, "dryRun": command.dry_run}
     if copied is not None:
         report["copy"] = copied
     print_json(report)
+
+
+def _refuse_an_out_link_with_nothing_to_link(command: Build, *, elsewhere: bool) -> None:
+    """*elsewhere* is a build outside the host's store: namespaced, or in a VM."""
+    if command.out_link is None:
+        return
+    if command.dry_run:
+        error_exit("--dry-run builds nothing, so --out-link has nothing to link")
+    if elsewhere and not command.copy_back:
+        error_exit("--out-link needs --copy-back: without it the outputs are gone when the build ends")
 
 
 def _targets(command: Build) -> list[EvaluationTarget]:

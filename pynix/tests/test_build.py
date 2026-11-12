@@ -395,6 +395,52 @@ async def test_build_every_attr_and_key_the_outputs_by_attr(
     assert outputs["b"]["out"].endswith("-pynix-attr-b")
 
 
+def test_out_links_are_named_as_nix_names_them() -> None:
+    """``createOutLinks`` (``libcmd/command.cc``): ``-N`` from the second
+    result on, and ``-OUTPUT`` for every output but ``out``."""
+    built = [{"out": "/nix/store/a", "dev": "/nix/store/a-dev"}, {"out": "/nix/store/b"}]
+    assert _util.out_links(Path("res"), built) == [
+        (Path("res-dev"), "/nix/store/a-dev"),
+        (Path("res"), "/nix/store/a"),
+        (Path("res-1"), "/nix/store/b"),
+    ]
+
+
+@LINUX_CHROOT_BUILD
+async def test_build_out_link_links_each_output(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    nix_file = tmp_path / "two.nix"
+    await AnyioPath(nix_file).write_text(f"{{ a = {_trivial('pynix-link-a')}; b = {_trivial('pynix-link-b')}; }}")
+    prefix = tmp_path / "res"
+
+    outputs = await _build_json(
+        shared_nix_environment, capsys, "--file", str(nix_file), "--attr", "a", "--attr", "b", "--out-link", str(prefix)
+    )
+
+    assert await AnyioPath(prefix).readlink() == Path(outputs["a"]["out"])
+    assert await AnyioPath(f"{prefix}-1").readlink() == Path(outputs["b"]["out"])
+
+
+@LINUX_CHROOT_BUILD
+async def test_build_links_nothing_by_default(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``nix build`` links ``./result``, and pynix links only when asked."""
+    nix_file = tmp_path / "one.nix"
+    await AnyioPath(nix_file).write_text(_trivial("pynix-no-link"))
+    monkeypatch.chdir(tmp_path)
+
+    await _build_json(shared_nix_environment, capsys, "--file", str(nix_file))
+
+    assert [p.name async for p in AnyioPath(tmp_path).iterdir()] == ["one.nix"]
+
+
 @LINUX_CHROOT_BUILD
 async def test_build_one_attr_twice_keeps_the_flat_outputs(
     shared_nix_environment: NixTestEnvironment,
