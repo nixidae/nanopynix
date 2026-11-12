@@ -1,10 +1,10 @@
 """``pynix flake check`` (nixidae/nixidae#111), held to ``nix flake check``.
 
-The oracle is the set of failures each command reports under
-``--keep-going``: the "while checking" frames and the error messages. Each
-command visits the outputs in its own order, so without ``--keep-going`` the
-two can stop at different failures; those tests ask for one error and a
-failed exit.
+The oracle is the set of error blocks each command prints, whole: the
+message, every frame, each position and the code there. Under
+``--keep-going`` each command visits the outputs in its own order, so the
+blocks are compared as a set. Without it the two can stop at different
+failures, so those tests have one failing output.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment
 from structlog.testing import capture_logs
 
 from pynix import parse
-from pynix._impl.flake_check import CheckError
 from support.ansi import strip_ansi
 from support.nix_oracle import require_matching_nix_cli
 from test_support.subprocess_output import run_process
@@ -103,6 +102,38 @@ def _failures(stderr: str, *, positions: bool = False) -> set[str]:
         elif (message := re.match(message_pattern, line)) and line.strip() != _SUMMARY:
             found.add(message[1])
     return found
+
+
+def _blocks(stderr: str) -> set[str]:
+    """Each error as it prints, from its ``error:`` line to the next line
+    that starts in column 0."""
+    blocks: list[list[str]] = []
+    for line in strip_ansi(stderr).splitlines():
+        if line.startswith("error:"):
+            blocks.append([line])
+        elif blocks and (not line or line[0].isspace()):
+            blocks[-1].append(line)
+        elif line:
+            blocks.append([])
+    return {"\n".join(block).rstrip() for block in blocks if block}
+
+
+async def _nix_check(environment: NixTestEnvironment, flake: Path, *flags: str) -> tuple[int, str]:
+    await require_matching_nix_cli()
+    result = await run_process(
+        [
+            "nix",
+            "--extra-experimental-features",
+            "nix-command flakes",
+            "flake",
+            "check",
+            *flags,
+            "--store",
+            environment.store_uri,
+            f"path:{flake}",
+        ],
+    )
+    return result.returncode, result.stderr
 
 
 _BROKEN_FAILURES = {
@@ -328,18 +359,43 @@ async def test_a_given_import_from_derivation_setting_wins(
     assert "expected a set but found an integer" in _failures(capsys.readouterr().err)
 
 
-def test_a_frame_goes_in_front_of_nix_s_frames() -> None:
-    error = CheckError("\x1b[31;1merror:\x1b[0m\n       … while calling the 'throw' builtin\n\n       error: boom")
-    error.add_trace("inner")
-    error.add_trace("outer")
-    assert strip_ansi(error.render()) == (
-        "error:\n       … outer\n\n       … inner\n\n       … while calling the 'throw' builtin\n\n       error: boom"
-    )
+async def test_each_error_prints_as_nix_prints_it(
+    shared_nix_environment: NixTestEnvironment, broken: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Under ``--keep-going`` each failure has its innermost frame, at its
+    position, with the code there (nixidae/nixidae#1300)."""
+    code, nix_err = await _nix_check(shared_nix_environment, broken, "--keep-going", "--no-build")
+    assert await _check(shared_nix_environment, broken, "--keep-going", "--no-build") == code == 1
+    blocks = _blocks(capsys.readouterr().err)
+    assert blocks == _blocks(nix_err)
+    assert any("flake.nix:2:" in block for block in blocks), blocks
 
 
-def test_a_frame_goes_above_a_one_line_error() -> None:
-    error = CheckError.raised("overlay does not take an argument named 'final'")
-    error.add_trace("while checking the overlay 'o'")
-    assert strip_ansi(error.render()) == (
-        "error:\n       … while checking the overlay 'o'\n\n       error: overlay does not take an argument named 'final'"
+@pytest.mark.parametrize("show_trace", [False, True], ids=["short", "show-trace"])
+async def test_a_deep_failure_prints_every_frame_as_nix_does(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    show_trace: bool,
+) -> None:
+    """Four frames of the check's own, each at a position, around Nix's
+    frames and one of ``builtins.addErrorContext``. Nix shortens such a
+    trace without ``show-trace``, and the render is Nix's, so it shortens
+    pynix's the same way."""
+    flake = _flake(
+        tmp_path,
+        "deep",
+        '{\n  hydraJobs.a.b.c = builtins.addErrorContext "while doing the thing" (throw "deep");\n}',
     )
+    flags = ["--option", "show-trace", "true"] if show_trace else []
+    code, nix_err = await _nix_check(shared_nix_environment, flake, "--no-build", *flags)
+    if show_trace:
+        monkeypatch.setenv("PYNIX_NIX_SHOW_TRACE", "true")
+    assert await _check(shared_nix_environment, flake, "--no-build") == code == 1
+    blocks = _blocks(capsys.readouterr().err)
+    assert blocks == _blocks(nix_err)
+    (block,) = blocks
+    # Measured: without `show-trace` Nix keeps two of the four
+    # (`error.cc:391` counts a positioned frame twice).
+    assert block.count("… while checking") == (4 if show_trace else 2), block

@@ -6,26 +6,25 @@ for each output, the same messages, and the same two error modes. Without
 "while checking" frame on it. With ``keep-going`` each failure prints with
 its innermost frame, and the command fails at the end.
 
-Two parts of Nix's output are absent. A frame names no position and shows
-no source lines, because Nix's error printer draws them and pynix adds its
-frames to an error that Nix has already rendered. The outputs come in
-name order, and Nix's come in symbol order, so without ``keep-going`` the
-first failure can be another one than Nix's.
+Each frame goes on Nix's own error, at the position Nix gives it, and Nix
+renders the result, so a failure prints as Nix prints it. The outputs come
+in name order, and Nix's come in symbol order, so without ``keep-going``
+the first failure can be another one than Nix's.
 """
 
 from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Final
 
 import anyio
 import huggorm
 import structlog
-from huggorm import AsyncEvalState, AsyncStore, AsyncValue, Position
+from huggorm import AsyncEvalState, AsyncNativeError, AsyncSourcePos, AsyncStore, AsyncValue, Position
 from huggorm.attrpath import AttrPathError, flake_outputs, select_attr
 from huggorm.errors import NixError
 from rich.text import Text
@@ -43,8 +42,6 @@ from pynix.flake import Check
 
 logger = structlog.get_logger("pynix.flake")
 
-_ERROR: Final = "\x1b[31;1merror:\x1b[0m"
-_INDENT: Final = " " * 7
 _IFD: Final = "allow-import-from-derivation"
 
 _DEPRECATED: Final = {
@@ -88,46 +85,49 @@ _SHOW_TYPE: Final = {
 }
 
 
-def _quote(name: str) -> str:
-    """*name* as Nix's ``HintFmt`` puts an argument: quoted and magenta."""
-    return f"'\x1b[35;1m{name}\x1b[0m'"
+def _literal(text: str) -> str:
+    """*text* as a format string that formats to itself."""
+    return text.replace("%", "%%")
 
 
 class CheckError(Exception):
-    """A failed check, in Nix's words, with the frames around it."""
+    """A failed check: Nix's own error, with the frames around it."""
 
-    def __init__(self, colored: str) -> None:
-        super().__init__(huggorm.filter_ansi_escapes(colored, filter_all=True))
-        self.colored = colored
-        self.hints: list[str] = []
+    def __init__(self, native: AsyncNativeError) -> None:
+        super().__init__("a flake check failed")
+        self.native = native
 
     @classmethod
-    def raised(cls, message: str) -> CheckError:
-        """An error that ``CmdFlakeCheck`` itself raises."""
-        return cls(f"{_ERROR} {message}")
+    def raised(cls, format_string: str, *args: str) -> CheckError:
+        """``Error(format_string, args...)``, as ``CmdFlakeCheck`` raises one."""
+        return cls(AsyncNativeError(format_string, list(args)))
 
     @classmethod
     def of(cls, exc: NixError | CheckError) -> CheckError:
-        return exc if isinstance(exc, CheckError) else cls(exc.colored)
+        if isinstance(exc, CheckError):
+            return exc
+        # An error has no handle only when it crossed a wire, and a check
+        # evaluates in this process.
+        if not isinstance(native := exc.native, AsyncNativeError):
+            raise TypeError(f"a Nix error came without Nix's own error: {exc}") from exc
+        return cls(native)
 
-    def add_trace(self, hint: str) -> None:
-        """Put *hint* outside the frames this error has, as ``addTrace`` does."""
-        self.hints.insert(0, hint)
-
-    def render(self) -> str:
-        """The error as Nix prints it: ``error:``, the frames, then the message."""
-        if not self.hints:
-            return self.colored
-        frames = "".join(f"{_INDENT}… {hint}\n\n" for hint in self.hints)
-        head, _, rest = self.colored.partition("\n")
-        if huggorm.filter_ansi_escapes(head, filter_all=True) == "error:":
-            # Nix's own frames follow a bare head: ours go in front of them.
-            return f"{head}\n{frames}{rest}"
-        return f"{_ERROR}\n{frames}{_INDENT}{self.colored}"
+    async def add_trace(self, pos: AsyncSourcePos | None, format_string: str, *args: str) -> None:
+        """Put a frame outside the frames this error has, as ``addTrace`` does."""
+        self.native = await self.native.add_trace(pos, format_string, list(args))
 
 
-def _print_error(error: CheckError) -> None:
-    _print(error.render())
+@dataclass(frozen=True)
+class _At:
+    """Where a checked value is: its name in the set that holds it. Nix
+    puts a frame at ``attr.pos``, and a position is looked up only for a
+    frame."""
+
+    parent: AsyncValue
+    name: str
+
+    async def pos(self) -> AsyncSourcePos | None:
+        return await self.parent.attr_source_pos(self.name)
 
 
 def _print(colored: str) -> None:
@@ -172,37 +172,42 @@ class _Checker:
     #: The outputs of each built check, by output name, in derivation path order.
     built: list[dict[str, str]] = field(default_factory=list)
 
-    def report(self, error: CheckError) -> None:
+    async def print_error(self, error: CheckError) -> None:
+        """``logError(e.info())``: Nix renders the error."""
+        _print(await self.state.render_error(error.native, show_trace=huggorm.get_setting("show-trace") == "true"))
+
+    async def report(self, error: CheckError) -> None:
         """``reportError``: raise, or under ``keep-going`` print and go on."""
         if not self.keep_going:
             raise error
-        _print_error(error)
+        await self.print_error(error)
         self.has_errors = True
 
-    @contextmanager
-    def checking(self, hint: str) -> Iterator[None]:
-        """Report what fails inside, with *hint* as its outermost frame."""
+    @asynccontextmanager
+    async def checking(self, at: _At, format_string: str, *args: str) -> AsyncIterator[None]:
+        """Report what fails inside, with a frame at *at* as its outermost."""
         try:
             yield
         except (NixError, CheckError) as exc:
             error = CheckError.of(exc)
-            error.add_trace(hint)
-            self.report(error)
+            await error.add_trace(await at.pos(), format_string, *args)
+            await self.report(error)
 
     async def force_attrs(self, value: AsyncValue) -> None:
         await self.state.force(value)
         if await value.type_name() != "attrs":
-            raise CheckError.raised(f"expected a set but found {await _show_type(value)}")
+            raise CheckError.raised("expected a set but found %s", await _show_type(value))
 
     async def force_string_no_context(self, value: AsyncValue) -> None:
         await self.state.force(value)
         if await value.type_name() != "string":
-            raise CheckError.raised(f"expected a string but found {await _show_type(value)}")
+            raise CheckError.raised("expected a string but found %s", await _show_type(value))
         context = await value.string_context()
         if context:
             raise CheckError.raised(
-                f"the string {_quote(str(await value.string_value()))} is not allowed to refer to a store path"
-                f" (such as {_quote(context[0])})"
+                "the string '%s' is not allowed to refer to a store path (such as '%s')",
+                str(await value.string_value()),
+                context[0],
             )
 
     async def members(self, value: AsyncValue) -> list[tuple[str, AsyncValue]]:
@@ -212,7 +217,7 @@ class _Checker:
     async def check_system_name(self, parent: AsyncValue, system: str) -> None:
         if "-" not in system:
             where = _show_position(await parent.attr_pos(system))
-            self.report(CheckError.raised(f"{_quote(system)} is not a valid system type, at {where}"))
+            await self.report(CheckError.raised("'%s' is not a valid system type, at %s", system, where))
 
     def check_system_type(self, system: str) -> bool:
         if not self.all_systems and system != self.local_system:
@@ -229,29 +234,29 @@ class _Checker:
                 checked.append((system, member))
         return checked
 
-    async def derivation(self, attr_path: str, value: AsyncValue) -> str | None:
+    async def derivation(self, attr_path: str, value: AsyncValue, at: _At) -> str | None:
         logger.info("pynix flake check: checking derivation", attr=attr_path)
-        with self.checking(f"while checking the derivation {_quote(attr_path)}"):
+        async with self.checking(at, "while checking the derivation '%s'", attr_path):
             if not await is_derivation(self.state, value):
-                raise CheckError.raised(f"flake attribute {_quote(attr_path)} is not a derivation")
+                raise CheckError.raised("flake attribute '%s' is not a derivation", attr_path)
             drv_path = await self.store.print_store_path(await value.drv_path())
             logger.info("pynix flake check: derivation evaluated", drv_path=drv_path)
             return drv_path
         return None
 
-    async def app(self, attr_path: str, value: AsyncValue) -> None:
+    async def app(self, attr_path: str, value: AsyncValue, at: _At) -> None:
         logger.info("pynix flake check: checking app", attr=attr_path)
-        with self.checking(f"while checking the app definition {_quote(attr_path)}"):
+        async with self.checking(at, "while checking the app definition '%s'", attr_path):
             await self.force_attrs(value)
             if not await value.has("type"):
-                raise CheckError.raised(f"app {_quote(attr_path)} lacks attribute {_quote('type')}")
+                raise CheckError.raised("app '%s' lacks attribute 'type'", attr_path)
             await self.force_string_no_context(await value.get("type"))
             if not await value.has("program"):
-                raise CheckError.raised(f"app {_quote(attr_path)} lacks attribute {_quote('program')}")
+                raise CheckError.raised("app '%s' lacks attribute 'program'", attr_path)
             program = await value.get("program")
             await self.state.force(program)
             if await program.type_name() != "string":
-                raise CheckError.raised(f"expected a string but found {await _show_type(program)}")
+                raise CheckError.raised("expected a string but found %s", await _show_type(program))
             if await value.has("meta"):
                 meta = await value.get("meta")
                 await self.force_attrs(meta)
@@ -263,25 +268,25 @@ class _Checker:
                 logger.warning("app lacks attribute 'meta'", app=attr_path)
             for name in await value.names():
                 if name not in ("type", "program", "meta"):
-                    raise CheckError.raised(f"app {_quote(attr_path)} has unsupported attribute {_quote(name)}")
+                    raise CheckError.raised("app '%s' has unsupported attribute '%s'", attr_path, name)
 
-    async def overlay(self, attr_path: str, value: AsyncValue) -> None:
+    async def overlay(self, attr_path: str, value: AsyncValue, at: _At) -> None:
         logger.info("pynix flake check: checking overlay", attr=attr_path)
-        with self.checking(f"while checking the overlay {_quote(attr_path)}"):
+        async with self.checking(at, "while checking the overlay '%s'", attr_path):
             await self.state.force(value)
             if await value.type_name() != "function" or not await value.is_lambda():
-                raise CheckError.raised(f"overlay is not a function, but {await _show_type(value)} instead")
+                raise CheckError.raised("overlay is not a function, but %s instead", await _show_type(value))
             if await value.has_formals() or not _arg_has_name(await value.lambda_arg(), "final"):
                 raise CheckError.raised("overlay does not take an argument named 'final'")
 
-    async def module(self, attr_path: str, value: AsyncValue) -> None:
+    async def module(self, attr_path: str, value: AsyncValue, at: _At) -> None:
         logger.info("pynix flake check: checking NixOS module", attr=attr_path)
-        with self.checking(f"while checking the NixOS module {_quote(attr_path)}"):
+        async with self.checking(at, "while checking the NixOS module '%s'", attr_path):
             await self.state.force(value)
 
-    async def hydra_jobs(self, attr_path: str, value: AsyncValue) -> None:
+    async def hydra_jobs(self, attr_path: str, value: AsyncValue, at: _At) -> None:
         logger.info("pynix flake check: checking Hydra job", attr=attr_path)
-        with self.checking(f"while checking the Hydra jobset {_quote(attr_path)}"):
+        async with self.checking(at, "while checking the Hydra jobset '%s'", attr_path):
             await self.force_attrs(value)
             if await is_derivation(self.state, value):
                 raise CheckError.raised("jobset should not be a derivation at top-level")
@@ -289,35 +294,35 @@ class _Checker:
                 await self.force_attrs(member)
                 child_path = f"{attr_path}.{name}"
                 if await is_derivation(self.state, member):
-                    await self.derivation(child_path, member)
+                    await self.derivation(child_path, member, _At(value, name))
                 else:
-                    await self.hydra_jobs(child_path, member)
+                    await self.hydra_jobs(child_path, member, _At(value, name))
 
-    async def nixos_configuration(self, attr_path: str, value: AsyncValue) -> None:
+    async def nixos_configuration(self, attr_path: str, value: AsyncValue, at: _At) -> None:
         logger.info("pynix flake check: checking NixOS configuration", attr=attr_path)
-        with self.checking(f"while checking the NixOS configuration {_quote(attr_path)}"):
+        async with self.checking(at, "while checking the NixOS configuration '%s'", attr_path):
             try:
                 toplevel = await select_attr(self.state, value, "config.system.build.toplevel")
             except AttrPathError as exc:
-                raise CheckError.raised(str(exc)) from exc
+                raise CheckError.raised(_literal(str(exc))) from exc
             if not await is_derivation(self.state, toplevel):
                 raise CheckError.raised("attribute 'config.system.build.toplevel' is not a derivation")
 
-    async def template(self, attr_path: str, value: AsyncValue) -> None:
+    async def template(self, attr_path: str, value: AsyncValue, at: _At) -> None:
         logger.info("pynix flake check: checking template", attr=attr_path)
-        with self.checking(f"while checking the template {_quote(attr_path)}"):
+        async with self.checking(at, "while checking the template '%s'", attr_path):
             await self.force_attrs(value)
             if not await value.has("path"):
-                raise CheckError.raised(f"template {_quote(attr_path)} lacks attribute {_quote('path')}")
+                raise CheckError.raised("template '%s' lacks attribute 'path'", attr_path)
             path = await self.template_path(await value.get("path"))
             if not await anyio.Path(path).exists():
-                raise CheckError.raised(f"template {_quote(attr_path)} refers to a non-existent path {_quote(path)}")
+                raise CheckError.raised("template '%s' refers to a non-existent path '%s'", attr_path, path)
             if not await value.has("description"):
-                raise CheckError.raised(f"template {_quote(attr_path)} lacks attribute {_quote('description')}")
+                raise CheckError.raised("template '%s' lacks attribute 'description'", attr_path)
             await self.force_string_no_context(await value.get("description"))
             for name in await value.names():
                 if name not in ("path", "description", "welcomeText"):
-                    raise CheckError.raised(f"template {_quote(attr_path)} has unsupported attribute {_quote(name)}")
+                    raise CheckError.raised("template '%s' has unsupported attribute '%s'", attr_path, name)
 
     async def template_path(self, value: AsyncValue) -> str:
         """Where a template's ``path`` points, copied nowhere, as ``coerceToPath`` reads it."""
@@ -327,18 +332,18 @@ class _Checker:
             return path
         return await value.coerce_to_string()
 
-    async def bundler(self, attr_path: str, value: AsyncValue) -> None:
+    async def bundler(self, attr_path: str, value: AsyncValue, at: _At) -> None:
         logger.info("pynix flake check: checking bundler", attr=attr_path)
         # Nix's frame says "the template" here (flake.cc:574), a copy of
         # the frame above; this one names what it checks.
-        with self.checking(f"while checking the bundler {_quote(attr_path)}"):
+        async with self.checking(at, "while checking the bundler '%s'", attr_path):
             await self.state.force(value)
             if await value.type_name() != "function" or not await value.is_lambda():
                 raise CheckError.raised("bundler must be a function")
 
-    async def output(self, name: str, value: AsyncValue) -> None:  # noqa: C901, PLR0912 -- one branch per output, as flake.cc has
+    async def output(self, name: str, value: AsyncValue, at: _At) -> None:  # noqa: C901, PLR0912 -- one branch per output, as flake.cc has
         logger.info("pynix flake check: checking flake output", attr=name)
-        with self.checking(f"while checking flake output {_quote(name)}"):
+        async with self.checking(at, "while checking flake output '%s'", name):
             await self.state.force(value)
             if name in _DEPRECATED:
                 logger.warning("flake output attribute is deprecated", output=name, replacement=_DEPRECATED[name])
@@ -346,54 +351,54 @@ class _Checker:
                 for system, per_system in await self.systems(value):
                     for check, member in await self.members(per_system):
                         attr_path = f"{name}.{system}.{check}"
-                        drv_path = await self.derivation(attr_path, member)
+                        drv_path = await self.derivation(attr_path, member, _At(per_system, check))
                         if drv_path is not None and system == self.local_system:
                             self.attr_paths_by_drv.setdefault(drv_path, []).append(attr_path)
             elif name in ("formatter", "defaultPackage", "devShell"):
                 for system, member in await self.systems(value):
-                    await self.derivation(f"{name}.{system}", member)
+                    await self.derivation(f"{name}.{system}", member, _At(value, system))
             elif name in ("packages", "devShells"):
                 for system, per_system in await self.systems(value):
                     for package, member in await self.members(per_system):
-                        await self.derivation(f"{name}.{system}.{package}", member)
+                        await self.derivation(f"{name}.{system}.{package}", member, _At(per_system, package))
             elif name == "apps":
                 for system, per_system in await self.systems(value):
                     for app, member in await self.members(per_system):
-                        await self.app(f"{name}.{system}.{app}", member)
+                        await self.app(f"{name}.{system}.{app}", member, _At(per_system, app))
             elif name == "defaultApp":
                 for system, member in await self.systems(value):
-                    await self.app(f"{name}.{system}", member)
+                    await self.app(f"{name}.{system}", member, _At(value, system))
             elif name == "legacyPackages":
                 for system, _member in await self.members(value):
                     await self.check_system_name(value, system)
                     self.check_system_type(system)
             elif name == "overlay":
-                await self.overlay(name, value)
+                await self.overlay(name, value, at)
             elif name == "overlays":
                 for overlay, member in await self.members(value):
-                    await self.overlay(f"{name}.{overlay}", member)
+                    await self.overlay(f"{name}.{overlay}", member, _At(value, overlay))
             elif name == "nixosModule":
-                await self.module(name, value)
+                await self.module(name, value, at)
             elif name == "nixosModules":
                 for module, member in await self.members(value):
-                    await self.module(f"{name}.{module}", member)
+                    await self.module(f"{name}.{module}", member, _At(value, module))
             elif name == "nixosConfigurations":
                 for configuration, member in await self.members(value):
-                    await self.nixos_configuration(f"{name}.{configuration}", member)
+                    await self.nixos_configuration(f"{name}.{configuration}", member, _At(value, configuration))
             elif name == "hydraJobs":
-                await self.hydra_jobs(name, value)
+                await self.hydra_jobs(name, value, at)
             elif name == "defaultTemplate":
-                await self.template(name, value)
+                await self.template(name, value, at)
             elif name == "templates":
                 for template, member in await self.members(value):
-                    await self.template(f"{name}.{template}", member)
+                    await self.template(f"{name}.{template}", member, _At(value, template))
             elif name == "defaultBundler":
                 for system, member in await self.systems(value):
-                    await self.bundler(f"{name}.{system}", member)
+                    await self.bundler(f"{name}.{system}", member, _At(value, system))
             elif name == "bundlers":
                 for system, per_system in await self.systems(value):
                     for bundler, member in await self.members(per_system):
-                        await self.bundler(f"{name}.{system}.{bundler}", member)
+                        await self.bundler(f"{name}.{system}.{bundler}", member, _At(per_system, bundler))
             elif name not in _UNCHECKED:
                 logger.warning("unknown flake output", output=name)
 
@@ -406,7 +411,7 @@ class _Checker:
         for name in sorted(names, key=lambda name: name != "hydraJobs"):
             if not ifd_given:
                 await self.state.set_setting(_IFD, "true" if name != "hydraJobs" else "false")
-            await self.output(name, await outputs.get(name))
+            await self.output(name, await outputs.get(name), _At(outputs, name))
 
     async def build(self) -> None:
         """Build what the checks need that no substituter has, and report each failure."""
@@ -438,11 +443,11 @@ class _Checker:
             message = failure.message.removeprefix("error: ")
             attr_paths = self.attr_paths_by_drv.get(drv_path)
             if not attr_paths:
-                self.report(CheckError.raised(f"build of {_quote(built)} failed: {message}"))
+                await self.report(CheckError.raised("build of '%s' failed: %s", built, message))
             for attr_path in attr_paths or ():
-                self.report(
+                await self.report(
                     CheckError.raised(
-                        f"failed to build attribute {_quote(attr_path)}, build of {_quote(built)} failed: {message}"
+                        "failed to build attribute '%s', build of '%s' failed: %s", attr_path, built, message
                     )
                 )
 
@@ -490,10 +495,10 @@ async def _check(command: Check, store: AsyncStore, state: AsyncEvalState) -> No
         if not command.no_build and checker.attr_paths_by_drv:
             await checker.build()
     except CheckError as error:
-        _print_error(error)
+        await checker.print_error(error)
         raise SystemExit(1) from error
     if checker.has_errors:
-        _print(f"{_ERROR} some errors were encountered during the evaluation")
+        await checker.print_error(CheckError.raised("some errors were encountered during the evaluation"))
         raise SystemExit(1)
     logger.info("pynix flake check: all checks passed")
     if checker.omitted_systems:
