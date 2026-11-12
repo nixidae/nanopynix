@@ -29,7 +29,7 @@ from huggorm.errors import NixError
 from rich.text import Text
 
 from pynix._evaluate import is_derivation
-from pynix._util import configured_nix_settings, error_console, huggorm_build_session
+from pynix._util import configured_nix_settings, error_console, huggorm_build_session, read_only_mode
 from pynix.flake import Check
 
 logger = structlog.get_logger("pynix.flake")
@@ -419,13 +419,8 @@ async def run_check(command: Check) -> None:
         _eval_store,
         state,
     ):
-        read_only_before = huggorm.read_only_mode()
-        if command.no_build:
-            huggorm.set_read_only_mode(True)
-        try:
+        with read_only_mode(command.no_build):
             await _check(command, store, state)
-        finally:
-            huggorm.set_read_only_mode(read_only_before)
 
 
 async def _check(command: Check, store: AsyncStore, state: AsyncEvalState) -> None:

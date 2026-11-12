@@ -5,8 +5,8 @@ import logging
 import os
 import sys
 import time
-from collections.abc import AsyncGenerator, Mapping, Sequence
-from contextlib import asynccontextmanager, nullcontext
+from collections.abc import AsyncGenerator, Iterator, Mapping, Sequence
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 from pathlib import Path
 from typing import Any, NoReturn, TextIO
 
@@ -226,6 +226,21 @@ async def huggorm_eval_session(
         state = session.eval(store, evaluator_settings(pure=pure))
         async with forward_state_logs(session, state, print_build_logs=print_build_logs):
             yield session, store, state
+
+
+@contextmanager
+def read_only_mode(enabled: bool) -> Iterator[None]:
+    """Nix's ``settings.readOnlyMode`` for the block, when *enabled*: an
+    evaluation writes no derivation to the store, as ``--read-only`` does.
+
+    The setting belongs to the process, so it is put back after."""
+    before = huggorm.read_only_mode()
+    if enabled:
+        huggorm.set_read_only_mode(True)
+    try:
+        yield
+    finally:
+        huggorm.set_read_only_mode(before)
 
 
 @asynccontextmanager
