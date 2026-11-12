@@ -154,24 +154,17 @@ class SharedSessions:
         pure: bool = False,
     ) -> AsyncGenerator[tuple[Any, Any, Any, Any]]:
         if settings:
-            # A setting is a process global, and a shared evaluator was built
-            # before it. Put each one back, or every later test inherits it.
-            before = {name: huggorm.get_setting(name) for name in settings}
-            try:
-                async with self._originals["huggorm_build_session"](
-                    store_uri,
-                    eval_store_uri=eval_store_uri,
-                    settings=settings,
-                    verbosity=verbosity,
-                    print_build_logs=print_build_logs,
-                    monitor=monitor,
-                    pure=pure,
-                ) as quad:
-                    yield quad
-            finally:
-                for name, value in before.items():
-                    if value is not None:
-                        huggorm.set_setting(name, value)
+            # A shared evaluator was built before these settings, so it would not see them.
+            async with self._originals["huggorm_build_session"](
+                store_uri,
+                eval_store_uri=eval_store_uri,
+                settings=settings,
+                verbosity=verbosity,
+                print_build_logs=print_build_logs,
+                monitor=monitor,
+                pure=pure,
+            ) as quad:
+                yield quad
             return
         async with self._lock:
             session, build_store, eval_store, state = await self._shared_build(store_uri, eval_store_uri, pure=pure)

@@ -192,6 +192,18 @@ async def test_a_broken_output_ends_the_check_without_keep_going(
     assert _SUMMARY not in err
 
 
+@pytest.mark.fresh_evaluator
+async def test_keep_going_ends_with_its_command(
+    shared_nix_environment: NixTestEnvironment, broken: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``keep-going`` is a process global. A check without ``--keep-going``
+    after one with it stops at the first failure (nixidae/nixidae#1305)."""
+    assert await _check(shared_nix_environment, broken, "--keep-going", "--no-build") == 1
+    assert _SUMMARY in strip_ansi(capsys.readouterr().err)
+    assert await _check(shared_nix_environment, broken, "--no-build") == 1
+    assert _SUMMARY not in strip_ansi(capsys.readouterr().err)
+
+
 @LINUX_CHROOT_BUILD
 @pytest.mark.parametrize("flags", [[], ["--keep-going"]], ids=["first", "keep-going"])
 async def test_a_failing_check_fails_with_its_attribute_path(

@@ -195,6 +195,26 @@ def apply_nix_settings(settings: Mapping[str, str] | None = None) -> None:
         huggorm.set_setting(name, value)
 
 
+@contextmanager
+def applied_nix_settings(settings: Mapping[str, str] | None = None) -> Iterator[None]:
+    """:func:`apply_nix_settings` for the duration of the block.
+
+    A setting is global to the process. A command that shares the process
+    (a test, an embedder) puts back each one it set, or the next command
+    inherits it: a ``--keep-going`` did (nixidae/nixidae#1305).
+    """
+    init_nix()
+    wanted = configured_nix_settings() if settings is None else settings
+    before = {name: huggorm.get_setting(name) for name in wanted}
+    apply_nix_settings(wanted)
+    try:
+        yield
+    finally:
+        for name, value in before.items():
+            if value is not None:
+                huggorm.set_setting(name, value)
+
+
 def evaluator_settings(settings: Mapping[str, str] | None = None, *, pure: bool) -> dict[str, str] | None:
     """The settings of an evaluator of its own, over the process's.
 
@@ -220,12 +240,12 @@ async def huggorm_eval_session(
 
     *pure* evaluates in pure mode, as ``nix`` evaluates a flake.
     """
-    apply_nix_settings()
-    async with huggorm.AsyncSession(store_uri) as session:
-        store = session.store()
-        state = session.eval(store, evaluator_settings(pure=pure))
-        async with forward_state_logs(session, state, print_build_logs=print_build_logs):
-            yield session, store, state
+    with applied_nix_settings():
+        async with huggorm.AsyncSession(store_uri) as session:
+            store = session.store()
+            state = session.eval(store, evaluator_settings(pure=pure))
+            async with forward_state_logs(session, state, print_build_logs=print_build_logs):
+                yield session, store, state
 
 
 def out_links(prefix: Path, built: Sequence[Mapping[str, str]]) -> list[tuple[Path, str]]:
@@ -268,11 +288,11 @@ async def huggorm_store_session(
     verbosity: VerbosityInput | None = None,
 ) -> AsyncGenerator[tuple[huggorm.AsyncSession, huggorm.AsyncStore]]:
     """Open a huggorm session and store with no evaluator, forwarding logs for the duration of the block."""
-    apply_nix_settings()
-    async with huggorm.AsyncSession(store_uri) as session:
-        store = session.store()
-        async with forward_state_logs(session, None, verbosity=verbosity):
-            yield session, store
+    with applied_nix_settings():
+        async with huggorm.AsyncSession(store_uri) as session:
+            store = session.store()
+            async with forward_state_logs(session, None, verbosity=verbosity):
+                yield session, store
 
 
 @asynccontextmanager
@@ -294,20 +314,20 @@ async def huggorm_build_session(  # noqa: PLR0913 -- keyword-only, one per sessi
     configured ones (:func:`apply_nix_settings`). *pure* evaluates in pure
     mode, as ``nix`` evaluates a flake.
     """
-    apply_nix_settings(settings)
-    own = evaluator_settings(settings, pure=pure)
-    async with huggorm.AsyncSession(store_uri) as session:
-        build_store = session.store()
-        if eval_store_uri is None:
-            eval_store = build_store
-            state = session.eval(eval_store, own)
-        else:
-            eval_store = session.store(eval_store_uri)
-            state = session.eval(eval_store, own, build_store)
-        async with forward_state_logs(
-            session, state, verbosity=verbosity, print_build_logs=print_build_logs, monitor=monitor
-        ):
-            yield session, build_store, eval_store, state
+    with applied_nix_settings(settings):
+        own = evaluator_settings(settings, pure=pure)
+        async with huggorm.AsyncSession(store_uri) as session:
+            build_store = session.store()
+            if eval_store_uri is None:
+                eval_store = build_store
+                state = session.eval(eval_store, own)
+            else:
+                eval_store = session.store(eval_store_uri)
+                state = session.eval(eval_store, own, build_store)
+            async with forward_state_logs(
+                session, state, verbosity=verbosity, print_build_logs=print_build_logs, monitor=monitor
+            ):
+                yield session, build_store, eval_store, state
 
 
 async def build_derivation(
