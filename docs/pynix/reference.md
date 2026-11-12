@@ -34,6 +34,7 @@ Build a Nix derivation value
 | `--linux-builder` | `bool` | Build in a Linux VM that this command starts on Apple's Virtualization.framework, and stops when it exits. The VM builds aarch64-linux, and x86_64-linux through Rosetta. Its store overlays the host store, so nothing is copied in. Apple silicon and macOS 26 or later, and the host /nix must be case-sensitive. (default: `False`) |
 | `--linux-builder-guest` | `str or None` | The manifest of the --linux-builder guest: the store path that `nix build --file nanopynix internal.linuxBuilder.manifest` prints. For debugging: PYNIX_LINUX_BUILDER_DEBUG=1 sends the guest journal to console.log and keeps the VM's directory; PYNIX_LINUX_BUILDER_NESTED=1 or 0 forces nested virtualization on or off. (default: `None`) |
 | `--copy-back` | `bool` | Copy the outputs of a --namespaced or --linux-builder build into the host store when the build succeeds. Without it the outputs are gone when the worker or the VM exits. (default: `True`) |
+| `--out-link` | `Path or None` | Use PATH as prefix for the symlinks to the results. Each one is a garbage collector root. By default, no out links are created. (default: `None`) |
 | `--copy` | `str or None` | Store URI to copy the closure of the outputs into when the build succeeds. --store and the configured builders decide where the build runs, and this option decides where the result ends up. (default: `None`) |
 | `--sandbox-path` | `list[str]` | Extra path to mount into the build sandbox, as /inside=/outside or /path. Repeatable. Requires --namespaced, because the daemon does not let a client change its sandbox. (default: `None`) |
 
@@ -290,6 +291,7 @@ Examples:
 | `--no-build` | `bool` | Do not build the checks; evaluate only, and write nothing to the store. (default: `False`) |
 | `--all-systems` | `bool` | Check the outputs of every system, not only this one. (default: `False`) |
 | `--keep-going` | `bool` | Report every failure, not only the first one. (default: `False`) |
+| `--out-link` | `Path or None` | Use PATH as prefix for the symlinks to the results. Each one is a garbage collector root. By default, no out links are created. (default: `None`) |
 | `--store` | `str` | Store URI to evaluate and build with. (default: `'auto'`) |
 | `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 

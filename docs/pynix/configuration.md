@@ -159,8 +159,11 @@ default. A value you pass still wins over the file, as it does in `nix`.
 ## What `pynix build` does not need
 
 `nix build` writes a `result` symlink, which is a GC root, and it prints
-nothing unless it is told to. `pynix build` creates no symlink and no root,
-and it prints the outputs as JSON. There is no `--no-link` to configure,
-because there is no link.
+nothing unless it is told to. `pynix build` creates no symlink and no root
+unless it is told to, and it prints the outputs as JSON. There is no
+`--no-link` to configure, because there is no link by default.
 
-To make a root, ask for one: `pynix store add-root <path> <link>`.
+To make the links, ask for them: `--out-link PATH` (`-o`) on `pynix build`
+and `pynix flake check` names them as Nix does. `PATH` links the first
+result, `PATH-1` the second, and `PATH-dev` a `dev` output. Each link is a
+GC root. One root by hand: `pynix store add-perm-root <path> <link>`.

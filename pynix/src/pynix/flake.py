@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import override
 
 from libpynix import opt, pos
 from pynix import _impl
+from pynix._nix_options import out_link_option
 from pynix._settings import ConfiguredCommand, PynixCommand, store_option, verbosity_option
 
 
@@ -112,6 +114,8 @@ class Check(ConfiguredCommand):
     all_systems: bool = opt(False, help="Check the outputs of every system, not only this one.")
 
     keep_going: bool = opt(False, short="k", help="Report every failure, not only the first one.")
+
+    out_link: Path | None = out_link_option()
 
     store: str = store_option("Store URI to evaluate and build with.")
 

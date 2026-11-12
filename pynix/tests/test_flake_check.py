@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import anyio
 import huggorm
 import pytest
 from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment
@@ -241,6 +242,34 @@ async def test_hydra_jobs_import_no_derivation(
     failures = _failures(capsys.readouterr().err)
     assert failures == _failures(result.stderr)
     assert any("'allow-import-from-derivation' is disabled" in failure for failure in failures), failures
+
+
+@LINUX_CHROOT_BUILD
+async def test_out_link_links_every_check(shared_nix_environment: NixTestEnvironment, tmp_path: Path) -> None:
+    """``CmdFlakeCheck`` builds every check when it links them, the valid
+    ones too: the first check here builds both, and the second has none
+    missing."""
+    system = _system()
+    flake = _flake(
+        tmp_path,
+        "linked",
+        f"{{ checks.{system} = {{ a = {_drv(f'a-{tmp_path.name}', 'echo > $out')};"
+        f" b = {_drv(f'b-{tmp_path.name}', 'echo > $out')}; }}; }}",
+    )
+    prefix = tmp_path / "res"
+    assert await _check(shared_nix_environment, flake) == 0
+    assert not await anyio.Path(prefix).exists()
+    assert await _check(shared_nix_environment, flake, "--out-link", str(prefix)) == 0
+    linked = [await anyio.Path(prefix).readlink(), await anyio.Path(f"{prefix}-1").readlink()]
+    assert {p.name.split("-", 1)[1] for p in linked} == {f"a-{tmp_path.name}", f"b-{tmp_path.name}"}
+    assert not await anyio.Path(f"{prefix}-2").exists()
+
+
+async def test_out_link_refuses_no_build(
+    shared_nix_environment: NixTestEnvironment, failing: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert await _check(shared_nix_environment, failing, "--no-build", "-o", "res") == 1
+    assert "--no-build builds nothing, so --out-link has nothing to link" in capsys.readouterr().err
 
 
 @LINUX_CHROOT_BUILD

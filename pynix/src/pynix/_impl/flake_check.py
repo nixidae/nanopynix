@@ -29,7 +29,14 @@ from huggorm.errors import NixError
 from rich.text import Text
 
 from pynix._evaluate import is_derivation
-from pynix._util import configured_nix_settings, error_console, huggorm_build_session, read_only_mode
+from pynix._util import (
+    configured_nix_settings,
+    create_out_links,
+    error_console,
+    error_exit,
+    huggorm_build_session,
+    read_only_mode,
+)
 from pynix.flake import Check
 
 logger = structlog.get_logger("pynix.flake")
@@ -150,6 +157,10 @@ class _Checker:
     omitted_systems: set[str] = field(default_factory=set)
     #: Each check to build on this system, with every attribute path that names it.
     attr_paths_by_drv: dict[str, list[str]] = field(default_factory=dict)
+    #: Build every check and keep its outputs, for ``--out-link``.
+    keep_outputs: bool = False
+    #: The outputs of each built check, by output name, in derivation path order.
+    built: list[dict[str, str]] = field(default_factory=list)
 
     def report(self, error: CheckError) -> None:
         """``reportError``: raise, or under ``keep-going`` print and go on."""
@@ -394,12 +405,22 @@ class _Checker:
         missing = await store.query_missing(targets)
         to_build = sorted([await store.print_store_path(path) for path in missing.will_build()])
         logger.info("pynix flake check: running flake checks", count=len(to_build))
+        # Every check when its outputs are linked, as `CmdFlakeCheck` builds `drvPaths` then.
+        if self.keep_outputs:
+            to_build = sorted(self.attr_paths_by_drv)
         if not to_build:
             return
         results = await store.build_paths_with_results([await store.parse_derived_path(f"{drv}^*") for drv in to_build])
         for drv_path, result in zip(to_build, results, strict=True):
             failure = result.error()
             if failure is None:
+                if self.keep_outputs and (success := result.success()) is not None:
+                    self.built.append(
+                        {
+                            name: await store.print_store_path(realisation.out_path())
+                            for name, realisation in success.built_outputs().items()
+                        }
+                    )
                 continue
             built = f"{drv_path}^*"
             # libstore renders the failure with Nix's "error: " head, and the
@@ -418,6 +439,9 @@ class _Checker:
 
 async def run_check(command: Check) -> None:
     """The body of :meth:`pynix.flake.Check.run`."""
+    if command.no_build and command.out_link is not None:
+        # `nix flake check --no-build -o` links nothing and says nothing; `pynix build --dry-run -o` refuses too.
+        error_exit("--no-build builds nothing, so --out-link has nothing to link")
     settings = configured_nix_settings(keep_going="true" if command.keep_going else None)
     async with huggorm_build_session(command.store, settings=settings, verbosity=command.verbosity, pure=True) as (
         _session,
@@ -439,6 +463,7 @@ async def _check(command: Check, store: AsyncStore, state: AsyncEvalState) -> No
         keep_going=huggorm.get_setting("keep-going") == "true",
         all_systems=command.all_systems,
         local_system=system,
+        keep_outputs=command.out_link is not None,
     )
     # `CmdFlakeCheck` sets `applyNixConfig`, and keeps the default
     # `writeLockFile` of every flake command.
@@ -464,3 +489,5 @@ async def _check(command: Check, store: AsyncStore, state: AsyncEvalState) -> No
             "the check omitted these incompatible systems; use --all-systems to check all",
             systems=sorted(checker.omitted_systems),
         )
+    if command.out_link is not None:
+        await create_out_links(store, command.out_link, checker.built)
