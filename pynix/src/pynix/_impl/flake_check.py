@@ -36,6 +36,7 @@ logger = structlog.get_logger("pynix.flake")
 
 _ERROR: Final = "\x1b[31;1merror:\x1b[0m"
 _INDENT: Final = " " * 7
+_IFD: Final = "allow-import-from-derivation"
 
 _DEPRECATED: Final = {
     "defaultPackage": "packages.<system>.default",
@@ -378,7 +379,12 @@ class _Checker:
     async def outputs(self, outputs: AsyncValue) -> None:
         """Each output, ``hydraJobs`` first, as ``enumerateOutputs`` orders them."""
         names = await outputs.names()
+        # `enableImportFromDerivation.setDefault(name != "hydraJobs")`
+        # (flake.cc:600): a default, so a setting someone gave wins.
+        ifd_given = _IFD in huggorm.list_settings(overridden_only=True)
         for name in sorted(names, key=lambda name: name != "hydraJobs"):
+            if not ifd_given:
+                await self.state.set_setting(_IFD, "true" if name != "hydraJobs" else "false")
             await self.output(name, await outputs.get(name))
 
     async def build(self) -> None:

@@ -213,6 +213,58 @@ async def test_the_failures_are_the_ones_nix_reports(
     assert _failures(capsys.readouterr().err) == _failures(result.stderr)
 
 
+async def test_hydra_jobs_import_no_derivation(
+    shared_nix_environment: NixTestEnvironment, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``enableImportFromDerivation.setDefault(name != "hydraJobs")``
+    (``flake.cc:600``): an import from a derivation under ``hydraJobs``
+    fails before it builds. Under ``--no-build`` it fails earlier, on the
+    ``.drv`` file that read-only mode does not write, so only a build
+    tells the two apart."""
+    await require_matching_nix_cli()
+    ifd = f"import ({_drv(f'ifd-{tmp_path.name}', 'echo 1 > $out')})"
+    flake = _flake(tmp_path, "ifd", f"{{ hydraJobs.ifd = {ifd}; }}")
+    result = await run_process(
+        [
+            "nix",
+            "--extra-experimental-features",
+            "nix-command flakes",
+            "flake",
+            "check",
+            "--keep-going",
+            "--store",
+            shared_nix_environment.store_uri,
+            f"path:{flake}",
+        ],
+    )
+    assert await _check(shared_nix_environment, flake, "--keep-going") == result.returncode == 1
+    failures = _failures(capsys.readouterr().err)
+    assert failures == _failures(result.stderr)
+    assert any("'allow-import-from-derivation' is disabled" in failure for failure in failures), failures
+
+
+@LINUX_CHROOT_BUILD
+async def test_a_given_import_from_derivation_setting_wins(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``setDefault`` changes no setting that someone gave. A real override
+    would mark the setting for every later test in this process, so the
+    mark is what this replaces."""
+    real = huggorm.list_settings
+
+    def marked(overridden_only: bool = False) -> dict[str, str]:
+        return {**real(overridden_only), "allow-import-from-derivation": "true"} if overridden_only else real()
+
+    monkeypatch.setattr(huggorm, "list_settings", marked)
+    ifd = f"import ({_drv(f'ifd-{tmp_path.name}', 'echo 1 > $out')})"
+    flake = _flake(tmp_path, "ifd", f"{{ hydraJobs.ifd = {ifd}; }}")
+    assert await _check(shared_nix_environment, flake, "--keep-going") == 1
+    assert "expected a set but found an integer" in _failures(capsys.readouterr().err)
+
+
 def test_a_frame_goes_in_front_of_nix_s_frames() -> None:
     error = CheckError("\x1b[31;1merror:\x1b[0m\n       … while calling the 'throw' builtin\n\n       error: boom")
     error.add_trace("inner")
