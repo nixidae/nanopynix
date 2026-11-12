@@ -117,6 +117,8 @@ class Check(ConfiguredCommand):
 
     out_link: Path | None = out_link_option()
 
+    print_out_paths: bool = opt(False, help="Print the output paths of the checks on stdout, one on each line.")
+
     store: str = store_option("Store URI to evaluate and build with.")
 
     verbosity: str | None = verbosity_option()

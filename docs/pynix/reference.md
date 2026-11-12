@@ -292,6 +292,7 @@ Examples:
 | `--all-systems` | `bool` | Check the outputs of every system, not only this one. (default: `False`) |
 | `--keep-going` | `bool` | Report every failure, not only the first one. (default: `False`) |
 | `--out-link` | `Path or None` | Use PATH as prefix for the symlinks to the results. Each one is a garbage collector root. By default, no out links are created. (default: `None`) |
+| `--print-out-paths` | `bool` | Print the output paths of the checks on stdout, one on each line. (default: `False`) |
 | `--store` | `str` | Store URI to evaluate and build with. (default: `'auto'`) |
 | `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 

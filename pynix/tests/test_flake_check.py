@@ -265,6 +265,33 @@ async def test_out_link_links_every_check(shared_nix_environment: NixTestEnviron
     assert not await anyio.Path(f"{prefix}-2").exists()
 
 
+@LINUX_CHROOT_BUILD
+async def test_print_out_paths_prints_every_check(
+    shared_nix_environment: NixTestEnvironment, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``printOutPathsMaybe`` writes each output path on a line of its own,
+    and the flag builds every check, as ``--out-link`` does."""
+    system = _system()
+    flake = _flake(
+        tmp_path,
+        "printed",
+        f"{{ checks.{system} = {{ a = {_drv(f'a-{tmp_path.name}', 'echo > $out')};"
+        f" b = {_drv(f'b-{tmp_path.name}', 'echo > $out')}; }}; }}",
+    )
+    assert await _check(shared_nix_environment, flake) == 0
+    assert capsys.readouterr().out == ""
+    assert await _check(shared_nix_environment, flake, "--print-out-paths") == 0
+    printed = capsys.readouterr().out.splitlines()
+    assert {Path(p).name.split("-", 1)[1] for p in printed} == {f"a-{tmp_path.name}", f"b-{tmp_path.name}"}
+
+
+async def test_print_out_paths_refuses_no_build(
+    shared_nix_environment: NixTestEnvironment, failing: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert await _check(shared_nix_environment, failing, "--no-build", "--print-out-paths") == 1
+    assert "--no-build builds nothing, so --print-out-paths has nothing to print" in capsys.readouterr().err
+
+
 async def test_out_link_refuses_no_build(
     shared_nix_environment: NixTestEnvironment, failing: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

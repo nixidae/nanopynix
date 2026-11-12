@@ -15,6 +15,7 @@ first failure can be another one than Nix's.
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -439,9 +440,11 @@ class _Checker:
 
 async def run_check(command: Check) -> None:
     """The body of :meth:`pynix.flake.Check.run`."""
+    # `nix flake check --no-build` with either flag does nothing and says nothing; `pynix build --dry-run -o` refuses too.
     if command.no_build and command.out_link is not None:
-        # `nix flake check --no-build -o` links nothing and says nothing; `pynix build --dry-run -o` refuses too.
         error_exit("--no-build builds nothing, so --out-link has nothing to link")
+    if command.no_build and command.print_out_paths:
+        error_exit("--no-build builds nothing, so --print-out-paths has nothing to print")
     settings = configured_nix_settings(keep_going="true" if command.keep_going else None)
     async with huggorm_build_session(command.store, settings=settings, verbosity=command.verbosity, pure=True) as (
         _session,
@@ -463,7 +466,7 @@ async def _check(command: Check, store: AsyncStore, state: AsyncEvalState) -> No
         keep_going=huggorm.get_setting("keep-going") == "true",
         all_systems=command.all_systems,
         local_system=system,
-        keep_outputs=command.out_link is not None,
+        keep_outputs=command.out_link is not None or command.print_out_paths,
     )
     # `CmdFlakeCheck` sets `applyNixConfig`, and keeps the default
     # `writeLockFile` of every flake command.
@@ -489,5 +492,9 @@ async def _check(command: Check, store: AsyncStore, state: AsyncEvalState) -> No
             "the check omitted these incompatible systems; use --all-systems to check all",
             systems=sorted(checker.omitted_systems),
         )
+    if command.print_out_paths:
+        for paths in checker.built:
+            for output in sorted(paths):
+                sys.stdout.write(f"{paths[output]}\n")
     if command.out_link is not None:
         await create_out_links(store, command.out_link, checker.built)
