@@ -126,8 +126,12 @@ class SharedSessions:
     ) -> AsyncGenerator[tuple[Any, Any, Any]]:
         async with self._lock:
             session, store, state = await self._shared_state(store_uri, pure=pure)
-        async with pynix_util.forward_state_logs(session, state, print_build_logs=print_build_logs):
-            yield session, store, state
+        # The shared evaluator was built before these settings, so one it
+        # reads at construction needs `fresh_evaluator`. One Nix reads at a
+        # call, such as `trusted-public-keys`, reaches the command.
+        with pynix_util.applied_nix_settings():
+            async with pynix_util.forward_state_logs(session, state, print_build_logs=print_build_logs):
+                yield session, store, state
 
     @contextlib.asynccontextmanager
     async def huggorm_store_session(
@@ -138,8 +142,9 @@ class SharedSessions:
     ) -> AsyncGenerator[tuple[Any, Any]]:
         async with self._lock:
             session, store, _state = await self._shared_state(store_uri)
-        async with pynix_util.forward_state_logs(session, None, verbosity=verbosity):
-            yield session, store
+        with pynix_util.applied_nix_settings():
+            async with pynix_util.forward_state_logs(session, None, verbosity=verbosity):
+                yield session, store
 
     @contextlib.asynccontextmanager
     async def huggorm_build_session(  # noqa: PLR0913 -- mirrors pynix._util.huggorm_build_session
