@@ -818,7 +818,14 @@ async def _run_derivation(repl: _ReplEngine, value: AsyncValue) -> int:
 
 
 def _editor_argv(path: str, line: int, line_editors: tuple[str, ...]) -> list[str]:
-    """Match Nix's ``editorFor`` argument construction with configured editors."""
+    """The editor command for ``:edit``, on purpose not Nix's ``editorFor``
+    (``src/libcmd/editor-for.cc``, nixidae/nixidae#1290).
+
+    ``$EDITOR`` splits as a shell splits it, where Nix splits at whitespace.
+    A blank ``$EDITOR`` fails, where Nix runs ``cat``. *line_editors* may
+    name editors that Nix does not give ``+LINE`` to, such as ``hx``.
+    ``pynix edit`` follows Nix (``editor_argv`` in ``_impl/edit.py``).
+    """
     editor = os.environ.get("EDITOR", "cat")
     try:
         argv = shlex.split(editor)
