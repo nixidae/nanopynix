@@ -106,8 +106,8 @@ class CheckError(Exception):
     def of(cls, exc: NixError | CheckError) -> CheckError:
         if isinstance(exc, CheckError):
             return exc
-        # An error has no handle only when it crossed a wire, and a check
-        # evaluates in this process.
+        # Nix's error has a handle in process and over the wire; only an
+        # error made in Python has none.
         if not isinstance(native := exc.native, AsyncNativeError):
             raise TypeError(f"a Nix error came without Nix's own error: {exc}") from exc
         return cls(native)
