@@ -75,6 +75,7 @@ BUILD_OPTIONS = frozenset(
         "--copy-back",
         "--dry-run",
         "--eval-store",
+        "--expr",
         "--file",
         "--flake",
         "--impure",

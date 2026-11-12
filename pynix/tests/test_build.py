@@ -501,6 +501,47 @@ async def test_build_print_out_paths_prints_what_nix_prints(
 
 
 @LINUX_CHROOT_BUILD
+async def test_build_expr_builds_what_nix_build_expr_builds(
+    shared_nix_environment: NixTestEnvironment, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The expression is called with the arguments, as a ``--file`` is."""
+    await require_matching_nix_cli()
+    expr = (
+        '{ name }: { a = derivation { name = "pynix-expr-${name}"; system = builtins.currentSystem; '
+        'builder = "/bin/sh"; args = [ "-c" "echo > $out" ]; }; }'
+    )
+    store = shared_nix_environment.pynix_store_args()
+    # `--impure`: an expression is pure as Nix has it, and `currentSystem` is impure.
+    argv = ["--expr", expr, "--argstr", "name", "x", "--impure"]
+    await parse(["build", *argv, "--attr", "a", "--print-out-paths", *store]).run()
+    ours = capsys.readouterr().out
+    theirs = await anyio.run_process(
+        [
+            "nix",
+            "--extra-experimental-features",
+            "nix-command",
+            "build",
+            "--no-link",
+            "--print-out-paths",
+            *argv,
+            "a",
+            *store,
+        ]
+    )
+    assert ours == theirs.stdout.decode()
+    assert ours.strip().endswith("-pynix-expr-x")
+
+
+async def test_build_refuses_expr_with_a_file(
+    shared_nix_environment: NixTestEnvironment, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    argv = ["build", "--expr", "{}", "--file", str(tmp_path / "x.nix"), *shared_nix_environment.pynix_store_args()]
+    with pytest.raises(SystemExit):
+        await parse(argv).run()
+    assert "--expr cannot be combined with --file or --flake" in capsys.readouterr().err
+
+
+@LINUX_CHROOT_BUILD
 @pytest.mark.parametrize("keep_going", [False, True], ids=["stop", "keep-going"])
 async def test_build_keep_going_builds_past_a_failure_as_nix_does(
     shared_nix_environment: NixTestEnvironment,

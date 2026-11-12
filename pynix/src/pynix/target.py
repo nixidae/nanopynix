@@ -301,7 +301,9 @@ class EvaluationTarget:
     attr: str | None
     flake: str | None
     arguments: AutoArgOptions = AutoArgOptions()
-    """The arguments for the function that ``--file`` names."""
+    """The arguments for the function that ``--file`` or ``--expr`` names."""
+    expr: str | None = None
+    """The Nix expression of ``--expr``, which takes the place of ``--file``."""
 
     @classmethod
     def from_command(cls, command: Any) -> EvaluationTarget:
@@ -314,7 +316,12 @@ class EvaluationTarget:
         )
 
     async def file_reference(self) -> FileReference | None:
-        """Resolve ``--file``, or return ``None`` when there is no ``--file``."""
+        """Resolve ``--file``, or return ``None`` when there is no ``--file``.
+
+        ``--expr`` resolves as ``--file -`` does, with the expression in hand.
+        """
+        if self.expr is not None:
+            return FileReference(arguments=(), fragment=None, local_path=None, expression=self.expr)
         if self.file is None:
             return None
         return await resolve_file_reference(self.file)
@@ -322,10 +329,11 @@ class EvaluationTarget:
     def pure(self, *, impure: bool) -> bool:
         """Whether ``nix`` evaluates this target in pure mode.
 
-        A flake is pure unless *impure*; a ``--file`` is impure always
-        (``installables.cc`` turns ``pure-eval`` off for it).
+        A flake or an ``--expr`` is pure unless *impure*; a ``--file`` is
+        impure always (``installables.cc:457`` turns ``pure-eval`` off for it,
+        and for nothing else).
         """
-        return self.flake is not None and not impure
+        return (self.flake is not None or self.expr is not None) and not impure
 
     def selected_attr(self) -> str | None:
         """The attribute path the caller named, or ``None`` when it named none.
@@ -343,13 +351,16 @@ class EvaluationTarget:
         """Validate mutually exclusive sources and attribute selection."""
         if self.file is not None and self.flake is not None:
             raise EvaluationTargetError("--file and --flake are mutually exclusive")
-        if required and self.file is None and self.flake is None:
+        if self.expr is not None and (self.file is not None or self.flake is not None):
+            raise EvaluationTargetError("--expr cannot be combined with --file or --flake")
+        source = self.file if self.expr is None else self.expr
+        if required and source is None and self.flake is None:
             raise EvaluationTargetError("either --file or --flake is required")
-        if self.attr is not None and self.file is None and self.flake is None:
+        if self.attr is not None and source is None and self.flake is None:
             raise EvaluationTargetError("--attr requires --file or --flake")
         # Nix ignores them for a flake. A flake takes no arguments, so the
         # values would not reach anything.
-        if self.arguments and self.file is None:
+        if self.arguments and source is None:
             raise EvaluationTargetError("--arg, --argstr, --argjson and --args-json require --file")
 
 

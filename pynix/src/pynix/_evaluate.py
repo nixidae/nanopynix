@@ -247,8 +247,8 @@ async def _evaluate_selected(
 ) -> tuple[AsyncValue, AsyncLockedFlake | None, str]:
     selected = ""
     locked: AsyncLockedFlake | None = None
-    if target.file is not None:
-        reference = await resolve_file_reference(target.file)
+    reference = await target.file_reference()
+    if reference is not None:
         value = (
             await open_file_reference(reference, state.eval_file)
             if reference.expression is None

@@ -484,6 +484,7 @@ def _targets(command: Build) -> list[EvaluationTarget]:
             attr=attr,
             flake=command.flake,
             arguments=AutoArgOptions.from_command(command),
+            expr=command.expr,
         )
         for attr in attrs
     ]

@@ -31,6 +31,11 @@ class Build(ConfiguredCommand):
 
     file: str | None = file_option()
 
+    expr: str | None = opt(
+        None,
+        help="Build the derivations that the Nix expression EXPR gives, in place of --file. It is pure unless --impure.",
+    )
+
     arg: list[tuple[str, str]] = arg_option()
 
     argstr: list[tuple[str, str]] = argstr_option()
