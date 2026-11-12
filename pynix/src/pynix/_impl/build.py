@@ -8,6 +8,7 @@ on every start, and none of these imports is needed to list an option.
 from __future__ import annotations
 
 import difflib
+import sys
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -404,10 +405,7 @@ async def run_build(command: Build) -> None:
     targets = _targets(command)
     if command.update_fod:
         await _require_a_local_file(targets[0])
-    if command.dry_run and not command.update_fod:
-        error_exit("--dry-run requires --update-fod")
-    if command.dry_run and command.copy is not None:
-        error_exit("--dry-run builds nothing, so --copy has nothing to copy")
+    _refuse_contradicting_flags(command)
 
     namespaced = _resolve_namespaced(command)
     guest = _resolve_linux_builder(command, namespaced=namespaced)
@@ -440,6 +438,26 @@ async def run_build(command: Build) -> None:
         async with huggorm_store_session(linked) as (_session, store):
             await create_out_links(store, command.out_link, [target.outputs for target in built])
 
+    _print_result(command, built, updates, copied)
+
+
+def _refuse_contradicting_flags(command: Build) -> None:
+    if command.dry_run and not command.update_fod:
+        error_exit("--dry-run requires --update-fod")
+    if command.dry_run and command.copy is not None:
+        error_exit("--dry-run builds nothing, so --copy has nothing to copy")
+    # In Nix the later of the two wins; pynix refuses the pair, so no order decides quietly.
+    if command.no_link and command.out_link is not None:
+        error_exit("--no-link and --out-link contradict each other")
+
+
+def _print_result(command: Build, built: list[BuiltTarget], updates: int, copied: dict[str, Any] | None) -> None:
+    if command.print_out_paths:
+        # `printOutPathsMaybe`: each output of each target, in output-name order.
+        for target in built:
+            for output in sorted(target.outputs):
+                sys.stdout.write(f"{target.outputs[output]}\n")
+        return
     report: dict[str, Any] = {"outputs": output_report(built), "updatedFods": updates, "dryRun": command.dry_run}
     if copied is not None:
         report["copy"] = copied

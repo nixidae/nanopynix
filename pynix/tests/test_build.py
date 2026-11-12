@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 from anyio import Path as AnyioPath
 from huggorm.errors import BuildError
@@ -20,6 +21,7 @@ from pynix._impl.build import (
 )
 from pynix.target import EvaluationTarget
 from support.ansi import strip_ansi
+from support.nix_oracle import require_matching_nix_cli
 from test_support.git_fixtures import init_flake_repo
 
 
@@ -439,6 +441,62 @@ async def test_build_links_nothing_by_default(
     await _build_json(shared_nix_environment, capsys, "--file", str(nix_file))
 
     assert [p.name async for p in AnyioPath(tmp_path).iterdir()] == ["one.nix"]
+
+
+@LINUX_CHROOT_BUILD
+async def test_build_takes_no_link_and_links_nothing(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--no-link`` is what pynix does already; a command written for nix runs unchanged."""
+    nix_file = tmp_path / "one.nix"
+    await AnyioPath(nix_file).write_text(_trivial("pynix-no-link"))
+    monkeypatch.chdir(tmp_path)
+
+    await _build_json(shared_nix_environment, capsys, "--file", str(nix_file), "--no-link")
+
+    assert [p.name async for p in AnyioPath(tmp_path).iterdir()] == ["one.nix"]
+
+
+async def test_build_refuses_no_link_with_an_out_link(
+    shared_nix_environment: NixTestEnvironment, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """In Nix the later flag wins; pynix refuses the pair."""
+    argv = ["build", "--file", str(tmp_path / "x.nix"), "--no-link", "--out-link", str(tmp_path / "r")]
+    with pytest.raises(SystemExit):
+        await parse([*argv, *shared_nix_environment.pynix_store_args()]).run()
+    assert "--no-link and --out-link contradict each other" in capsys.readouterr().err
+
+
+@LINUX_CHROOT_BUILD
+async def test_build_print_out_paths_prints_what_nix_prints(
+    shared_nix_environment: NixTestEnvironment, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    await require_matching_nix_cli()
+    nix_file = tmp_path / "two.nix"
+    await AnyioPath(nix_file).write_text(f"{{ a = {_trivial('pynix-print-a')}; b = {_trivial('pynix-print-b')}; }}")
+    store = shared_nix_environment.pynix_store_args()
+    await parse(["build", "--file", str(nix_file), "--attr", "b", "--attr", "a", "--print-out-paths", *store]).run()
+    ours = capsys.readouterr().out
+    theirs = await anyio.run_process(
+        [
+            "nix",
+            "--extra-experimental-features",
+            "nix-command",
+            "build",
+            "--no-link",
+            "--print-out-paths",
+            "--file",
+            str(nix_file),
+            "b",
+            "a",
+            *store,
+        ]
+    )
+    assert ours == theirs.stdout.decode()
+    assert len(ours.splitlines()) == 2
 
 
 @LINUX_CHROOT_BUILD

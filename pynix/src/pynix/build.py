@@ -118,6 +118,16 @@ class Build(ConfiguredCommand):
 
     out_link: Path | None = out_link_option()
 
+    no_link: bool = opt(
+        False,
+        help="Do not create symlinks to the build results. pynix creates none unless --out-link names a path, "
+        "so this changes nothing; it is here for the commands written for nix build.",
+    )
+
+    print_out_paths: bool = opt(
+        False, help="Print the resulting output paths on stdout, one on each line, in place of the JSON result."
+    )
+
     copy: str | None = opt(
         None,
         help=(
