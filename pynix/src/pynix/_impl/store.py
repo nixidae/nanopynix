@@ -57,7 +57,6 @@ from pynix.store import (
     QueryReferrers,
     QuerySubstitutablePaths,
     QueryValidDerivers,
-    Verify,
 )
 
 logger = structlog.get_logger("pynix.store")
@@ -460,10 +459,3 @@ async def run_optimise(command: Optimise) -> None:
     async with huggorm_store_session(command.store) as (_session, store):
         await store.optimise_store()
         print_json({"optimised": True})
-
-
-async def run_verify(command: Verify) -> None:
-    """The body of :meth:`pynix.store.Verify.run`."""
-    async with huggorm_store_session(command.store) as (_session, store):
-        errors = await store.verify_store(command.check_contents, repair=command.repair)
-        print_json({"errors": errors})

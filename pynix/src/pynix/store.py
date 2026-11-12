@@ -390,20 +390,6 @@ class Optimise(ConfiguredCommand):
         await _impl.store.run_optimise(self)
 
 
-class Verify(ConfiguredCommand):
-    """Verify store integrity"""
-
-    check_contents: bool = opt(False, help="Check path contents, not only metadata.")
-
-    repair: bool = opt(False, help="Attempt repair while verifying.")
-
-    store: str = store_option("Store URI to verify.")
-
-    @override
-    async def run(self) -> None:
-        await _impl.store.run_verify(self)
-
-
 class StorePaths(ConfiguredCommand):
     """The store paths that ``StorePathsCommand`` of Nix selects."""
 
@@ -450,6 +436,24 @@ class CopySigs(StorePaths):
     @override
     async def run(self) -> None:
         await _impl.sigs.run_copy_sigs(self)
+
+
+class Verify(StorePaths):
+    """Verify the integrity of store paths"""
+
+    no_contents: bool = opt(False, help="Do not verify the contents of each store path.")
+
+    no_trust: bool = opt(False, help="Do not verify whether each store path is trusted.")
+
+    substituter: list[str] = opt(short="s", metavar="store-uri", help="Use signatures from the specified store.")
+
+    sigs_needed: int = opt(
+        0, short="n", metavar="n", help="Require that each path is signed by at least N different keys."
+    )
+
+    @override
+    async def run(self) -> None:
+        await _impl.verify.run_verify(self)
 
 
 class Store(PynixCommand):

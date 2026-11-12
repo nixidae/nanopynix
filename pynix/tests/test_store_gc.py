@@ -382,14 +382,3 @@ async def test_optimise_empty_store(
     captured = capsys.readouterr()
     data = json.loads(captured.out)
     assert data == {"optimised": True}
-
-
-async def test_verify_empty_store(
-    isolated_nix_environment: NixTestEnvironment,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    cmd = parse(["store", "verify", *isolated_nix_environment.pynix_store_args()])
-    await cmd.run()
-    captured = capsys.readouterr()
-    data = json.loads(captured.out)
-    assert data == {"errors": False}

@@ -23,7 +23,7 @@ from pynix.store import CopySigs, Sign, StorePaths
 from pynix.target import EvaluationTarget
 
 
-async def _selected(command: StorePaths, state: AsyncEvalState, store: AsyncStore) -> list[StorePath]:
+async def selected_paths(command: StorePaths, state: AsyncEvalState, store: AsyncStore) -> list[StorePath]:
     """``BuiltPathsCommand::run`` and ``StorePathsCommand::run``: dependencies first."""
     target = EvaluationTarget.from_command(command)
     if command.all:
@@ -59,7 +59,7 @@ async def run_sign(command: Sign) -> None:
     pure = EvaluationTarget.from_command(command).pure(impure=command.impure)
     async with huggorm_eval_session(command.store, pure=pure) as (_session, store, state):
         added = 0
-        for path in await _selected(command, state, store):
+        for path in await selected_paths(command, state, store):
             info = await store.query_path_info(path)
             sig = key.sign_detached(await store.fingerprint(info))
             if sig not in info.sigs():
@@ -85,7 +85,7 @@ async def run_copy_sigs(command: CopySigs) -> None:
     async with huggorm_eval_session(command.store, pure=pure) as (session, store, state):
         substituters = [session.store(uri) for uri in command.substituter]
         added = 0
-        for path in await _selected(command, state, store):
+        for path in await selected_paths(command, state, store):
             info = await store.query_path_info(path)
             have = set(info.sigs())
             new: set[Signature] = set()

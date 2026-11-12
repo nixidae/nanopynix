@@ -54,5 +54,6 @@ from pynix._impl import (
     settings as settings,
     sigs as sigs,
     store as store,
+    verify as verify,
     why_depends as why_depends,
 )
