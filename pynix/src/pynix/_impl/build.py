@@ -11,7 +11,7 @@ import difflib
 import sys
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +25,7 @@ from huggorm import (
     AsyncSession,
     AsyncStore,
     AsyncValue,
-    CapturedLogs,
+    LogRecord,
     ServerOptions,
     worker,
 )
@@ -230,12 +230,21 @@ async def _drv_path(build: BuildSession, root: AsyncValue) -> str:
     return await build.evaluation_store.print_store_path(await root.drv_path())
 
 
-def _messages(logs: CapturedLogs) -> list[str]:
-    return [
-        huggorm.filter_ansi_escapes(record_message(record), filter_all=True)
-        for record in logs.records
-        if record.action() == "msg"
-    ]
+@dataclass
+class _BuildLog:
+    """The messages of a build, which hold the cause of a failed dependency.
+
+    A callback on the process stream, and not a capture: a capture holds a
+    fixed number of messages and results together, so a long build log fills
+    it, and the mismatch that comes last is dropped. This keeps the messages
+    alone, so no amount of build progress pushes one out.
+    """
+
+    messages: list[str] = field(default_factory=list)
+
+    def keep(self, record: LogRecord) -> None:
+        if record.action() == "msg":
+            self.messages.append(huggorm.filter_ansi_escapes(record_message(record), filter_all=True))
 
 
 async def _updated_source(source_file: Path, mismatch: FodHashMismatch) -> str:
@@ -302,16 +311,16 @@ async def _build_target(
     while True:
         found: list[tuple[str, AsyncValue]] = []
         # A failed dependency's cause is not in the error of the target that
-        # needed it. It arrives on the process stream, and only a capture has
-        # all of it when the build returns.
-        async with build.session.capture_process(level=_CAUSE_LEVEL) as logs:
+        # needed it. It arrives on the process stream.
+        log = _BuildLog()
+        async with build.session.forward_process(log.keep, level=_CAUSE_LEVEL):
             try:
                 for target in targets:
                     found.extend(await _evaluate_build_target(target, build.state))
                 return await _build_all(build, found, monitor), updates
             except NixError as exc:
                 error = exc
-        mismatch = extract_fod_hash_mismatch(str(error)) or extract_unique_fod_hash_mismatch(_messages(logs))
+        mismatch = extract_fod_hash_mismatch(str(error)) or extract_unique_fod_hash_mismatch(log.messages)
         if not update_fod or mismatch is None:
             raise error
         if mismatch.drv_path is not None and not await _names_the_fod(build, found, mismatch):

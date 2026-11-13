@@ -928,6 +928,43 @@ runCommand "payload" {
 
 
 @LINUX_CHROOT_BUILD
+async def test_build_update_fod_finds_the_mismatch_after_a_long_build_log(
+    shared_nix_environment: NixTestEnvironment,
+    nixpkgs_path: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The mismatch of a dependency comes last, after every line of the build log.
+
+    A capture that holds a fixed number of records keeps the first ones and
+    drops the mismatch. Measured on a cold store: 22 327 records dropped.
+    """
+    nix_file = tmp_path / "source.nix"
+    await AnyioPath(nix_file).write_text(
+        with_nixpkgs(
+            """with import <nixpkgs> {};
+let
+  payload = runCommand "payload" {
+    outputHash = lib.fakeHash;
+    outputHashAlgo = "sha256";
+    outputHashMode = "flat";
+  } "for i in $(seq 3000); do echo line $i; done; printf '%s\\n' fixed-output-payload > $out";
+in
+runCommand "consumer" { } "cat ${payload} > $out"
+""",
+            nixpkgs_path,
+        ),
+    )
+    cmd = parse(["build", "--file", str(nix_file), "--update-fod", *shared_nix_environment.pynix_store_args()])
+
+    await cmd.run()
+
+    data = json.loads(capsys.readouterr().out)
+    assert data["updatedFods"] == 1
+    assert "lib.fakeHash" not in await AnyioPath(nix_file).read_text()
+
+
+@LINUX_CHROOT_BUILD
 async def test_build_update_fod_rewrites_each_named_run_command_dependency(
     shared_nix_environment: NixTestEnvironment,
     nixpkgs_path: str,
