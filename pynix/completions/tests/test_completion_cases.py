@@ -61,6 +61,9 @@ ROOT_SUBCOMMANDS = frozenset(
     }
 )
 
+#: The options of the root itself: `pynix.root_parser` adds them.
+ROOT_OPTIONS = frozenset({"--json", "--version"})
+
 #: Every long option of `pynix build`, both spellings of each negatable flag.
 #: `argparse.BooleanOptionalAction` writes `--copy-back` and `--no-copy-back`
 #: from one declaration, and a caller can type either.
@@ -172,7 +175,7 @@ CASES = (
     Case(
         name="the-root-lists-its-subcommands",
         line="pynix ",
-        candidates=ROOT_SUBCOMMANDS,
+        candidates=ROOT_SUBCOMMANDS | ROOT_OPTIONS,
     ),
     Case(
         name="a-prefix-of-one-subcommand-finishes-it",
@@ -253,13 +256,13 @@ CASES = (
     Case(
         name="two-dashes-at-the-root-list-no-subcommand",
         line="pynix --",
-        candidates=frozenset(),
+        candidates=ROOT_OPTIONS,
         line_after="pynix --",
         forbidden=ROOT_SUBCOMMANDS,
         note=(
-            "Nothing at all: the root takes no option of its own, and `libpynix.complete` excludes "
-            "`-h` and `--help`. clypi answered with the twelve subcommands, and fish inserted "
-            "`print-dev-env`. The line is unchanged, because there is nothing to insert: issue #216 "
+            "The options of the root and nothing else: `libpynix.complete` excludes `-h` and "
+            "`--help`. clypi answered with the twelve subcommands, and fish inserted "
+            "`print-dev-env`. The line is unchanged, because the candidates share no more than `--`: issue #216 "
             "is what made that assertable, because the driver read fish's no-op redraw as "
             "`pynix ------` until a terminal emulator replaced the approximation."
         ),

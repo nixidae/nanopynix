@@ -50,8 +50,7 @@ from typing import Any
 import huggorm
 from argparse_manpage.manpage import Manpage  # type: ignore[import-not-found]  # build-time venv only
 
-from libpynix import build_parser
-from pynix import Pynix
+from pynix import root_parser
 
 #: The NAME text of the root page. The parser's own description is the group
 #: help, "pynix — nanopynix CLI", which would read "pynix - pynix — ...". One
@@ -196,7 +195,7 @@ def main() -> None:
     out_dir = pathlib.Path(out_dir_name)
     examples = pathlib.Path(rest[0]).read_text(encoding="utf-8") if rest else None
     version = importlib.metadata.version("pynix")
-    parser = build_parser(Pynix)
+    parser = root_parser()
     _materialize(parser)
     out_dir.mkdir(parents=True, exist_ok=True)
     _write(out_dir, _page_name(parser.prog), _render_root(parser, version, examples))

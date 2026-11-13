@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import argparse
+import json
 import sys
 from collections.abc import Sequence
 
@@ -19,6 +21,7 @@ from libpynix import Command, build_parser, complete, dispatch, group, parse_arg
 from pynix import _impl
 from pynix._script import ShebangError, command_base_dir_of, expand_script
 from pynix._settings import PynixCommand, option_pairs
+from pynix._version import version_document, version_line
 from pynix.build import Build
 from pynix.config import Config
 from pynix.copy import Copy
@@ -87,6 +90,33 @@ Pynix = group(
 )
 
 
+def root_parser() -> argparse.ArgumentParser:
+    """The parser of `pynix`, with the flags that only the root takes.
+
+    The dests are not field names, so no command receives them.
+    """
+    parser = build_parser(Pynix)
+    parser.add_argument(
+        "--version", dest="show_version", action="store_true", help="Show the version of pynix and of Nix."
+    )
+    parser.add_argument("--json", dest="version_json", action="store_true", help="With --version: print JSON.")
+    return parser
+
+
+def _command_of(parser: argparse.ArgumentParser, namespace: argparse.Namespace) -> Command:
+    """The command *namespace* names, or the version and an exit when it asks for that."""
+    if namespace.version_json and not namespace.show_version:
+        parser.error("--json before the command needs --version")
+    if namespace.show_version:
+        # As `nix --version`, which prints and exits whatever else the line holds.
+        if namespace.version_json:
+            sys.stdout.write(json.dumps(version_document(), sort_keys=True, indent=2) + "\n")
+        else:
+            sys.stdout.write(version_line() + "\n")
+        raise SystemExit(0)
+    return dispatch(parser, namespace)
+
+
 def parse(argv: Sequence[str]) -> Command:
     """The command that *argv* names, built and ready to run.
 
@@ -94,8 +124,8 @@ def parse(argv: Sequence[str]) -> Command:
     through this rather than a double, so a change to a declaration is a change
     the test sees.
     """
-    parser = build_parser(Pynix)
-    return dispatch(parser, parse_args(parser, list(argv)))
+    parser = root_parser()
+    return _command_of(parser, parse_args(parser, list(argv)))
 
 
 def main() -> None:
@@ -103,7 +133,7 @@ def main() -> None:
     # and `--help` both end inside this function, and neither needs a logger, a
     # process title or a traceback handler. `pynix._impl.main` holds the
     # measurement.
-    parser = build_parser(Pynix)
+    parser = root_parser()
     complete(parser)
     try:
         script = expand_script(sys.argv[1:])
@@ -111,7 +141,7 @@ def main() -> None:
         # Nix's words and exit status, before a logger exists (`args.cc:178`).
         sys.exit(f"error: {exc}")
     with command_base_dir_of(script.base_dir):
-        command = dispatch(parser, parse_args(parser, script.argv))
+        command = _command_of(parser, parse_args(parser, script.argv))
         _impl.main.prepare(command.verbosity if isinstance(command, PynixCommand) else None)
         with _impl.settings.command_options_of(option_pairs(command)):
             _impl.main.run(command.run)
