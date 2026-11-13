@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import io
 import json
+import re
+from collections.abc import Iterator
 from pathlib import Path
 
 import anyio
@@ -100,6 +102,38 @@ async def test_a_corrupt_secret_key_is_refused(
     monkeypatch.setattr("sys.stdin", io.StringIO("cache-1"))
     assert await _pynix(["key", "convert-secret-to-public"]) == 1
     assert "key is corrupt" in capsys.readouterr().err
+
+
+@pytest.fixture
+def cnsa() -> Iterator[None]:
+    """Determinate Nix's `cnsa` feature, which every key type but ed25519 needs, for one test."""
+    before = huggorm.get_setting("experimental-features") or ""
+    huggorm.set_setting("extra-experimental-features", "cnsa")
+    try:
+        yield
+    finally:
+        huggorm.set_setting("experimental-features", before)
+
+
+@pytest.mark.parametrize("key_type", list(huggorm.KeyType))
+async def test_every_key_type_this_nix_has_makes_a_key(
+    key_type: huggorm.KeyType, request: pytest.FixtureRequest, capsys: pytest.CaptureFixture[str]
+) -> None:
+    if key_type is not huggorm.KeyType.ED25519:
+        request.getfixturevalue("cnsa")
+    text = await _out(["key", "generate-secret", "--key-name", "cache-1", "--key-type", key_type], capsys)
+    assert huggorm.SecretKey(text).name() == "cache-1"
+
+
+async def test_a_key_type_this_nix_lacks_is_refused_as_determinate_nix_refuses_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``parseKeyType`` (Determinate Nix, ``local-keys.cc:217``), from the types ``list(KeyType)`` names."""
+    assert await _pynix(["key", "generate-secret", "--key-name", "cache-1", "--key-type", "nope"]) == 1
+    valid = ", ".join(sorted(huggorm.KeyType))
+    expected = f"unknown key type 'nope'; valid key types are {valid}"
+    # `error_console` wraps for a terminal; Determinate Nix's five types make a long line.
+    assert re.sub(r"\s+", "", expected) in re.sub(r"\s+", "", capsys.readouterr().err)
 
 
 async def test_a_signed_path_verifies_with_the_public_key_only(

@@ -461,6 +461,7 @@ Generate a secret key for signing store paths
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
 | `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--key-name` | `str` | Identifier of the key (e.g. `cache.example.org-1`). (default: `None`) |
+| `--key-type` | `str` | Type of key: one of the types this Nix has. NixOS/nix has ed25519 only; Determinate Nix also has ml-dsa-44, ml-dsa-65, ml-dsa-87 and ecdsa-p384, which need the cnsa experimental feature. (default: `'ed25519'`) |
 
 #### `pynix key convert-secret-to-public`
 

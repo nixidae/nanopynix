@@ -17,6 +17,12 @@ class GenerateSecret(ConfiguredCommand):
         help="Identifier of the key (e.g. `cache.example.org-1`).",
     )
 
+    key_type: str = opt(
+        "ed25519",
+        metavar="type",
+        help="Type of key: one of the types this Nix has. NixOS/nix has ed25519 only; Determinate Nix also has ml-dsa-44, ml-dsa-65, ml-dsa-87 and ecdsa-p384, which need the cnsa experimental feature.",
+    )
+
     @override
     async def run(self) -> None:
         await _impl.key.run_generate_secret(self)
