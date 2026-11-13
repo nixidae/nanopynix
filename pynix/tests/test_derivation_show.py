@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import anyio
 import huggorm
 import pytest
 from huggorm.testing.environment import NixTestEnvironment, with_nixpkgs
@@ -123,7 +124,9 @@ async def test_show_flake_greeting_is_not_derivation(
     with pytest.raises(SystemExit):
         await cmd.run()
     captured = capsys.readouterr()
-    assert "value is not a derivation" in captured.err
+    # `getDerivations`' message. Nix tries the string as a store path instead, and says it
+    # has no context.
+    assert "expression does not evaluate to a derivation (or a set or list of those)" in " ".join(captured.err.split())
 
 
 async def test_show_missing_both_errors(capsys: pytest.CaptureFixture[str]) -> None:
@@ -168,18 +171,39 @@ async def test_show_file_missing_attr_errors(
     assert "attribute 'missing' not found" in strip_ansi(captured.err)
 
 
-async def test_show_file_wrong_type_attr_errors(
+@pytest.mark.parametrize("expression", ['{ type = "not-a-derivation"; }', "{ x = 1; }"])
+async def test_a_set_with_no_derivation_shows_an_empty_document(
+    expression: str,
     shared_nix_environment: NixTestEnvironment,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """``nix derivation show`` prints ``{"derivations":{},"version":4}`` for both."""
     nix_file = tmp_path / "test.nix"
-    nix_file.write_text('{ type = "not-a-derivation"; }')
-    cmd = parse(["derivation", "show", "--file", str(nix_file), *shared_nix_environment.pynix_store_args()])
-    with pytest.raises(SystemExit):
-        await cmd.run()
-    captured = capsys.readouterr()
-    assert "value at attribute path is not a derivation" in captured.err
+    await anyio.Path(nix_file).write_text(expression)
+
+    await parse(["derivation", "show", "--file", str(nix_file), *shared_nix_environment.pynix_store_args()]).run()
+
+    assert json.loads(capsys.readouterr().out) == {"derivations": {}, "version": 4}
+
+
+async def test_a_set_shows_each_derivation_it_holds(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``getDerivations``: each member that is a derivation, and a member set only with ``recurseForDerivations``."""
+    nix_file = tmp_path / "test.nix"
+    await anyio.Path(nix_file).write_text(
+        'let d = name: derivation { inherit name; system = builtins.currentSystem; builder = "/bin/sh"; };\n'
+        'in { a = d "show-a"; b = d "show-b"; hidden = { c = d "show-c"; };'
+        ' shown = { recurseForDerivations = true; e = d "show-e"; }; }\n'
+    )
+
+    await parse(["derivation", "show", "--file", str(nix_file), *shared_nix_environment.pynix_store_args()]).run()
+
+    shown = json.loads(capsys.readouterr().out)["derivations"]
+    assert sorted(drv["name"] for drv in shown.values()) == ["show-a", "show-b", "show-e"]
 
 
 async def test_show_file_non_string_drv_path_errors(
