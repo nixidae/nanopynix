@@ -652,6 +652,46 @@ async def test_build_keep_going_builds_past_a_failure_as_nix_does(
 
 
 @LINUX_CHROOT_BUILD
+async def test_build_rebuild_builds_again_and_keeps_the_outputs(
+    shared_nix_environment: NixTestEnvironment, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`nix build --rebuild` (`build.cc:118`, `bmCheck`): an output that builds the same passes. nixidae/nixidae#1164."""
+    nix_file = tmp_path / "same.nix"
+    await AnyioPath(nix_file).write_text(_trivial("pynix-rebuild-same"))
+    first = await _build_json(shared_nix_environment, capsys, "--file", str(nix_file))
+    second = await _build_json(shared_nix_environment, capsys, "--file", str(nix_file), "--rebuild")
+    assert second == first
+
+
+@LINUX_CHROOT_BUILD
+async def test_build_rebuild_reports_an_output_that_differs(
+    shared_nix_environment: NixTestEnvironment, tmp_path: Path
+) -> None:
+    nix_file = tmp_path / "random.nix"
+    await AnyioPath(nix_file).write_text(
+        'derivation { name = "pynix-rebuild-random"; system = builtins.currentSystem; builder = "/bin/sh"; '
+        # The sandbox's /bin/sh has no `$RANDOM`: measured, the output was empty.
+        'args = [ "-c" "read -r id < /proc/sys/kernel/random/uuid; echo $id > $out" ]; }'
+    )
+    store = shared_nix_environment.pynix_store_args()
+    await parse(["build", "--file", str(nix_file), *store]).run()
+    with pytest.raises(NixError) as raised:
+        await parse(["build", "--file", str(nix_file), "--rebuild", *store]).run()
+    assert "may not be deterministic" in strip_ansi(raised.value.colored)
+
+
+@LINUX_CHROOT_BUILD
+async def test_build_rebuild_refuses_an_output_that_was_never_built(
+    shared_nix_environment: NixTestEnvironment, tmp_path: Path
+) -> None:
+    nix_file = tmp_path / "new.nix"
+    await AnyioPath(nix_file).write_text(_trivial("pynix-rebuild-never-built"))
+    with pytest.raises(NixError) as raised:
+        await parse(["build", "--file", str(nix_file), "--rebuild", *shared_nix_environment.pynix_store_args()]).run()
+    assert "so checking is not possible" in strip_ansi(raised.value.colored)
+
+
+@LINUX_CHROOT_BUILD
 async def test_build_one_attr_twice_keeps_the_flat_outputs(
     shared_nix_environment: NixTestEnvironment,
     tmp_path: Path,
@@ -1180,7 +1220,9 @@ runCommand "payload" {
 
     async with _util.huggorm_build_session(shared_nix_environment.store_uri) as opened:
         with pytest.raises(BuildTargetError, match="not found in the evaluated target derivation closure"):
-            await _build_target([target], BuildSession(*opened), update_fod=True, dry_run=False)
+            await _build_target(
+                [target], BuildSession(*opened), update_fod=True, dry_run=False, mode=huggorm.BuildMode.NORMAL
+            )
 
 
 async def test_build_target_requires_a_file_target_to_update_a_fod(
@@ -1200,7 +1242,9 @@ async def test_build_target_requires_a_file_target_to_update_a_fod(
 
     async with _util.huggorm_build_session(shared_nix_environment.store_uri) as opened:
         with pytest.raises(BuildTargetError, match="--update-fod currently requires --file"):
-            await _build_target([target], BuildSession(*opened), update_fod=True, dry_run=False)
+            await _build_target(
+                [target], BuildSession(*opened), update_fod=True, dry_run=False, mode=huggorm.BuildMode.NORMAL
+            )
 
 
 @LINUX_CHROOT_BUILD
@@ -1235,4 +1279,6 @@ runCommand "payload" {
 
     async with _util.huggorm_build_session(shared_nix_environment.store_uri) as opened:
         with pytest.raises(BuildTargetError, match="stopped after 10 fixed-output hash updates"):
-            await _build_target([target], BuildSession(*opened), update_fod=True, dry_run=False)
+            await _build_target(
+                [target], BuildSession(*opened), update_fod=True, dry_run=False, mode=huggorm.BuildMode.NORMAL
+            )

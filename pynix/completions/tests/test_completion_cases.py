@@ -92,6 +92,7 @@ BUILD_OPTIONS = frozenset(
         "--overlay-dir",
         "--print-build-logs",
         "--print-out-paths",
+        "--rebuild",
         "--sandbox-path",
         "--store",
         "--substituters",

@@ -285,7 +285,10 @@ async def _updated_source(source_file: Path, mismatch: FodHashMismatch) -> str:
 
 
 async def _build_all(
-    build: BuildSession, found: Sequence[tuple[str, AsyncValue]], monitor: MonitorState | None
+    build: BuildSession,
+    found: Sequence[tuple[str, AsyncValue]],
+    monitor: MonitorState | None,
+    mode: huggorm.BuildMode,
 ) -> list[BuiltTarget]:
     """Build every derivation in *found* in one request, as ``nix build a b`` does.
 
@@ -298,7 +301,7 @@ async def _build_all(
     drv_paths = list(dict.fromkeys(drv_path for _, drv_path in named))
     if monitor is not None:
         monitor.plan = await _plan_or_none(build, drv_paths)
-    outputs = await build_derivations(build.build_store, drv_paths, eval_store=build.evaluation_store)
+    outputs = await build_derivations(build.build_store, drv_paths, eval_store=build.evaluation_store, mode=mode)
     return [BuiltTarget(attr, drv_path, outputs[drv_path]) for attr, drv_path in named]
 
 
@@ -311,12 +314,13 @@ async def _names_the_fod(
     return False
 
 
-async def _build_target(
+async def _build_target(  # noqa: PLR0913 -- keyword-only, one per build option; a bundle would hide which ones a caller sets
     targets: Sequence[EvaluationTarget],
     build: BuildSession,
     *,
     update_fod: bool,
     dry_run: bool,
+    mode: huggorm.BuildMode,
     monitor: MonitorState | None = None,
 ) -> tuple[list[BuiltTarget], int]:
     """Build the targets, applying only unambiguous plain-string FOD updates.
@@ -338,7 +342,7 @@ async def _build_target(
             try:
                 for target in targets:
                     found.extend(await _evaluate_build_target(target, build.state))
-                return await _build_all(build, found, monitor), updates
+                return await _build_all(build, found, monitor, mode), updates
             except NixError as exc:
                 error = exc
         mismatch = extract_fod_hash_mismatch(str(error)) or extract_unique_fod_hash_mismatch(log.messages)
@@ -390,6 +394,7 @@ async def _build_on_huggorm(
             BuildSession(session, build_store, eval_store, state),
             update_fod=command.update_fod,
             dry_run=command.dry_run,
+            mode=_build_mode(command),
             monitor=monitor,
         )
         logger.info("pynix build finished")
@@ -471,6 +476,11 @@ async def run_build(command: Build) -> None:
             await create_out_links(store, command.out_link, [target.outputs for target in built])
 
     _print_result(command, built, updates, copied)
+
+
+def _build_mode(command: Build) -> huggorm.BuildMode:
+    """``bmCheck`` for ``--rebuild``, as ``nix build`` sets it (``build.cc:118``)."""
+    return huggorm.BuildMode.CHECK if command.rebuild else huggorm.BuildMode.NORMAL
 
 
 def _refuse_contradicting_flags(command: Build) -> None:
@@ -563,6 +573,7 @@ async def _build_namespaced(
                 BuildSession(session, build_store, eval_store, state),
                 update_fod=command.update_fod,
                 dry_run=command.dry_run,
+                mode=_build_mode(command),
                 monitor=monitor,
             )
             logger.info("pynix build finished")

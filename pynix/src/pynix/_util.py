@@ -423,6 +423,7 @@ async def build_derivations(
     drv_paths: Sequence[str],
     *,
     eval_store: huggorm.AsyncStore | None = None,
+    mode: huggorm.BuildMode = huggorm.BuildMode.NORMAL,
 ) -> dict[str, dict[str, str]]:
     """Build every output of each of *drv_paths* in one request, and give
     the path of each output by derivation.
@@ -435,7 +436,7 @@ async def build_derivations(
     # Keyed by the request, not by position: without `keep-going` a build that
     # the first failure stopped has no result at all. Measured on 2.35: two
     # failing derivations at `max-jobs = 1` gave one result.
-    results = await build_store.build_paths_with_results(derived, eval_store=other_eval_store)
+    results = await build_store.build_paths_with_results(derived, mode, eval_store=other_eval_store)
     built: dict[str, dict[str, str]] = {}
     failed: list[tuple[str, huggorm.errors.NixError]] = []
     for result in results:

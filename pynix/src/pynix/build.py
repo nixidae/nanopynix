@@ -80,6 +80,10 @@ class Build(ConfiguredCommand):
         False, short="k", help="Keep going in case of failed builds, to the greatest extent possible."
     )
 
+    rebuild: bool = opt(
+        False, help="Rebuild an already built package and compare the result to the existing store paths."
+    )
+
     update_fod: bool = opt(False, help="Update plain fixed-output hash literals after a hash mismatch.")
 
     dry_run: bool = opt(False, help="Show --update-fod changes without writing or rebuilding.")
