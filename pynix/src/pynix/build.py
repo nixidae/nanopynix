@@ -81,7 +81,13 @@ class Build(ConfiguredCommand):
 
     update_fod: bool = opt(False, help="Update plain fixed-output hash literals after a hash mismatch.")
 
-    dry_run: bool = opt(False, help="Show --update-fod changes without writing or rebuilding.")
+    dry_run: bool = opt(
+        False,
+        help=(
+            "Build nothing. Report what the build would build and fetch. "
+            "With --update-fod, show the hash changes without writing them."
+        ),
+    )
 
     namespaced: bool = opt(
         False,

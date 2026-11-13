@@ -32,7 +32,7 @@ Build a Nix derivation value
 | `--keep-going` | `bool` | Keep going in case of failed builds, to the greatest extent possible. (default: `False`) |
 | `--rebuild` | `bool` | Rebuild an already built package and compare the result to the existing store paths. (default: `False`) |
 | `--update-fod` | `bool` | Update plain fixed-output hash literals after a hash mismatch. (default: `False`) |
-| `--dry-run` | `bool` | Show --update-fod changes without writing or rebuilding. (default: `False`) |
+| `--dry-run` | `bool` | Build nothing. Report what the build would build and fetch. With --update-fod, show the hash changes without writing them. (default: `False`) |
 | `--namespaced` | `bool` | Build in a private user namespace, against an overlay store whose lower layer is the host store. Nothing is copied in, the host store does not change, and this process owns the sandbox settings that the daemon otherwise controls. Linux only. (default: `False`) |
 | `--overlay-dir` | `Path or None` | Keep the overlay's upper layer here, instead of in a temporary directory that is deleted on exit. Reuse the same directory to keep what earlier --namespaced builds produced. Implies --namespaced. (default: `None`) |
 | `--linux-builder` | `bool` | Build in a Linux VM that this command starts on Apple's Virtualization.framework, and stops when it exits. The VM builds aarch64-linux, and x86_64-linux through Rosetta. Its store overlays the host store, so nothing is copied in. Apple silicon and macOS 26 or later, and the host /nix must be case-sensitive. (default: `False`) |

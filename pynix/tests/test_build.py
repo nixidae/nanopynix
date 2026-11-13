@@ -800,21 +800,70 @@ async def test_build_update_fod_with_a_fetched_file_errors(
     assert "--update-fod requires --file to name a local file" in captured.err
 
 
-async def test_build_dry_run_without_update_fod_errors(
+async def _unbuilt_derivation(tmp_path: Path) -> Path:
+    """A derivation that no store holds an output of: its name carries *tmp_path*."""
+    nix_file = tmp_path / "unbuilt.nix"
+    await anyio.Path(nix_file).write_text(
+        "derivation {\n"
+        f'  name = "dry-run-{tmp_path.name}";\n'
+        "  system = builtins.currentSystem;\n"
+        '  builder = "/bin/sh";\n'
+        '  args = [ "-c" "echo > $out" ];\n'
+        "}\n"
+    )
+    return nix_file
+
+
+async def test_build_dry_run_reports_what_it_would_build_and_builds_nothing(
     shared_nix_environment: NixTestEnvironment,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    nix_file = tmp_path / "build-test.nix"
-    nix_file.write_text("1\n")
-    cmd = parse(["build", "--file", str(nix_file), "--dry-run", *shared_nix_environment.pynix_store_args()])
+    """``nix build --dry-run`` (``printMissing``): the derivation is listed, and its output stays absent.
+
+    nixidae/nixidae#1339.
+    """
+    nix_file = await _unbuilt_derivation(tmp_path)
+
+    await parse(["build", "--file", str(nix_file), "--dry-run", *shared_nix_environment.pynix_store_args()]).run()
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["dryRun"] is True
+    assert report["updatedFods"] == 0
+    [drv_path] = report["willBuild"]
+    assert drv_path.endswith(f"-dry-run-{tmp_path.name}.drv")
+    assert report["willSubstitute"] == []
+    assert report["unknown"] == []
+    assert report["downloadSize"] == 0
+    assert report["narSize"] == 0
+
+    out = report["outputs"]["out"]
+    await parse(["store", "is-valid-path", out, *shared_nix_environment.pynix_store_args()]).run()
+    assert json.loads(capsys.readouterr().out)["valid"] is False
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (["--print-out-paths"], "--print-out-paths has nothing to print"),
+        (["--namespaced"], "--namespaced and --linux-builder build in another"),
+    ],
+)
+async def test_build_dry_run_refuses_what_it_cannot_honour(
+    extra: list[str],
+    message: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cmd = parse(["build", "--file", str(await _unbuilt_derivation(tmp_path)), "--dry-run", *extra])
 
     with pytest.raises(SystemExit):
         await cmd.run()
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert "--dry-run requires --update-fod" in captured.err
+    # `error_console` wraps to the terminal width.
+    assert message in " ".join(captured.err.split())
 
 
 @LINUX_CHROOT_BUILD

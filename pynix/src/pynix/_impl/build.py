@@ -407,6 +407,57 @@ async def _build_on_huggorm(
     return built, updates, copied
 
 
+async def _dry_run(command: Build, targets: Sequence[EvaluationTarget], settings: dict[str, str]) -> dict[str, Any]:
+    """What a build of *targets* would build and fetch, as ``nix build --dry-run`` prints it (``printMissing``).
+
+    ``willBuild`` lists dependencies first, and ``willSubstitute`` sorts by name, as Nix does.
+    """
+    async with huggorm_build_session(
+        command.store,
+        eval_store_uri=command.eval_store,
+        settings=settings,
+        verbosity=command.verbosity,
+        print_build_logs=command.print_build_logs,
+        monitor=None,
+        pure=targets[0].pure(impure=command.impure),
+    ) as (session, build_store, eval_store, state):
+        build = BuildSession(session, build_store, eval_store, state)
+        found: list[tuple[str, AsyncValue]] = []
+        for target in targets:
+            found.extend(await _evaluate_build_target(target, state))
+        named = [(attr, await _drv_path(build, value)) for attr, value in dict(found).items()]
+        drv_paths = list(dict.fromkeys(drv_path for _, drv_path in named))
+        missing = await build_store.query_missing(
+            [await build_store.parse_derived_path(f"{drv_path}^*") for drv_path in drv_paths]
+        )
+        will_build = reversed(await build_store.topo_sort_paths(missing.will_build()))
+        will_substitute = sorted(missing.will_substitute(), key=lambda path: (path.name(), path.to_string()))
+        return {
+            "dryRun": True,
+            "outputs": output_report(
+                [BuiltTarget(attr, drv_path, await _static_outputs(eval_store, drv_path)) for attr, drv_path in named]
+            ),
+            "updatedFods": 0,
+            "willBuild": [await build_store.print_store_path(path) for path in will_build],
+            "willSubstitute": [await build_store.print_store_path(path) for path in will_substitute],
+            "unknown": sorted([await build_store.print_store_path(path) for path in missing.unknown()]),
+            "downloadSize": missing.download_size(),
+            "narSize": missing.nar_size(),
+        }
+
+
+async def _static_outputs(store: AsyncStore, drv_path: str) -> dict[str, str]:
+    """The outputs of *drv_path* as paths before the build; none for a floating content-addressed derivation.
+
+    ``queryDerivationOutputMap`` raises when one output has no path yet.
+    """
+    try:
+        outputs = await store.query_derivation_output_map(await store.parse_store_path(drv_path))
+    except NixError:
+        return {}
+    return {name: await store.print_store_path(path) for name, path in outputs.items()}
+
+
 async def _plan_or_none(build: BuildSession, drv_paths: Sequence[str]) -> BuildPlan | None:
     """The plan of *drv_paths*, or None, which leaves the monitor a flat list.
 
@@ -446,6 +497,8 @@ async def run_build(command: Build) -> None:
     namespaced = _resolve_namespaced(command)
     guest = _resolve_linux_builder(command, namespaced=namespaced)
     _refuse_an_out_link_with_nothing_to_link(command, elsewhere=namespaced or guest is not None)
+    if command.dry_run and not command.update_fod:
+        _refuse_a_dry_run_elsewhere(command, elsewhere=namespaced or guest is not None)
 
     settings = configured_nix_settings(
         substituters=command.substituters,
@@ -456,6 +509,9 @@ async def run_build(command: Build) -> None:
     # Outside the session, so the error passes through its log forwarding:
     # --nom counts it in the last frame, and the message prints after that.
     try:
+        if command.dry_run and not command.update_fod:
+            print_json(await _dry_run(command, targets, settings))
+            return
         if namespaced:
             built, updates, copied = await _build_namespaced(command, targets, settings)
         elif guest is not None:
@@ -483,9 +539,15 @@ def _build_mode(command: Build) -> huggorm.BuildMode:
     return huggorm.BuildMode.CHECK if command.rebuild else huggorm.BuildMode.NORMAL
 
 
+def _refuse_a_dry_run_elsewhere(command: Build, *, elsewhere: bool) -> None:
+    """A plain ``--dry-run`` asks the store that builds; a store of its own would answer for nothing."""
+    if elsewhere:
+        error_exit("--dry-run reports what this store lacks; --namespaced and --linux-builder build in another")
+    if command.print_out_paths:
+        error_exit("--dry-run builds nothing, so --print-out-paths has nothing to print")
+
+
 def _refuse_contradicting_flags(command: Build) -> None:
-    if command.dry_run and not command.update_fod:
-        error_exit("--dry-run requires --update-fod")
     if command.dry_run and command.copy is not None:
         error_exit("--dry-run builds nothing, so --copy has nothing to copy")
     # In Nix the later of the two wins; pynix refuses the pair, so no order decides quietly.
