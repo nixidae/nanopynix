@@ -23,7 +23,7 @@ from structlog.typing import EventDict, WrappedLogger
 
 from libpynix._typecheck import no_runtime_type_check
 from pynix._build_monitor import MonitorState, RecordEvent, render
-from pynix._impl.settings import SettingError, command_options, nix_settings
+from pynix._impl.settings import SettingError, command_options, command_verbosity, nix_settings
 from pynix._store_layout import StoreLayout
 from pynix._verbosity import VerbosityInput, verbosity_of
 from pynix.target import EvaluationTargetError
@@ -503,6 +503,8 @@ async def forward_state_logs(  # noqa: PLR0913 -- keyword-only, one per forwardi
     bottom of stderr instead, with the log above it. The caller keeps the
     state, so it can hand the monitor a plan.
     """
+    if verbosity is None:
+        verbosity = command_verbosity()
     gate = LogGate(DEFAULT_VERBOSITY if verbosity is None else verbosity_of(verbosity))
     old_config = structlog.get_config()
     live = _start_monitor() if monitor is not None else None

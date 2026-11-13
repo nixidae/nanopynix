@@ -4,10 +4,10 @@ from typing import override
 
 from libpynix import opt
 from pynix import _impl
-from pynix._settings import PynixCommand
+from pynix._settings import ConfiguredCommand, PynixCommand
 
 
-class Show(PynixCommand):
+class Show(ConfiguredCommand):
     """Show Nix configuration settings"""
 
     setting: str | None = opt(None, help="Show only one setting.")
@@ -17,7 +17,7 @@ class Show(PynixCommand):
         await _impl.config.run_show(self)
 
 
-class Check(PynixCommand):
+class Check(ConfiguredCommand):
     """Check that Nix configuration can be loaded"""
 
     @override
@@ -25,7 +25,7 @@ class Check(PynixCommand):
         await _impl.config.run_check(self)
 
 
-class CurrentSystem(PynixCommand):
+class CurrentSystem(ConfiguredCommand):
     """Show the effective system used by builtins.currentSystem"""
 
     @override

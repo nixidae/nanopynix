@@ -12,7 +12,7 @@ from structlog.testing import capture_logs
 
 from pynix import parse
 from pynix._impl.settings import command_options_of
-from pynix._settings import option_pairs
+from pynix._settings import option_pairs, running
 from pynix._util import applied_nix_settings, init_nix
 from pynix.store import Gc, Store
 
@@ -27,7 +27,7 @@ def _pynix(*args: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
 
 async def _shown(capsys: pytest.CaptureFixture[str], *args: str) -> object:
     command = parse(["config", "show", *args])
-    with command_options_of(option_pairs(command)):
+    with running(command):
         await command.run()
     return json.loads(capsys.readouterr().out)
 

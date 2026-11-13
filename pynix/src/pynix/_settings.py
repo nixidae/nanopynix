@@ -41,6 +41,8 @@ There is no loop to block, and ``anyio.Path`` would have nowhere to run.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from libpynix import Command, opt, setting_option
@@ -105,6 +107,18 @@ def option_pairs(command: Command) -> list[tuple[str, str]]:
     return []
 
 
+@contextmanager
+def running(command: Command) -> Iterator[None]:
+    """The ``--option`` pairs and the verbosity of *command*, in scope while it runs.
+
+    ``main`` and the in-process test harness wrap ``run`` in this; the session
+    helpers read both, so no command passes them on by hand.
+    """
+    verbosity = command.verbosity if isinstance(command, PynixCommand) else None
+    with _impl.settings.command_options_of(option_pairs(command)), _impl.settings.command_verbosity_of(verbosity):
+        yield
+
+
 class ConfiguredCommand(PynixCommand):
     """A command whose configuration-backed options resolve when it is built.
 
@@ -118,6 +132,13 @@ class ConfiguredCommand(PynixCommand):
     and ``argparse.SUPPRESS`` is how it says so: an option nobody named is not
     in *values* at all.
     """
+
+    # Every command that runs, as `nix` takes `--verbose` on every command
+    # (nixidae/nixidae#1324). None, not a literal level: Nix's compiled-in
+    # default (info) stands when no layer names one.
+    verbosity: str | None = option(
+        "Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7."
+    )
 
     def __init__(self, **values: Any) -> None:
         super().__init__(**values)
@@ -157,12 +178,6 @@ def store_option(help: str = "Store URI to use.") -> str:  # noqa: A002 -- see o
 @no_runtime_type_check  # see option
 def eval_store_option() -> str | None:
     value: str | None = option("Store URI to evaluate with. Defaults to --store.")
-    return value
-
-
-@no_runtime_type_check  # see option
-def verbosity_option() -> str | None:
-    value: str | None = option("Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7.")
     return value
 
 

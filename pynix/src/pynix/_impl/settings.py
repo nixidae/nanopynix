@@ -237,6 +237,25 @@ def command_options() -> tuple[tuple[str, str], ...]:
     return _command_options.get()
 
 
+#: The resolved ``--verbosity`` of the command that runs, for the same reason.
+_command_verbosity: ContextVar[str | None] = ContextVar("command_verbosity", default=None)
+
+
+@contextmanager
+def command_verbosity_of(verbosity: str | None) -> Iterator[None]:
+    """Make *verbosity* the command's while the block runs."""
+    token = _command_verbosity.set(verbosity)
+    try:
+        yield
+    finally:
+        _command_verbosity.reset(token)
+
+
+def command_verbosity() -> str | None:
+    """The verbosity of the command that runs, or None for Nix's default."""
+    return _command_verbosity.get()
+
+
 def configured_fields(command: type[Command]) -> list[str]:
     """The options of *command* that :func:`~pynix._settings.option` declared.
 

@@ -4,7 +4,7 @@ from typing import ClassVar, Literal, override
 
 from libpynix import opt, pos
 from pynix import _impl
-from pynix._settings import PynixCommand
+from pynix._settings import ConfiguredCommand, PynixCommand
 
 #: The words of ``nix hash --type``, ``--algo`` and ``--format``.
 #: ``base32`` is Nix's deprecated alias of ``nix32``.
@@ -12,7 +12,7 @@ HashAlgo = Literal["blake3", "md5", "sha1", "sha256", "sha512"]
 HashFormatName = Literal["base16", "nix32", "base32", "base64", "sri"]
 
 
-class HashPrinting(PynixCommand):
+class HashPrinting(ConfiguredCommand):
     """The four format flags that ``nix hash path`` and ``nix hash file`` share."""
 
     paths: list[str] = pos(help="Paths to hash.")
@@ -50,7 +50,7 @@ class File(HashPrinting):
         await _impl.hash.run_file(self)
 
 
-class Convert(PynixCommand):
+class Convert(ConfiguredCommand):
     """Convert between hash formats"""
 
     hashes: list[str] = pos(help="Hashes to convert.")
@@ -69,7 +69,7 @@ class Convert(PynixCommand):
         await _impl.hash.run_convert(self)
 
 
-class ToBase(PynixCommand):
+class ToBase(ConfiguredCommand):
     """``nix hash to-*``: deprecated, and ``nix hash convert`` replaces them."""
 
     #: The format each subcommand prints.

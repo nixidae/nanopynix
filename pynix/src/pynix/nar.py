@@ -5,10 +5,10 @@ from typing import override
 
 from libpynix import opt, pos
 from pynix import _impl
-from pynix._settings import PynixCommand
+from pynix._settings import ConfiguredCommand, PynixCommand
 
 
-class Pack(PynixCommand):
+class Pack(ConfiguredCommand):
     """Serialise a path to stdout in NAR format"""
 
     path: Path = pos(help="Path to serialise.")
@@ -26,7 +26,7 @@ class DumpPath(Pack):
         await _impl.nar.run_dump_path(self)
 
 
-class Ls(PynixCommand):
+class Ls(ConfiguredCommand):
     """Show information about a path inside a NAR file"""
 
     nar: Path = pos(help="NAR file to read.")
@@ -46,7 +46,7 @@ class Ls(PynixCommand):
         await _impl.nar.run_ls(self)
 
 
-class Cat(PynixCommand):
+class Cat(ConfiguredCommand):
     """Print the contents of a file inside a NAR file on stdout"""
 
     nar: Path = pos(help="NAR file to read.")

@@ -4,10 +4,10 @@ from typing import override
 
 from libpynix import opt
 from pynix import _impl
-from pynix._settings import PynixCommand
+from pynix._settings import ConfiguredCommand, PynixCommand
 
 
-class GenerateSecret(PynixCommand):
+class GenerateSecret(ConfiguredCommand):
     """Generate a secret key for signing store paths"""
 
     key_name: str = opt(
@@ -22,7 +22,7 @@ class GenerateSecret(PynixCommand):
         await _impl.key.run_generate_secret(self)
 
 
-class ConvertSecretToPublic(PynixCommand):
+class ConvertSecretToPublic(ConfiguredCommand):
     """Generate a public key for verifying store paths from a secret key read from standard input"""
 
     @override

@@ -20,7 +20,7 @@ deferimport.install("deny=rapidfuzz")
 from libpynix import Command, build_parser, complete, dispatch, group, parse_args
 from pynix import _impl
 from pynix._script import ShebangError, command_base_dir_of, expand_script
-from pynix._settings import PynixCommand, option_pairs
+from pynix._settings import PynixCommand, running
 from pynix._version import version_document, version_line
 from pynix.build import Build
 from pynix.config import Config
@@ -143,7 +143,7 @@ def main() -> None:
     with command_base_dir_of(script.base_dir):
         command = _command_of(parser, parse_args(parser, script.argv))
         _impl.main.prepare(command.verbosity if isinstance(command, PynixCommand) else None)
-        with _impl.settings.command_options_of(option_pairs(command)):
+        with running(command):
             _impl.main.run(command.run)
 
 

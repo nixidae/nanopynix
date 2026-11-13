@@ -44,7 +44,6 @@ from pynix._settings import (
     eval_store_option,
     print_build_logs_option,
     store_option,
-    verbosity_option,
 )
 
 
@@ -74,8 +73,6 @@ class PrintDevEnv(ConfiguredCommand):
     store: str = store_option("Store URI to build with.")
 
     eval_store: str | None = eval_store_option()
-
-    verbosity: str | None = verbosity_option()
 
     print_build_logs: bool = print_build_logs_option()
 
@@ -116,8 +113,6 @@ class Develop(ConfiguredCommand):
     store: str = store_option("Store URI to build with.")
 
     eval_store: str | None = eval_store_option()
-
-    verbosity: str | None = verbosity_option()
 
     print_build_logs: bool = print_build_logs_option()
 

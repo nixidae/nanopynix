@@ -22,7 +22,6 @@ from pynix._settings import (
     linux_builder_guest_option,
     print_build_logs_option,
     store_option,
-    verbosity_option,
 )
 
 
@@ -61,10 +60,6 @@ class Build(ConfiguredCommand):
     substituters: str | None = opt(None, help="Space-separated substituter URLs.")
 
     trusted_public_keys: str | None = opt(None, help="Space-separated substituter public keys.")
-
-    # None, not a literal level: Nix's own compiled-in default (info) stands
-    # when no verbosity is named, as it does for `nix build`.
-    verbosity: str | None = verbosity_option()
 
     print_build_logs: bool = print_build_logs_option()
 

@@ -13,6 +13,7 @@ Build a Nix derivation value
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--expr` | `str or None` | Build the derivations that the Nix expression EXPR gives, in place of --file. It is pure unless --impure. (default: `None`) |
 | `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
@@ -26,7 +27,6 @@ Build a Nix derivation value
 | `--eval-store` | `str or None` | Store URI to evaluate with. Defaults to --store. (default: `None`) |
 | `--substituters` | `str or None` | Space-separated substituter URLs. (default: `None`) |
 | `--trusted-public-keys` | `str or None` | Space-separated substituter public keys. (default: `None`) |
-| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--print-build-logs` | `bool` | Print build log lines to stderr. (default: `False`) |
 | `--nom` | `bool` | Show the progress as nix-output-monitor does: the dependency graph of the builds and downloads, and a row of totals, at the bottom of stderr. (default: `False`) |
 | `--keep-going` | `bool` | Keep going in case of failed builds, to the greatest extent possible. (default: `False`) |
@@ -55,6 +55,7 @@ Show Nix configuration settings
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--setting` | `str or None` | Show only one setting. (default: `None`) |
 
 #### `pynix config check`
@@ -64,6 +65,7 @@ Check that Nix configuration can be loaded
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 
 #### `pynix config current-system`
 
@@ -72,6 +74,7 @@ Show the effective system used by builtins.currentSystem
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 
 ### `pynix copy`
 
@@ -80,6 +83,7 @@ Copy the closure of a store path from one store to another
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `paths` | `list[str]` | Store paths to copy. Give none when --file or --flake names the target. (default: `[]`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
@@ -101,6 +105,7 @@ Evaluate a Nix expression and print the result as JSON
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--expr` | `str or None` | Nix expression to evaluate. Reads from stdin if not provided. (default: `None`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
@@ -132,6 +137,7 @@ Examples:
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
@@ -157,6 +163,7 @@ Examples:
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
@@ -167,7 +174,6 @@ Examples:
 | `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
 | `--eval-store` | `str or None` | Store URI to evaluate with. Defaults to --store. (default: `None`) |
-| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--print-build-logs` | `bool` | Print build log lines to stderr. (default: `False`) |
 | `command` | `list[str]` | Command to run in the environment, after --. Omit for an interactive bash. (default: `[]`) |
 
@@ -185,6 +191,7 @@ Examples:
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
@@ -215,6 +222,7 @@ Examples:
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `installables` | `list[str]` | Flake references, or attribute paths of --file. (default: `[]`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
@@ -223,7 +231,6 @@ Examples:
 | `--argjson` | `list[tuple[str, str]]` | Pass the JSON value JSON as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--args-json` | `str or None` | Pass each key of the JSON object JSON as an argument to the function that --file names. '@FILE' reads the object from FILE. (default: `None`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
-| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--print-build-logs` | `bool` | Print build log lines to stderr. (default: `False`) |
 | `--command` | `list[str]` | Command and arguments to run, instead of $SHELL. Takes every argument after it. (default: `None`) |
 
@@ -238,6 +245,7 @@ Show the outputs provided by a flake
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `flake_ref` | `str` | Flake reference (e.g. '.#' or 'nixpkgs#'). *(required)* |
 | `--attrpath` | `str or None` | Dot-separated attribute path within the flake outputs to start from. (default: `None`) |
 | `--store` | `str` | Store URI to evaluate with. (default: `'auto'`) |
@@ -249,6 +257,7 @@ Show locked flake metadata
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `flake_ref` | `str` | Flake reference (e.g. '.' or 'nixpkgs'). *(required)* |
 | `--store` | `str` | Store URI to evaluate with. (default: `'auto'`) |
 
@@ -259,6 +268,7 @@ Alias for flake metadata
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `flake_ref` | `str` | Flake reference (e.g. '.' or 'nixpkgs'). *(required)* |
 | `--store` | `str` | Store URI to evaluate with. (default: `'auto'`) |
 
@@ -276,9 +286,9 @@ Examples:
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `flake_ref` | `str` | Flake reference (default: '.'). (default: `'.'`) |
 | `--store` | `str` | Store URI to fetch the inputs into. (default: `'auto'`) |
-| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 
 #### `pynix flake update`
 
@@ -295,10 +305,10 @@ Examples:
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `inputs` | `list[str]` | Inputs to update, such as 'nixpkgs' or 'a/b'. Omit to update every input. (default: `[]`) |
 | `--flake` | `str` | Flake reference whose lock file to update (default: '.'). (default: `'.'`) |
 | `--store` | `str` | Store URI to fetch the inputs into. (default: `'auto'`) |
-| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 
 #### `pynix flake check`
 
@@ -315,6 +325,7 @@ Examples:
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `flake_ref` | `str` | Flake reference (default: '.'). (default: `'.'`) |
 | `--no-build` | `bool` | Do not build the checks; evaluate only, and write nothing to the store. (default: `False`) |
 | `--all-systems` | `bool` | Check the outputs of every system, not only this one. (default: `False`) |
@@ -322,7 +333,6 @@ Examples:
 | `--out-link` | `Path or None` | Use PATH as prefix for the symlinks to the results. Each one is a garbage collector root. By default, no out links are created. (default: `None`) |
 | `--print-out-paths` | `bool` | Print the output paths of the checks on stdout, one on each line. (default: `False`) |
 | `--store` | `str` | Store URI to evaluate and build with. (default: `'auto'`) |
-| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 
 ### `pynix fmt`
 
@@ -339,9 +349,9 @@ Examples:
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
-| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--print-build-logs` | `bool` | Print build log lines to stderr. (default: `False`) |
 | `args` | `list[str]` | Arguments for the formatter, after --. (default: `[]`) |
 
@@ -356,6 +366,7 @@ Convert between hash formats
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `hashes` | `list[str]` | Hashes to convert. (default: `[]`) |
 | `--from` | `Literal[base16, nix32, base32, base64, sri] or None` | Hash format (`base16`, `nix32`, `base64`, `sri`). (default: `None`) |
 | `--to` | `Literal[base16, nix32, base32, base64, sri]` | Hash format (`base16`, `nix32`, `base64`, `sri`). Default: `sri`. (default: `'sri'`) |
@@ -368,6 +379,7 @@ Print cryptographic hash of the NAR serialisation of a path
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `paths` | `list[str]` | Paths to hash. (default: `[]`) |
 | `--type` | `Literal[blake3, md5, sha1, sha256, sha512]` | Hash algorithm (`blake3`, `md5`, `sha1`, `sha256`, or `sha512`). (default: `'sha256'`) |
 | `--sri` | `bool` | Print the hash in SRI format. (default: `False`) |
@@ -385,6 +397,7 @@ Print cryptographic hash of a regular file
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `paths` | `list[str]` | Paths to hash. (default: `[]`) |
 | `--type` | `Literal[blake3, md5, sha1, sha256, sha512]` | Hash algorithm (`blake3`, `md5`, `sha1`, `sha256`, or `sha512`). (default: `'sha256'`) |
 | `--sri` | `bool` | Print the hash in SRI format. (default: `False`) |
@@ -399,6 +412,7 @@ Convert a hash to base-16 representation (deprecated, use `nix hash convert` ins
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `strings` | `list[str]` | Hashes to convert. (default: `[]`) |
 | `--type` | `Literal[blake3, md5, sha1, sha256, sha512] or None` | Hash algorithm (`blake3`, `md5`, `sha1`, `sha256`, or `sha512`). (default: `None`) |
 
@@ -409,6 +423,7 @@ Convert a hash to base-32 representation (deprecated, use `nix hash convert` ins
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `strings` | `list[str]` | Hashes to convert. (default: `[]`) |
 | `--type` | `Literal[blake3, md5, sha1, sha256, sha512] or None` | Hash algorithm (`blake3`, `md5`, `sha1`, `sha256`, or `sha512`). (default: `None`) |
 
@@ -419,6 +434,7 @@ Convert a hash to base-64 representation (deprecated, use `nix hash convert` ins
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `strings` | `list[str]` | Hashes to convert. (default: `[]`) |
 | `--type` | `Literal[blake3, md5, sha1, sha256, sha512] or None` | Hash algorithm (`blake3`, `md5`, `sha1`, `sha256`, or `sha512`). (default: `None`) |
 
@@ -429,6 +445,7 @@ Convert a hash to SRI representation (deprecated, use `nix hash convert` instead
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `strings` | `list[str]` | Hashes to convert. (default: `[]`) |
 | `--type` | `Literal[blake3, md5, sha1, sha256, sha512] or None` | Hash algorithm (`blake3`, `md5`, `sha1`, `sha256`, or `sha512`). (default: `None`) |
 
@@ -443,6 +460,7 @@ Generate a secret key for signing store paths
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--key-name` | `str` | Identifier of the key (e.g. `cache.example.org-1`). (default: `None`) |
 
 #### `pynix key convert-secret-to-public`
@@ -452,6 +470,7 @@ Generate a public key for verifying store paths from a secret key read from stan
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 
 ### `pynix log`
 
@@ -460,6 +479,7 @@ Show the build log for a store path
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `str` | Store path whose build log should be printed. *(required)* |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
@@ -474,6 +494,7 @@ Print the contents of a file inside a NAR file on stdout
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `nar` | `Path` | NAR file to read. *(required)* |
 | `path` | `str` | Path of the file inside the NAR. *(required)* |
 
@@ -484,6 +505,7 @@ Serialise a path to stdout in NAR format (deprecated alias for `nar pack`)
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `Path` | Path to serialise. *(required)* |
 
 #### `pynix nar ls`
@@ -493,6 +515,7 @@ Show information about a path inside a NAR file
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `nar` | `Path` | NAR file to read. *(required)* |
 | `path` | `str` | Path inside the NAR. *(required)* |
 | `--recursive` | `bool` | List subdirectories recursively. (default: `False`) |
@@ -507,6 +530,7 @@ Serialise a path to stdout in NAR format
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `Path` | Path to serialise. *(required)* |
 
 ### `pynix path-info`
@@ -516,6 +540,7 @@ Show information about a store path
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `str` | Store path to query (e.g. '/nix/store/hash-name'). *(required)* |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
@@ -530,6 +555,7 @@ Examples:
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
@@ -540,7 +566,6 @@ Examples:
 | `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
 | `--eval-store` | `str or None` | Store URI to evaluate with. Defaults to --store. (default: `None`) |
-| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--print-build-logs` | `bool` | Print build log lines to stderr. (default: `False`) |
 | `--json` | `bool` | Print the environment as JSON, instead of the bash that restores it. (default: `False`) |
 
@@ -555,6 +580,7 @@ List every flake registry entry, with the layer that holds it
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
 #### `pynix registry add`
@@ -564,6 +590,7 @@ Point one flake reference at another
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `from_ref` | `str` | Flake reference to resolve, for example 'nixpkgs'. *(required)* |
 | `to_ref` | `str` | Flake reference it resolves to, for example 'github:NixOS/nixpkgs'. *(required)* |
 | `--registry` | `str or None` | Registry file to change. Defaults to the registry of the user. (default: `None`) |
@@ -576,6 +603,7 @@ Drop every entry for one flake reference
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `from_ref` | `str` | Flake reference to drop, for example 'nixpkgs'. *(required)* |
 | `--registry` | `str or None` | Registry file to change. Defaults to the registry of the user. (default: `None`) |
 | `--store` | `str` | Store URI to use. (default: `'auto'`) |
@@ -587,6 +615,7 @@ Pin a flake reference to the reference it resolves to now
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `from_ref` | `str` | Flake reference to pin, for example 'nixpkgs'. *(required)* |
 | `locked` | `str or None` | Flake reference to pin it to. Defaults to the reference itself. (default: `None`) |
 | `--registry` | `str or None` | Registry file to change. Defaults to the registry of the user. (default: `None`) |
@@ -599,6 +628,7 @@ Open an interactive Nix evaluation session.
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--store` | `str` | Store URI to evaluate with. (default: `'auto'`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
@@ -624,6 +654,7 @@ Examples:
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
@@ -633,7 +664,6 @@ Examples:
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
 | `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
-| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--print-build-logs` | `bool` | Print build log lines to stderr. (default: `False`) |
 | `--bin` | `str or None` | Run this program from the directory of the resolved program, instead of the resolved program. A name that is not there fails with the names that are. (default: `None`) |
 | `--linux-builder` | `bool` | Build the program for Linux and run it in a VM that this command starts on Apple's Virtualization.framework. The VM mounts $HOME at the same path, and the program starts in the current directory. Apple silicon and macOS 26 or later, and the host /nix must be case-sensitive. (default: `False`) |
@@ -657,6 +687,7 @@ Examples:
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
@@ -666,7 +697,6 @@ Examples:
 | `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
 | `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
-| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--print-build-logs` | `bool` | Print build log lines to stderr. (default: `False`) |
 | `--format` | `Literal[cyclonedx, spdx]` | CycloneDX 1.7 JSON, or SPDX 2.3 JSON. SPDX takes its creation time from SOURCE_DATE_EPOCH when it is set. (default: `'cyclonedx'`) |
 | `--buildtime` | `bool` | Also list the build closure: compilers, build tools and sources. (default: `False`) |
@@ -678,6 +708,7 @@ Search the NixOS options and the packages of one target.
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `query` | `str or None` | Search query. Omit to just (re)build the index. (default: `None`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
@@ -716,6 +747,7 @@ Examples:
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `installables` | `list[str]` | Flake references, or attribute paths of --file. (default: `[]`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
@@ -724,7 +756,6 @@ Examples:
 | `--argjson` | `list[tuple[str, str]]` | Pass the JSON value JSON as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
 | `--args-json` | `str or None` | Pass each key of the JSON object JSON as an argument to the function that --file names. '@FILE' reads the object from FILE. (default: `None`) |
 | `--store` | `str` | Store URI to build with. (default: `'auto'`) |
-| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--print-build-logs` | `bool` | Print build log lines to stderr. (default: `False`) |
 | `--command` | `list[str]` | Command and arguments to run, instead of $SHELL. Takes every argument after it. (default: `None`) |
 
@@ -743,6 +774,7 @@ List the garbage collector roots
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
 ##### `pynix store gc print-dead`
@@ -753,6 +785,7 @@ Use --rip to actually delete them.
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--rip` | `bool` | Actually delete the dead store paths instead of just listing them. (default: `False`) |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
@@ -763,6 +796,7 @@ List live paths in the store (reachable from GC roots)
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
 #### `pynix store info`
@@ -772,6 +806,7 @@ Show store metadata
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
 #### `pynix store dirs`
@@ -781,6 +816,7 @@ Show configured local store directories
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
 #### `pynix store is-valid-path`
@@ -790,6 +826,7 @@ Check whether a store path is valid
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `str` | Store path to check. *(required)* |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
@@ -800,6 +837,7 @@ Resolve symlinks to a store path
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `str` | Filesystem path to resolve. *(required)* |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
@@ -810,6 +848,7 @@ Compute the filesystem closure of a store path
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `str` | Store path to query. *(required)* |
 | `--flip-direction` | `bool` | Compute the inverse closure. (default: `False`) |
 | `--include-outputs` | `bool` | Include derivation outputs. (default: `False`) |
@@ -823,6 +862,7 @@ Show which paths would need building, substituting, or are unknown
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `paths` | `list[str]` | Store paths to query. (default: `[]`) |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
@@ -833,6 +873,7 @@ Show the outputs of a derivation path
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `str` | Derivation path to query. *(required)* |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
@@ -843,6 +884,7 @@ Show valid derivers for a store path
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `str` | Store path to query. *(required)* |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
@@ -853,6 +895,7 @@ List all valid paths in the store
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
 #### `pynix store query-referrers`
@@ -862,6 +905,7 @@ Show referrers of a store path
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `str` | Store path to query. *(required)* |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
@@ -872,6 +916,7 @@ Show which paths are substitutable
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `paths` | `list[str]` | Store paths to query. (default: `[]`) |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
@@ -882,6 +927,7 @@ Add a temporary GC root for this command's store session
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `str` | Store path to root temporarily. *(required)* |
 | `--store` | `str` | Store URI to use. (default: `'auto'`) |
 
@@ -892,6 +938,7 @@ Add a permanent GC root symlink
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `str` | Store path to root. *(required)* |
 | `gc_root` | `str` | GC root symlink to create. *(required)* |
 | `--store` | `str` | Store URI to use. (default: `'auto'`) |
@@ -903,6 +950,7 @@ Register an indirect GC root
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `str` | GC root path to register. *(required)* |
 | `--store` | `str` | Store URI to use. (default: `'auto'`) |
 
@@ -913,6 +961,7 @@ Resolve a store path from its hash prefix
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `hash_part` | `str` | Store path hash prefix to resolve. *(required)* |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
 
@@ -923,6 +972,7 @@ Ensure a store path is valid, substituting it if available
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `str` | Store path to ensure. *(required)* |
 | `--store` | `str` | Store URI to use. (default: `'auto'`) |
 
@@ -933,6 +983,7 @@ Print a file inside a local Nix store path
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `str` | File path to print. *(required)* |
 | `--store` | `str` | Store URI to use. (default: `'auto'`) |
 
@@ -943,6 +994,7 @@ List files inside a local Nix store path
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `str` | File or directory path to list. *(required)* |
 | `--json` | `bool` | Print machine-readable JSON. (default: `False`) |
 | `--store` | `str` | Store URI to use. (default: `'auto'`) |
@@ -954,6 +1006,7 @@ Add a file or directory to a Nix store
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `str` | Filesystem path to add. *(required)* |
 | `--name` | `str or None` | Override the store path name component. (default: `None`) |
 | `--mode` | `Literal[nar, flat, git]` | Content-addressing method. (default: `'nar'`) |
@@ -968,6 +1021,7 @@ Add a single file to a Nix store
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `str` | Filesystem path to add. *(required)* |
 | `--name` | `str or None` | Override the store path name component. (default: `None`) |
 | `--hash-algo` | `Literal[md5, sha1, sha256, sha512, blake3]` | Hash algorithm to use. (default: `'sha256'`) |
@@ -981,6 +1035,7 @@ Add a path to a Nix store using NAR ingestion
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `path` | `str` | Filesystem path to add. *(required)* |
 | `--name` | `str or None` | Override the store path name component. (default: `None`) |
 | `--hash-algo` | `Literal[md5, sha1, sha256, sha512, blake3]` | Hash algorithm to use. (default: `'sha256'`) |
@@ -994,6 +1049,7 @@ Download a file into the Nix store
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `url` | `str` | URL of the file to download. *(required)* |
 | `--name` | `str or None` | Override the name component of the resulting store path. It defaults to the base name of URL. (default: `None`) |
 | `--expected-hash` | `str or None` | The expected hash of the file. When the store already holds a file with this hash, nothing is downloaded. (default: `None`) |
@@ -1009,6 +1065,7 @@ Compare two filesystem closures
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `before` | `str` | Original store path. *(required)* |
 | `after` | `str` | New store path. *(required)* |
 | `--store` | `str` | Store URI to query. (default: `'auto'`) |
@@ -1020,6 +1077,7 @@ Optimise store disk usage by hard-linking duplicate files
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `--store` | `str` | Store URI to optimise. (default: `'auto'`) |
 
 #### `pynix store delete`
@@ -1029,6 +1087,7 @@ Delete paths from the Nix store, when no garbage collector root reaches them
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `paths` | `list[str]` | Store paths to operate on. Give none when --file or --flake names the target. (default: `[]`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
@@ -1052,6 +1111,7 @@ Verify the integrity of store paths
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `paths` | `list[str]` | Store paths to operate on. Give none when --file or --flake names the target. (default: `[]`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
@@ -1076,6 +1136,7 @@ Sign store paths with a local key
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `paths` | `list[str]` | Store paths to operate on. Give none when --file or --flake names the target. (default: `[]`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
@@ -1097,6 +1158,7 @@ Copy store path signatures from substituters
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `paths` | `list[str]` | Store paths to operate on. Give none when --file or --flake names the target. (default: `[]`) |
 | `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
 | `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
@@ -1118,6 +1180,7 @@ Show the chain of references that puts one store path in the closure of another
 | Argument | Type | Help |
 | --- | --- | --- |
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 | `package` | `str` | Store path whose closure to search (e.g. '/nix/store/hash-name'). *(required)* |
 | `dependency` | `str` | Store path to find in that closure. *(required)* |
 | `--precise` | `bool` | For each link of the chain, name the file that holds the reference. Needs a local store. (default: `False`) |

@@ -5,7 +5,7 @@ from typing import override
 from libpynix import pos
 from pynix import _impl
 from pynix._nix_options import impure_option
-from pynix._settings import ConfiguredCommand, print_build_logs_option, store_option, verbosity_option
+from pynix._settings import ConfiguredCommand, print_build_logs_option, store_option
 
 
 class Fmt(ConfiguredCommand):
@@ -22,8 +22,6 @@ class Fmt(ConfiguredCommand):
     impure: bool = impure_option()
 
     store: str = store_option("Store URI to build with.")
-
-    verbosity: str | None = verbosity_option()
 
     print_build_logs: bool = print_build_logs_option()
 
