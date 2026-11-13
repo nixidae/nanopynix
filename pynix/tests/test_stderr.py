@@ -70,6 +70,18 @@ async def test_a_higher_verbosity_shows_the_activities(
     assert "to the store...\n" in capsys.readouterr().err
 
 
+async def test_a_warning_prints_as_nix_prints_it(
+    shared_nix_environment: NixTestEnvironment,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`SimpleLogger::logEI` prints `showErrorInfo`: the prefix, the position
+    and the trace, and not the message alone (nixidae/nixidae#1313)."""
+    argv = ["eval", "--expr", 'builtins.warn "hello there" 1', *shared_nix_environment.pynix_store_args()]
+    await parse(argv).run()
+
+    assert "evaluation warning: hello there\n" in capsys.readouterr().err
+
+
 @LINUX_CHROOT_BUILD
 @pytest.mark.parametrize("print_build_logs", [False, True], ids=["quiet", "logs"])
 async def test_the_command_prints_a_build_log_only_when_asked(

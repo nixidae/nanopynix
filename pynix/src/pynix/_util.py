@@ -587,9 +587,13 @@ def _field_values(record: LogRecord) -> list[int | str]:
 
 
 def record_message(record: LogRecord) -> str:
-    """The text of a ``msg`` record, as Nix prints it."""
-    info = record.info()
-    return record.text() if info is None else info.msg()
+    """The text of a ``msg`` record, as Nix prints it.
+
+    ``text``, and not ``info.msg()``: huggorm renders ``text`` with
+    ``showErrorInfo``, as ``SimpleLogger::logEI`` does, so it carries the
+    prefix, the position and the trace that the bare message lacks.
+    """
+    return record.text()
 
 
 def _record_line(record: LogRecord, *, print_build_logs: bool, gate: LogGate) -> str | None:
