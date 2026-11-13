@@ -27,13 +27,18 @@ import huggorm.errors
 import rich.traceback
 from rich.text import Text
 
-from pynix._util import configure_logging, error_console
+from pynix._util import DEFAULT_VERBOSITY, configure_logging, error_console
+from pynix._verbosity import verbosity_of
 
 
-def prepare() -> None:
-    """Install the traceback handler and configure logging."""
+def prepare(verbosity: str | None = None) -> None:
+    """Install the traceback handler and configure logging at *verbosity*.
+
+    Before the command runs, and not when it opens an evaluator: an event the
+    command logs before that point is gated at *verbosity* too.
+    """
     rich.traceback.install(show_locals=True)
-    configure_logging()
+    configure_logging(verbosity=DEFAULT_VERBOSITY if verbosity is None else verbosity_of(verbosity))
 
 
 def run(body: Callable[[], Coroutine[object, object, None]]) -> None:

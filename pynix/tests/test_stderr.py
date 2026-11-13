@@ -15,8 +15,11 @@ from pathlib import Path
 
 import anyio
 import pytest
+import structlog
 from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment
 
+import pynix
+import pynix._impl.main as main_module
 import pynix._util as util_module
 from pynix import parse
 from pynix._build_monitor import MonitorState
@@ -70,6 +73,32 @@ async def test_a_higher_verbosity_shows_the_activities(
     await parse([*argv, *shared_nix_environment.pynix_store_args()]).run()
 
     assert "to the store...\n" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("flags", "shown"), [([], False), (["--verbosity", "talkative"], True)], ids=["default", "talkative"]
+)
+def test_the_verbosity_gates_an_event_before_the_command_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    flags: list[str],
+    shown: bool,
+) -> None:
+    """`--verbosity` applies from the start of the command, and not only once
+    an evaluator opens (nixidae/nixidae#1224)."""
+    monkeypatch.setenv("PYNIX_CONFIG", str(tmp_path / "absent.toml"))
+    monkeypatch.delenv("PYNIX_VERBOSITY", raising=False)
+    monkeypatch.setattr(sys, "argv", ["pynix", "build", *flags, "--expr", "1"])
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    monkeypatch.setattr(main_module, "run", lambda _body: structlog.get_logger().info("an event before evaluation"))
+    old_config = structlog.get_config()
+    try:
+        pynix.main()
+    finally:
+        structlog.configure(**old_config)
+
+    assert ("an event before evaluation" in capsys.readouterr().err) is shown
 
 
 async def test_a_warning_prints_as_nix_prints_it(

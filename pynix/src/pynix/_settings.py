@@ -82,6 +82,12 @@ class PynixCommand(Command):
     still has to be written down somewhere.
     """
 
+    #: What ``--verbosity`` names, on a command that declares the option, and
+    #: ``None`` on every other. ``main`` configures logging with it before the
+    #: command runs, so pynix's own events honour it from the start
+    #: (nixidae/nixidae#1224).
+    verbosity: str | None = None
+
 
 class ConfiguredCommand(PynixCommand):
     """A command whose configuration-backed options resolve when it is built.

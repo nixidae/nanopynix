@@ -16,6 +16,7 @@ deferimport.install("deny=rapidfuzz")
 
 from libpynix import Command, build_parser, complete, dispatch, group, parse_args
 from pynix import _impl
+from pynix._settings import PynixCommand
 from pynix.build import Build
 from pynix.config import Config
 from pynix.copy import Copy
@@ -103,7 +104,7 @@ def main() -> None:
     parser = build_parser(Pynix)
     complete(parser)
     command = dispatch(parser, parse_args(parser))
-    _impl.main.prepare()
+    _impl.main.prepare(command.verbosity if isinstance(command, PynixCommand) else None)
     _impl.main.run(command.run)
 
 
