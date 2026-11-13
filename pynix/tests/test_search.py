@@ -1042,6 +1042,29 @@ async def test_a_missing_binaries_index_does_not_rebuild_on_every_search(
     assert _results(captured.out), "the second search answered nothing"
 
 
+async def test_update_index_walks_the_package_set_again(
+    shared_nix_environment: NixTestEnvironment,
+    offline_program_index: Path,
+    cache_home: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--update-index` skips the walk cache of `pynix._packages` too, not only the search cache."""
+    del offline_program_index
+    args = _search_args(shared_nix_environment, _BOTH_NIX, "--packages", "--limit", "200", "e")
+    await parse(args).run()
+    capsys.readouterr()
+
+    (walk,) = [path async for path in anyio.Path(cache_home / "pynix" / "packages").glob("*.json")]
+    payload = json.loads(await walk.read_text())
+    payload["packages"][0].update(attr="planted", pname="planted")
+    await walk.write_text(json.dumps(payload))
+
+    await parse([*args, "--update-index"]).run()
+    attrs = {str(row["attr"]) for row in _results(capsys.readouterr().out)}
+    assert attrs, "the search answered nothing"
+    assert "planted" not in attrs, "the search read the old walk"
+
+
 async def test_the_options_flag_leaves_the_packages_out(
     shared_nix_environment: NixTestEnvironment,
     offline_program_index: Path,

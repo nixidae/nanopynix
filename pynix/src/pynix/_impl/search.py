@@ -577,7 +577,7 @@ async def _index_packages(
     # each function it checks, and a closure made per call kept its package
     # set alive to the end of the process.
     rebuild = functools.partial(_fresh_package_set, state, target, pkgs.path)
-    records = await indexed_packages(state, pkgs.value, lib.value, rebuild=rebuild)
+    records = await indexed_packages(state, pkgs.value, lib.value, refresh=command.update_index, rebuild=rebuild)
     built.pkgs_path = await package_identity(state, pkgs.value)
     built.paths["pkgs"] = pkgs.path
 
