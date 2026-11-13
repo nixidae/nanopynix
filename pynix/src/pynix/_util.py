@@ -562,12 +562,13 @@ def _stop_monitor(live: Live, state: MonitorState) -> None:
 def monitor_event(record: LogRecord) -> RecordEvent | None:
     """*record* as the event :meth:`MonitorState.apply` reads, or ``None``.
 
-    A message with error info is an ``error``, and the fields of an activity
-    are plain ints and strings.
+    A message at the error level is an ``error``, and the fields of an
+    activity are plain ints and strings. A warning carries error info too, so
+    the info alone does not make an error.
     """
     match record.action():
-        case "msg" if (info := record.info()) is not None:
-            return RecordEvent("error", [record.level(), info.msg()], info.msg())
+        case "msg" if record.level() <= huggorm.Verbosity.ERROR:
+            return RecordEvent("error", [record.level(), record.text()], record.text())
         case "msg":
             return RecordEvent("msg", [record.level(), record.text()], record.text())
         case "start":

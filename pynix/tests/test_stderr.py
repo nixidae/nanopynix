@@ -17,7 +17,9 @@ import anyio
 import pytest
 from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment
 
+import pynix._util as util_module
 from pynix import parse
+from pynix._build_monitor import MonitorState
 
 _CLI = "import sys, pynix; sys.argv[0] = 'pynix'; pynix.main()"
 
@@ -80,6 +82,26 @@ async def test_a_warning_prints_as_nix_prints_it(
     await parse(argv).run()
 
     assert "evaluation warning: hello there\n" in capsys.readouterr().err
+
+
+async def test_the_monitor_prints_a_warning_and_counts_no_error(shared_nix_environment: NixTestEnvironment) -> None:
+    """A warning comes through `logEI` as an error does, with its parts in
+    `info`. Only its level tells the two apart (nixidae/nixidae#1313)."""
+    async with (
+        util_module.huggorm_eval_session(shared_nix_environment.store_uri) as (session, _store, state),
+        session.capture(state) as logs,
+    ):
+        await state.force(await state.eval_expr('builtins.warn "hello there" 1'))
+
+    monitor = MonitorState(started=0.0)
+    printed = [
+        line.plain
+        for record in logs.records
+        if (event := util_module.monitor_event(record)) is not None
+        for line in monitor.apply(event, 0.0)
+    ]
+    assert "evaluation warning: hello there" in printed
+    assert monitor.errors == 0
 
 
 @LINUX_CHROOT_BUILD
