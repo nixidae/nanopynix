@@ -943,6 +943,28 @@ Optimise store disk usage by hard-linking duplicate files
 | --- | --- | --- |
 | `--store` | `str` | Store URI to optimise. (default: `'auto'`) |
 
+#### `pynix store delete`
+
+Delete paths from the Nix store, when no garbage collector root reaches them
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `paths` | `list[str]` | Store paths to operate on. Give none when --file or --flake names the target. (default: `[]`) |
+| `--file` | `str or None` | Evaluate FILE as a Nix expression. FILE is a path, a lookup path, a URL, or a flake reference, and it may end with '#' and an attribute path. (default: `None`) |
+| `--arg` | `list[tuple[str, str]]` | Pass the value of the Nix expression EXPR as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--argstr` | `list[tuple[str, str]]` | Pass the string STRING as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--argjson` | `list[tuple[str, str]]` | Pass the JSON value JSON as the argument NAME to the function that --file names. Repeatable. (default: `None`) |
+| `--args-json` | `str or None` | Pass each key of the JSON object JSON as an argument to the function that --file names. '@FILE' reads the object from FILE. (default: `None`) |
+| `--attr` | `str or None` | Dot-separated attribute path within the evaluation result. (default: `None`) |
+| `--flake` | `str or None` | Evaluate FLAKE, optionally with a '#'-separated attribute path. (default: `None`) |
+| `--impure` | `bool` | Evaluate a flake impurely: allow the environment, mutable paths and builtins.currentSystem. (default: `False`) |
+| `--recursive` | `bool` | Apply operation to closure of the specified paths. (default: `False`) |
+| `--all` | `bool` | Apply the operation to every store path. (default: `False`) |
+| `--store` | `str` | Store URI to operate on. (default: `'auto'`) |
+| `--ignore-liveness` | `bool` | Do not check whether the paths are reachable from a root. (default: `False`) |
+| `--skip-alive` | `bool` | Do not emit errors when attempting to delete something that is still alive, useful with --recursive. (default: `False`) |
+| `--also-referrers` | `bool` | Also allow deletion of any referrers of the specified paths. (default: `False`) |
+
 #### `pynix store verify`
 
 Verify the integrity of store paths

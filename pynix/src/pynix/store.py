@@ -418,6 +418,23 @@ class StorePaths(ConfiguredCommand):
     store: str = store_option("Store URI to operate on.")
 
 
+class Delete(StorePaths):
+    """Delete paths from the Nix store, when no garbage collector root reaches them"""
+
+    ignore_liveness: bool = opt(False, help="Do not check whether the paths are reachable from a root.")
+
+    skip_alive: bool = opt(
+        False,
+        help="Do not emit errors when attempting to delete something that is still alive, useful with --recursive.",
+    )
+
+    also_referrers: bool = opt(False, help="Also allow deletion of any referrers of the specified paths.")
+
+    @override
+    async def run(self) -> None:
+        await _impl.store.run_delete(self)
+
+
 class Sign(StorePaths):
     """Sign store paths with a local key"""
 
@@ -485,6 +502,7 @@ class Store(PynixCommand):
         PrefetchFile,
         DiffClosures,
         Optimise,
+        Delete,
         Verify,
         Sign,
         CopySigs,

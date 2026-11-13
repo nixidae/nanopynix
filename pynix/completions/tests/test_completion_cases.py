@@ -116,6 +116,7 @@ STORE_SUBCOMMANDS = frozenset(
         "cat",
         "compute-fs-closure",
         "copy-sigs",
+        "delete",
         "diff-closures",
         "dirs",
         "ensure-path",

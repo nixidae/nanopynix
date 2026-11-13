@@ -21,6 +21,7 @@ from huggorm import (
     DerivedPathBuilt,
     GCAction,
     GCOptions,
+    GCSpecificPaths,
     Hash,
     HashAlgorithm,
     StorePath,
@@ -28,7 +29,8 @@ from huggorm import (
 )
 from huggorm.errors import BadStorePath
 
-from pynix._util import error_exit, huggorm_local_store_path, huggorm_store_session, print_json
+from pynix._impl.sigs import selected_paths
+from pynix._util import error_exit, huggorm_eval_session, huggorm_local_store_path, huggorm_store_session, print_json
 from pynix.store import (
     Add,
     AddFile,
@@ -38,6 +40,7 @@ from pynix.store import (
     AddTempRoot,
     Cat,
     ComputeFsClosure,
+    Delete,
     DiffClosures,
     Dirs,
     EnsurePath,
@@ -58,6 +61,7 @@ from pynix.store import (
     QuerySubstitutablePaths,
     QueryValidDerivers,
 )
+from pynix.target import EvaluationTarget
 
 logger = structlog.get_logger("pynix.store")
 
@@ -172,6 +176,16 @@ async def run_print_dead(command: PrintDead) -> None:
     action = GCAction.DELETE_DEAD if command.rip else GCAction.RETURN_DEAD
     async with huggorm_store_session(command.store) as (_session, store):
         result = await store.collect_garbage(GCOptions(action))
+        print_json({"paths": result.paths(), "bytesFreed": result.bytes_freed()})
+
+
+async def run_delete(command: Delete) -> None:
+    """The body of :meth:`pynix.store.Delete.run`, as `store-delete.cc` runs it."""
+    action = GCAction.DELETE_DEAD if command.skip_alive else GCAction.DELETE_SPECIFIC
+    pure = EvaluationTarget.from_command(command).pure(impure=command.impure)
+    async with huggorm_eval_session(command.store, pure=pure) as (_session, store, state):
+        where = GCSpecificPaths(await selected_paths(command, state, store), delete_referrers=command.also_referrers)
+        result = await store.collect_garbage(GCOptions(action, command.ignore_liveness, where))
         print_json({"paths": result.paths(), "bytesFreed": result.bytes_freed()})
 
 
