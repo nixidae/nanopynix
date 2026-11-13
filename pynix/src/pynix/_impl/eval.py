@@ -13,6 +13,7 @@ import sys
 import structlog
 
 from pynix._evaluate import base_attr_search, call, evaluate_target
+from pynix._script import base_argument
 from pynix._util import error_exit, huggorm_eval_session, print_json, read_only_mode, report_and_exit
 from pynix.eval import Eval
 from pynix.target import EvaluationTarget, EvaluationTargetError
@@ -50,7 +51,7 @@ async def run_eval(command: Eval) -> None:
                 root = (
                     await evaluate_target(target, state, auto_call_file=True, attr_search=base_attr_search())
                     if expr is None
-                    else await state.eval_expr(expr)
+                    else await state.eval_expr(expr, base_argument() if command.expr is not None else None)
                 )
             except EvaluationTargetError as exc:
                 report_and_exit(exc)

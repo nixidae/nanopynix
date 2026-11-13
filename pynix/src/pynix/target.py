@@ -15,6 +15,8 @@ import anyio.to_thread
 import huggorm
 from anyio import Path as AsyncPath
 
+from pynix._script import rebased
+
 _FLAKE_PREFIX = "flake:"
 
 
@@ -144,25 +146,27 @@ async def resolve_file_reference(raw: str) -> FileReference:  # noqa: PLR0911 --
 
     # A path that exists exactly as written wins, '#' and all. A file name that
     # holds a '#' is rare, and the caller who has one wrote it deliberately.
-    whole = await _existing_local_path(raw)
+    # A relative path names a file from the base directory of the command, as
+    # `lookupFileArg` reads it (`installables.cc:469`): the script's, in a script.
+    whole = await _existing_local_path(rebased(raw))
     if whole is not None:
-        return FileReference(arguments=(raw,), fragment=None, local_path=whole)
+        return FileReference(arguments=(rebased(raw),), fragment=None, local_path=whole)
 
     head, _, tail = raw.partition("#")
     fragment = tail or None
     if not head:
         raise EvaluationTargetError(f"--file {raw!r} names no reference before the '#'")
 
-    local = await _existing_local_path(head)
+    local = await _existing_local_path(rebased(head))
     if local is not None:
-        return FileReference(arguments=(head,), fragment=fragment, local_path=local)
+        return FileReference(arguments=(rebased(head),), fragment=fragment, local_path=local)
 
     # A path that the caller wrote as a path stays a path, even when the file
     # is absent. Otherwise a typed `-f ./buidl.nix` would reach the registry,
     # and the caller would read an error about a flake instead of the missing
     # file. `local_path` stays None, because nothing is there to rewrite.
     if head.startswith(("./", "../", "/", "~/")) or head in {".", "..", "~"}:
-        return FileReference(arguments=(head,), fragment=fragment, local_path=None)
+        return FileReference(arguments=(rebased(head),), fragment=fragment, local_path=None)
 
     # Ask Nix which strings it fetches itself. Repeating the list of schemes
     # here would make this file disagree with the evaluator as soon as Nix adds

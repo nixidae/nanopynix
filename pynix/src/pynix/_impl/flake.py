@@ -20,6 +20,7 @@ from huggorm.attrpath import AttrPathError, flake_outputs, select_attr
 from rich.console import Console
 from rich.tree import Tree
 
+from pynix._script import base_argument
 from pynix._util import (
     configured_nix_settings,
     huggorm_build_session,
@@ -113,7 +114,7 @@ async def _print_flake_metadata(flake_ref: str, *, store_uri: str) -> None:
     transitive node or a ``follows`` edge.
     """
     async with huggorm_eval_session(store_uri, pure=True) as (_session, _store, state):
-        locked = await state.lock_flake(huggorm.parse_flake_ref(flake_ref), write_lock_file=False)
+        locked = await state.lock_flake(huggorm.parse_flake_ref(flake_ref, base_argument()), write_lock_file=False)
         try:
             print_json(json.loads(await state.flake_metadata_json(locked)))
         finally:
@@ -126,7 +127,7 @@ async def run_show(command: Show) -> None:
     flake_attr: str | None = raw_attr or None
 
     async with huggorm_eval_session(command.store, pure=True) as (_session, _store, state):
-        locked = await state.lock_flake(huggorm.parse_flake_ref(base_ref), write_lock_file=False)
+        locked = await state.lock_flake(huggorm.parse_flake_ref(base_ref, base_argument()), write_lock_file=False)
         try:
             outputs = await flake_outputs(state, await state.call_flake(locked))
         finally:
@@ -178,7 +179,7 @@ async def _lock(
     of a moving reference would otherwise lock the old revision again. Both
     apply the flake's ``nixConfig`` too.
     """
-    ref = huggorm.parse_flake_ref(flake_ref)
+    ref = huggorm.parse_flake_ref(flake_ref, base_argument())
     lock_file = ref.lock_file_path()
     before = await _read_lock_file(lock_file)
     async with huggorm_build_session(

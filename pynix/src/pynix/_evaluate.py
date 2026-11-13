@@ -25,6 +25,7 @@ from huggorm.attrpath import (
 )
 from huggorm.errors import ThrownError
 
+from pynix._script import base_argument
 from pynix.target import (
     CONFIGURATION_KINDS,
     AutoArg,
@@ -219,7 +220,7 @@ async def load_repl_target(
 async def _auto_arg_value(state: AsyncEvalState, arg: AutoArg) -> AsyncValue:
     match arg.kind:
         case AutoArgKind.EXPR:
-            return await state.parse_expr(arg.text)
+            return await state.parse_expr(arg.text, base_argument())
         case AutoArgKind.STRING:
             return await state.make_string(arg.text)
         case AutoArgKind.JSON:
@@ -252,7 +253,9 @@ async def _evaluate_selected(
         value = (
             await open_file_reference(reference, state.eval_file)
             if reference.expression is None
-            else await state.eval_expr(reference.expression)
+            # `--file -` reads from the working directory (`parseStdin`), and
+            # `--expr` from the base directory (`installables.cc:472`).
+            else await state.eval_expr(reference.expression, base_argument() if target.expr is not None else None)
         )
         # Auto-call first, then the fragment. The root of a fetched tree is
         # usually a function, and its attributes only exist after the call.
@@ -266,7 +269,7 @@ async def _evaluate_selected(
             raise EvaluationTargetError("either --file or --flake is required")
         ref, _, flake_attr = target.flake.partition("#")
         # `InstallableFlake::getLockedFlake` applies the flake's `nixConfig`.
-        locked = await state.lock_flake(huggorm.parse_flake_ref(ref), apply_nix_config=True)
+        locked = await state.lock_flake(huggorm.parse_flake_ref(ref, base_argument()), apply_nix_config=True)
         # `outputs`, and not the value `callFlake` returns: `openEvalCache` of
         # `src/libflake/flake.cc` selects them before it resolves anything.
         value = await flake_outputs(state, await state.call_flake(locked))

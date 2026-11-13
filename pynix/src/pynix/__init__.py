@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import Sequence
 
 import deferimport
@@ -16,6 +17,7 @@ deferimport.install("deny=rapidfuzz")
 
 from libpynix import Command, build_parser, complete, dispatch, group, parse_args
 from pynix import _impl
+from pynix._script import ShebangError, command_base_dir_of, expand_script
 from pynix._settings import PynixCommand
 from pynix.build import Build
 from pynix.config import Config
@@ -103,9 +105,15 @@ def main() -> None:
     # measurement.
     parser = build_parser(Pynix)
     complete(parser)
-    command = dispatch(parser, parse_args(parser))
-    _impl.main.prepare(command.verbosity if isinstance(command, PynixCommand) else None)
-    _impl.main.run(command.run)
+    try:
+        script = expand_script(sys.argv[1:])
+    except ShebangError as exc:
+        # Nix's words and exit status, before a logger exists (`args.cc:178`).
+        sys.exit(f"error: {exc}")
+    with command_base_dir_of(script.base_dir):
+        command = dispatch(parser, parse_args(parser, script.argv))
+        _impl.main.prepare(command.verbosity if isinstance(command, PynixCommand) else None)
+        _impl.main.run(command.run)
 
 
 if __name__ == "__main__":
