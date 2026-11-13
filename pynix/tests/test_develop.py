@@ -20,8 +20,9 @@ from pathlib import Path
 from typing import Any, cast
 
 import huggorm
+import pexpect
 import pytest
-from anyio import Path as AnyioPath, run_process
+from anyio import Path as AnyioPath, run_process, to_thread
 from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, with_nixpkgs
 
 from pynix import parse
@@ -639,6 +640,103 @@ async def test_a_flake_nix_config_sets_the_prompt(isolated_nix_environment: NixT
     )
     await parse(["eval", "--flake", f"path:{flake}#x", *isolated_nix_environment.pynix_store_args()]).run()
     assert BashPrompt.configured() == BashPrompt(prompt="flake> ")
+
+
+# --- the prompt on a terminal, against nix develop ---------------------------
+
+#: The three settings, in `nix.conf` syntax. A backslash and a quote, so a
+#: program that quotes the prompt wrongly shows a different `PS1`.
+_PROMPT_SETTINGS = "bash-prompt = dev's \\w> \nbash-prompt-prefix = (pfx) \nbash-prompt-suffix = $ \n"
+
+#: No registry, in every case: a `--file` target finds `bashInteractive`
+#: through `nixpkgs#bashInteractive`, and the global registry is a download.
+#: Both programs then fall back to the bash of the environment.
+#: `use-cgroups` from a host's nix.conf fails every local build of a user
+#: (nixidae/nixidae#1037).
+_NO_REGISTRY = "flake-registry = \nuse-cgroups = false\n"
+
+#: The command typed into each shell. The terminal echoes it, so the pattern
+#: below skips the echoed `%s`.
+_PRINT_PS1 = "printf 'PS1<%s>END\\n' \"$PS1\"; exit"
+_PS1 = re.compile(r"PS1<(?!%s>)(.*?)>END")
+
+_FLAKE = """
+{
+  inputs.nixpkgs = { url = "path:@nixpkgs@"; flake = false; };
+  nixConfig.bash-prompt = "flake's \\\\w> ";
+  nixConfig.bash-prompt-prefix = "(pfx) ";
+  outputs = { nixpkgs, ... }: {
+    devShells.@system@.default = (import nixpkgs { system = "@system@"; }).stdenvNoCC.mkDerivation {
+      name = "pynix-develop-prompt";
+      dontUnpack = true;
+      installPhase = "echo hi > $out";
+    };
+  };
+}
+"""
+
+
+def _ps1_on_a_terminal(argv: list[str], env: dict[str, str], cwd: Path) -> str:
+    """The `PS1` of the interactive shell that *argv* starts on a pty.
+
+    A pty, because bash is interactive only on a terminal, and both programs
+    set the prompt only for an interactive shell (`develop.cc:621`).
+    """
+    child = pexpect.spawn(argv[0], argv[1:], env=env, cwd=str(cwd), encoding="utf-8", timeout=300)
+    try:
+        child.sendline(_PRINT_PS1)
+        child.expect(_PS1)
+        match = child.match
+        assert isinstance(match, re.Match)
+        ps1 = str(match.group(1))
+        child.expect(pexpect.EOF)
+    finally:
+        child.close(force=True)
+    return ps1
+
+
+@LINUX_CHROOT_BUILD
+@pytest.mark.parametrize("source", ["NIX_CONFIG", "nix.conf", "nixConfig"])
+async def test_the_prompt_on_a_terminal_matches_nix_develop(
+    source: str,
+    shared_nix_environment: NixTestEnvironment,
+    nixpkgs_path: str,
+    tmp_path: Path,
+) -> None:
+    """Each source of the prompt settings gives the `PS1` that `nix develop` gives."""
+    await require_matching_nix_cli()
+    home = tmp_path / "home"
+    await AnyioPath(home).mkdir()
+    env = {**os.environ, "HOME": str(home), "NIX_PATH": f"nixpkgs={nixpkgs_path}", "NIX_CONFIG": _NO_REGISTRY}
+    if source == "NIX_CONFIG":
+        env["NIX_CONFIG"] += _PROMPT_SETTINGS
+    elif source == "nix.conf":
+        conf = tmp_path / "nix.conf"
+        await AnyioPath(conf).write_text(_PROMPT_SETTINGS)
+        env["NIX_USER_CONF_FILES"] = str(conf)
+
+    if source == "nixConfig":
+        flake = tmp_path / "flake"
+        await AnyioPath(flake).mkdir()
+        system = huggorm.get_setting("system") or ""
+        text = _FLAKE.replace("@nixpkgs@", nixpkgs_path).replace("@system@", system)
+        await AnyioPath(flake / "flake.nix").write_text(text)
+        target = ["--flake", f"path:{flake}"]
+        nix_target = [f"path:{flake}"]
+    else:
+        nix_file = _write(tmp_path, "plain.nix", _PLAIN_DERIVATION, nixpkgs_path)
+        target = ["--file", str(nix_file)]
+        nix_target = ["--file", str(nix_file)]
+
+    store = shared_nix_environment.store_uri
+    nix = ["nix", "--extra-experimental-features", "nix-command flakes", "develop", "--store", store, *nix_target]
+    pynix = [sys.executable, "-c", "from pynix import main; main()", "develop", "--store", store, *target]
+    theirs = await to_thread.run_sync(_ps1_on_a_terminal, nix, env, tmp_path)
+    mine = await to_thread.run_sync(_ps1_on_a_terminal, pynix, env, tmp_path)
+
+    # nix.conf syntax trims the space at the end of each value, and nixConfig keeps it.
+    assert theirs.startswith("(pfx)"), f"the oracle did not apply the {source} settings: {theirs!r}"
+    assert mine == theirs
 
 
 def test_an_output_path_is_rewritten_to_the_outputs_directory(tmp_path: Path) -> None:
