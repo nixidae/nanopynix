@@ -23,7 +23,7 @@ _SANDBOX_PATH = re.compile(
 USE_CGROUPS_HINT = (
     "hint: Nix runs this build in a cgroup, because `use-cgroups` is true or the derivation needs `uid-range`. "
     "This user cannot create a cgroup here. Build through a daemon that runs as root, "
-    "or set `NIX_CONFIG='use-cgroups = false'`."
+    "or pass `--option use-cgroups false`."
 )
 
 
