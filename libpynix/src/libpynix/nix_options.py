@@ -27,8 +27,10 @@ before, which is to let the shell offer file names.
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from libpynix._typecheck import no_runtime_type_check
-from libpynix.command import Completer, opt
+from libpynix.command import Collected, Completer, opt
 
 
 @no_runtime_type_check  # a declaration returns a Spec, not the annotated type; beartype would otherwise flag every call as a type violation
@@ -138,6 +140,33 @@ def setting_option() -> list[tuple[str, str]]:
     value: list[tuple[str, str]] = opt(
         metavar=("NAME", "VALUE"),
         help="Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable.",
+    )
+    return value
+
+
+class VerbosityStep(StrEnum):
+    """What each of Nix's verbosity flags appends to :func:`verbosity_steps_option`."""
+
+    VERBOSE = "verbose"
+    QUIET = "quiet"
+    DEBUG = "debug"
+
+
+@no_runtime_type_check  # see file_option
+def verbosity_steps_option() -> list[str]:
+    """Declare Nix's ``-v``, ``--quiet`` and ``--debug`` (``common-args.cc:17``), hidden.
+
+    One field, so the steps keep their order: ``--debug --quiet`` is not
+    ``--quiet --debug``. The program applies them.
+    """
+    value: list[str] = opt(
+        help="Nix's verbosity flags.",
+        hidden=True,
+        collects=(
+            Collected(("-v", "--verbose"), VerbosityStep.VERBOSE, "Increase the logging verbosity level."),
+            Collected(("--quiet",), VerbosityStep.QUIET, "Decrease the logging verbosity level."),
+            Collected(("--debug",), VerbosityStep.DEBUG, "Set the logging verbosity level to 'debug'."),
+        ),
     )
     return value
 

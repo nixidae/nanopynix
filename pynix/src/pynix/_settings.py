@@ -45,9 +45,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from libpynix import Command, opt, setting_option
+from libpynix import Command, opt, setting_option, verbosity_steps_option
 from libpynix._typecheck import no_runtime_type_check
 from pynix import _impl
+from pynix._verbosity import DEFAULT_VERBOSITY, stepped, verbosity_of
 
 
 @no_runtime_type_check  # a declaration returns a Spec, and the annotation names the value it will hold
@@ -140,6 +141,10 @@ class ConfiguredCommand(PynixCommand):
         "Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7."
     )
 
+    # Nix's `-v`, `--quiet` and `--debug`, hidden: they apply on top of
+    # `--verbosity`, whatever their place on the line.
+    verbosity_steps: list[str] = verbosity_steps_option()
+
     def __init__(self, **values: Any) -> None:
         super().__init__(**values)
         owned = _impl.settings.configured_fields(type(self))
@@ -159,6 +164,9 @@ class ConfiguredCommand(PynixCommand):
         resolved = _impl.settings.pynix_defaults(**named)
         for field in owned:
             setattr(self, field, resolved[field])
+        if self.verbosity_steps:
+            start = DEFAULT_VERBOSITY if self.verbosity is None else verbosity_of(self.verbosity)
+            self.verbosity = str(int(stepped(start, self.verbosity_steps)))
 
 
 # `--file`, `--flake` and `--attr` are not here. They mean the same thing in

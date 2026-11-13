@@ -58,6 +58,17 @@ type Completer = Callable[..., Sequence[str]]
 
 
 @dataclass(frozen=True)
+class Collected:
+    """One flag of a field that collects: naming the flag appends *const*."""
+
+    #: Every spelling of the flag, as `("-v", "--verbose")`.
+    flags: tuple[str, ...]
+    #: What the field gains, once for each use.
+    const: str
+    help: str
+
+
+@dataclass(frozen=True)
 class Spec:
     """One declared option or positional, before argparse has seen it."""
 
@@ -96,6 +107,14 @@ class Spec:
     #: `("NAME", "EXPR")` for `--arg NAME EXPR`. `None` leaves argparse to
     #: spell them.
     metavar: str | tuple[str, ...] | None = None
+    #: True for an option that parses and shows nowhere: not in `--help`, not
+    #: in a completion, not in a reference. For a spelling another CLI uses,
+    #: which a caller types from habit and a reader of the help needs not see.
+    hidden: bool = False
+    #: Flags that each append a constant to this `list[str]` field, in
+    #: command-line order, as `-v -v --quiet` reads in order. The field has no
+    #: flag of its own when this is set.
+    collects: tuple[Collected, ...] = ()
 
 
 #: The default of a positional that the caller must give. Not `None`, which is
@@ -116,6 +135,8 @@ def opt(  # noqa: PLR0913 -- one keyword for each thing a declaration can say; c
     remainder: bool = False,
     once: bool = False,
     metavar: str | tuple[str, ...] | None = None,
+    hidden: bool = False,
+    collects: tuple[Collected, ...] = (),
 ) -> Any:
     """Declare an option.
 
@@ -128,6 +149,7 @@ def opt(  # noqa: PLR0913 -- one keyword for each thing a declaration can say; c
 
     *remainder* makes the option take every argument after it; see
     :attr:`Spec.remainder`. *once* refuses a second use; see :attr:`Spec.once`.
+    *hidden* and *collects*: see :attr:`Spec.hidden` and :attr:`Spec.collects`.
 
     A `list[tuple[str, str]]` field takes two values for each use, as
     `--arg NAME EXPR` does, and collects one tuple for each.
@@ -145,6 +167,8 @@ def opt(  # noqa: PLR0913 -- one keyword for each thing a declaration can say; c
         remainder=remainder,
         once=once,
         metavar=metavar,
+        hidden=hidden,
+        collects=collects,
     )
 
 
@@ -457,10 +481,21 @@ def _add(parser: argparse.ArgumentParser, field: str, spec: Spec, annotation: An
     one. A `type` beside `store_true` or `BooleanOptionalAction` is an
     argparse error, and `test_a_flag_is_not_given_a_type` keeps that true.
     """
+    if spec.collects:
+        for collected in spec.collects:
+            parser.add_argument(
+                *collected.flags,
+                dest=field,
+                action="append_const",
+                const=collected.const,
+                default=argparse.SUPPRESS,
+                help=argparse.SUPPRESS if spec.hidden else collected.help,
+            )
+        return
     inner = _unwrapped(annotation)
     repeated = typing.get_origin(inner) is list
 
-    kwargs: dict[str, Any] = {"help": spec.help}
+    kwargs: dict[str, Any] = {"help": argparse.SUPPRESS if spec.hidden else spec.help}
     choices = _choices(annotation)
     if choices is not None:
         kwargs["choices"] = choices

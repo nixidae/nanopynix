@@ -45,9 +45,9 @@ from pynix import _evaluate
 from pynix._completion import completion_prefix_at
 from pynix._markdown import render_markdown
 from pynix._nix_syntax import NIX_GRAMMAR_PATH, NIX_LANGUAGE, parse_nix
-from pynix._util import DEFAULT_VERBOSITY, apply_nix_settings, build_derivation, forward_state_logs
+from pynix._util import apply_nix_settings, build_derivation, forward_state_logs
 from pynix._value_render import format_json
-from pynix._verbosity import VerbosityInput, verbosity_of
+from pynix._verbosity import DEFAULT_VERBOSITY, VerbosityInput, verbosity_of
 from pynix.repl import Repl
 from pynix.target import EvaluationTarget, EvaluationTargetError
 

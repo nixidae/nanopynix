@@ -105,6 +105,8 @@ def _render_args_table(cmd: type[Command]) -> list[str]:
         return []
     lines = ["| Argument | Type | Help |", "| --- | --- | --- |"]
     for name, spec in cmd.specs.items():
+        if spec.hidden:
+            continue
         help_text = spec.help.replace("|", "\\|")
         type_text = _render_type(cmd.types[name])
         lines.append(

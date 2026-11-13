@@ -5,8 +5,10 @@ from __future__ import annotations
 import subprocess
 import sys
 
+import pytest
+
 from libpynix import Command, command_name
-from pynix import Pynix
+from pynix import Pynix, parse
 from pynix._settings import ConfiguredCommand
 
 _MAIN = "import sys; from pynix import main; sys.argv = ['pynix', *sys.argv[1:]]; main()"
@@ -50,3 +52,37 @@ def test_eval_at_error_hides_the_warning(child_env: dict[str, str]) -> None:
 
 def test_eval_at_talkative_shows_more_of_nix(child_env: dict[str, str]) -> None:
     assert "reading expression from argument" in _eval("--verbosity", "talkative", env=child_env).stderr
+
+
+@pytest.mark.parametrize(
+    ("flags", "level"),
+    [
+        (["-v"], "4"),
+        (["-v", "-v", "--verbose"], "6"),
+        (["-vvvvvvv"], "7"),
+        (["--quiet", "--quiet", "--quiet", "--quiet"], "0"),
+        (["--debug", "--quiet"], "5"),
+        (["--quiet", "--debug"], "6"),
+        (["--verbosity", "error", "-v"], "1"),
+        (["-v", "--verbosity", "error"], "1"),
+    ],
+)
+def test_nix_verbosity_flags_step_in_order(flags: list[str], level: str) -> None:
+    """``common-args.cc:17``: from info, `-v` up to vomit, `--quiet` down to error, `--debug` sets debug."""
+    command = parse(["eval", "--expr", "1", *flags])
+    assert isinstance(command, ConfiguredCommand)
+    assert command.verbosity == level
+
+
+def test_no_flag_leaves_nix_its_default() -> None:
+    command = parse(["eval", "--expr", "1"])
+    assert isinstance(command, ConfiguredCommand)
+    assert command.verbosity is None
+
+
+def test_nix_verbosity_flags_are_hidden_from_help(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        parse(["eval", "--help"])
+    shown = capsys.readouterr().out
+    assert "--verbosity" in shown
+    assert not {"--verbose", "--quiet", "--debug", "-v,"} & set(shown.split())

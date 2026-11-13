@@ -28,8 +28,8 @@ import rich.traceback
 from rich.text import Text
 
 from pynix._error_hints import hint_for
-from pynix._util import DEFAULT_VERBOSITY, configure_logging, error_console
-from pynix._verbosity import verbosity_of
+from pynix._util import configure_logging, error_console
+from pynix._verbosity import DEFAULT_VERBOSITY, verbosity_of
 
 
 def prepare(verbosity: str | None = None) -> None:

@@ -25,7 +25,7 @@ from libpynix._typecheck import no_runtime_type_check
 from pynix._build_monitor import MonitorState, RecordEvent, render
 from pynix._impl.settings import SettingError, command_options, command_verbosity, nix_settings
 from pynix._store_layout import StoreLayout
-from pynix._verbosity import VerbosityInput, verbosity_of
+from pynix._verbosity import DEFAULT_VERBOSITY, VerbosityInput, verbosity_of
 from pynix.target import EvaluationTargetError
 
 #: What `surrogateescape` decodes the bytes that are not UTF-8 to.
@@ -33,8 +33,6 @@ _NOT_UTF8_RUN = re.compile("([\udc80-\udcff]+)")
 _LOG_LINE_RESULTS = frozenset({huggorm.ResultType.BUILD_LOG_LINE, huggorm.ResultType.POST_BUILD_LOG_LINE})
 # nom redraws on every event; four times a second shows the same thing.
 _MONITOR_REDRAW_SECONDS = 0.25
-#: What `nix` logs at when no flag names a level (`nix::verbosity`, lvlInfo).
-DEFAULT_VERBOSITY = huggorm.Verbosity.INFO
 # `ANSI_RED`, `ANSI_MAGENTA` and `ANSI_NORMAL` of `libutil/ansicolor.hh`: an error's prefix and its arguments.
 _ANSI_RED = "\x1b[31;1m"
 _ANSI_MAGENTA = "\x1b[35;1m"

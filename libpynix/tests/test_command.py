@@ -16,7 +16,19 @@ from typing import Literal
 
 import pytest
 
-from libpynix import MISSING, Command, Spec, build_parser, command_name, dispatch, group, opt, parse_args, pos
+from libpynix import (
+    MISSING,
+    Collected,
+    Command,
+    Spec,
+    build_parser,
+    command_name,
+    dispatch,
+    group,
+    opt,
+    parse_args,
+    pos,
+)
 from libpynix.command import _LazySubParsersAction
 
 
@@ -458,3 +470,33 @@ def test_leftovers_without_a_remainder_are_refused(capsys: pytest.CaptureFixture
     with pytest.raises(SystemExit):
         parse_args(parser, ["--nope"])
     assert "unrecognized arguments: --nope" in capsys.readouterr().err
+
+
+class Steps(Command):
+    """A command whose flags collect, in order."""
+
+    steps: list[str] = opt(
+        help="Steps.",
+        collects=(Collected(("-u", "--up"), "up", "Go up."), Collected(("--down",), "down", "Go down.")),
+    )
+    habit: bool = opt(False, hidden=True, help="A spelling another CLI uses.")
+
+
+def test_flags_that_collect_keep_their_order() -> None:
+    command = parse(Steps, "-u", "--down", "--up", "-uu")
+    assert isinstance(command, Steps)
+    assert command.steps == ["up", "down", "up", "up", "up"]
+
+
+def test_a_field_that_collects_is_empty_when_no_flag_is_named() -> None:
+    command = parse(Steps)
+    assert isinstance(command, Steps)
+    assert command.steps == []
+
+
+def test_a_hidden_option_parses_and_is_not_in_the_help() -> None:
+    command = parse(Steps, "--habit")
+    assert isinstance(command, Steps)
+    assert command.habit is True
+    assert "--habit" not in build_parser(Steps).format_help()
+    assert "--up" in build_parser(Steps).format_help()

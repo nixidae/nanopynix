@@ -61,6 +61,7 @@ from libpynix.agent_harness import (
 )
 from libpynix.command import (
     MISSING as MISSING,
+    Collected as Collected,
     Command as Command,
     Completer as Completer,
     Spec as Spec,
@@ -75,6 +76,7 @@ from libpynix.command import (
     pos as pos,
 )
 from libpynix.nix_options import (
+    VerbosityStep as VerbosityStep,
     arg_option as arg_option,
     argjson_option as argjson_option,
     args_json_option as args_json_option,
@@ -85,4 +87,5 @@ from libpynix.nix_options import (
     flake_option as flake_option,
     impure_option as impure_option,
     setting_option as setting_option,
+    verbosity_steps_option as verbosity_steps_option,
 )
