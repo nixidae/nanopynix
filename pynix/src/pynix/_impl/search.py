@@ -29,6 +29,7 @@ descriptions still evaluates nothing.
 from __future__ import annotations
 
 import contextlib
+import functools
 import hashlib
 import json
 import os
@@ -42,7 +43,7 @@ from typing import Any, cast
 
 import anyio
 import structlog
-from huggorm import AsyncEvalState
+from huggorm import AsyncEvalState, AsyncValue
 from huggorm.errors import NixError
 from rich.console import Console
 
@@ -62,7 +63,7 @@ from pynix._packages import (
 )
 from pynix._programs import ProgramIndex, program_index_for
 from pynix._search_merge import OPTION, PACKAGE, kind, make_merged_ranker, name as hit_name
-from pynix._search_target import LIB_CHAIN, OPTIONS_CHAIN, PKGS_CHAIN, Resolved, SearchTarget, resolve
+from pynix._search_target import LIB_CHAIN, OPTIONS_CHAIN, PKGS_CHAIN, Resolved, SearchTarget, reselect, resolve
 from pynix._util import error_console, error_exit, huggorm_eval_session, print_json, report_and_exit
 from pynix.search import Search
 from pynix.target import (
@@ -506,7 +507,7 @@ async def _build_index(command: Search, target: EvaluationTarget, ask: Wanted, c
         if ask.options and built.options is None and _has(where.options, where.lib, ask, _OPTIONS_TREE):
             await _index_options(state, target, where, built)
         if ask.packages and built.pkgs_path is None and _has(where.pkgs, where.lib, ask, _PACKAGE_SET):
-            await _index_packages(state, command, where, built)
+            await _index_packages(state, command, target, where, built)
     if built.options is None and built.pkgs_path is None:
         error_exit(
             f"{_target_description(target)} holds neither an options tree nor a package set. "
@@ -556,16 +557,27 @@ async def _index_options(
     )
 
 
+async def _fresh_package_set(state: AsyncEvalState, target: EvaluationTarget, path: str) -> AsyncValue:
+    """*target* evaluated again, and its package set at *path*: a fixpoint
+    that shares nothing with the last one, so the collector can free that."""
+    return await reselect(state, await evaluate_target(target, state, auto_call_file=True), path)
+
+
 async def _index_packages(
     state: AsyncEvalState,
     command: Search,
+    target: EvaluationTarget,
     where: SearchTarget,
     built: Cached,
 ) -> None:
     """Walk the package set, find the binaries it installs, and record both."""
     pkgs = _named(where.pkgs)
     lib = _named(where.lib)
-    records = await indexed_packages(state, pkgs.value, lib.value)
+    # A partial and not a closure: the beartype hook of the test suites keeps
+    # each function it checks, and a closure made per call kept its package
+    # set alive to the end of the process.
+    rebuild = functools.partial(_fresh_package_set, state, target, pkgs.path)
+    records = await indexed_packages(state, pkgs.value, lib.value, rebuild=rebuild)
     built.pkgs_path = await package_identity(state, pkgs.value)
     built.paths["pkgs"] = pkgs.path
 

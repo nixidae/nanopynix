@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 import pytest
+from huggorm import AsyncValue
 from huggorm.attrpath import select_attr
 from huggorm.testing.environment import NixTestEnvironment
 
@@ -99,6 +100,40 @@ async def test_an_error_tryeval_misses_skips_one_attribute(
         lib_value = await select_attr(state, root, "lib")
         records = await fetch_package_list(state, root, lib_value)
     assert records == packages
+
+
+def test_the_walk_enters_a_set_that_asks_for_it(packages: list[PackageRecord]) -> None:
+    """`recurseForDerivations` is the marker `nix search` follows
+    (`search.cc:177`), at any depth (nixidae/nixidae#320)."""
+    record = _by_attr(packages, "pythonPackages.requests")
+    assert record.pname == "requests"
+    attrs = {record.attr for record in packages}
+    assert "pythonPackages.nested.deep" in attrs
+    assert "pythonPackages.throwing" not in attrs
+
+
+def test_the_walk_does_not_enter_a_set_without_the_marker(packages: list[PackageRecord]) -> None:
+    assert not [record.attr for record in packages if record.attr.startswith("hiddenPackages")]
+
+
+async def test_each_group_of_sets_reads_a_fresh_package_set(
+    shared_nix_environment: NixTestEnvironment, packages: list[PackageRecord]
+) -> None:
+    """A fresh package set per group is what lets the collector free a group
+    once it is read: 3.45 GB at peak against 4.78 GB on real nixpkgs."""
+    target = EvaluationTarget(file=str(_PKGSET), attr=None, flake=None)
+    rebuilds: list[AsyncValue] = []
+    async with util_module.huggorm_eval_session(shared_nix_environment.store_uri) as (_session, _store, state):
+
+        async def rebuild() -> AsyncValue:
+            rebuilds.append(await evaluate_target(target, state, auto_call_file=True))
+            return rebuilds[-1]
+
+        root = await evaluate_target(target, state, auto_call_file=True)
+        records = await fetch_package_list(state, root, await select_attr(state, root, "lib"), rebuild=rebuild)
+    assert records == packages
+    # One for the top level and one for the only group: `pythonPackages`.
+    assert len(rebuilds) == 2
 
 
 def test_an_attribute_that_is_not_a_derivation_is_skipped(packages: list[PackageRecord]) -> None:

@@ -108,6 +108,11 @@ async def _select(state: AsyncEvalState, value: AsyncValue, path: str) -> Resolv
         return None
 
 
+async def reselect(state: AsyncEvalState, target: AsyncValue, path: str) -> AsyncValue:
+    """The value at *path* of *target*, where *path* is a :attr:`Resolved.path`."""
+    return target if path == TARGET_PATH else await select_attr(state, target, path)
+
+
 async def _override(state: AsyncEvalState, value: AsyncValue, path: str) -> Resolved:
     """*path* of *value*, which the caller named, so a miss is an error."""
     try:

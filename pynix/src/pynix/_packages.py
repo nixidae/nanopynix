@@ -22,12 +22,18 @@ Hydra ships inside ``nixexprs.tar.xz``, holds 161 511 rows of binary to
 package and does answer it. Issue #256 adds that source beside this one; the
 two join on the package name.
 
-**The walk reads the top level of nixpkgs only.** It does not enter a set that
-carries ``recurseForDerivations``, such as ``python3Packages``, which is most
-of the difference between 24 571 here and 148 251 there. So a reader who
-searches for ``python3Packages.requests`` finds nothing. Issue #281 tracks it,
-and names what makes it more than a one-line change: the cost of the deeper
-walk, where to stop, and what a name that many package sets carry should draw.
+**The walk enters a set that carries ``recurseForDerivations = true``, at any
+depth, and no other set.** That is the rule ``nix search`` follows under a
+flake's ``legacyPackages`` (``search.cc:177``), and it finds the same 113 630
+records on nixpkgs. ``pkgsCross``, ``pkgsStatic`` and ``python3Packages`` carry
+no marker, so neither walk enters them. Nix keeps a ``--file`` target at the
+top level; pynix enters the sets for every target (nixidae/nixidae#320).
+
+**Each group of sets reads a fresh package set, when the caller can make one.**
+A forced set stays reachable from the fixpoint that holds it, so only a fresh
+``import nixpkgs { }`` lets the collector free a group once it is read.
+Measured on one nixpkgs: 3.45 GB at peak for 20.7 s, against 4.78 GB for
+18.4 s over one shared package set.
 """
 
 from __future__ import annotations
@@ -35,7 +41,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -49,47 +55,98 @@ from pynix._util import muted_warnings
 
 logger = structlog.get_logger("pynix.packages")
 
-#: The walk, as a Nix function of `lib`: `walk pkgs` reads every attribute in
-#: one pass, and `entry name value` reads one.
+#: The walk, as a Nix function of `lib`. `top pkgs` reads the top level: its
+#: packages, and the size of each set to enter. `group pkgs names` reads the
+#: named sets, at any depth. `entry path value` reads one attribute, and
+#: answers `{ package }`, `{ set }` with the number of names in it, or null.
+#: A path or a list of names crosses as JSON text.
 #:
 #: **Every attribute goes through `builtins.tryEval`.** nixpkgs holds packages
 #: that throw when they are evaluated at all: one that its licence forbids, one
 #: marked broken, one that no current platform builds. The walk returns one Nix
 #: list, forced in one pass, so a single such package would end the whole
 #: extraction. This is the same trap that `pynix/_options.py` documents for an
-#: option whose default only a realized system can evaluate.
+#: option whose default only a realized system can evaluate. `deepSeq` forces
+#: the record inside it, so a field that throws skips its package too.
 #:
 #: **`tryEval` does not catch every failure**, and its own documentation says
 #: so: it stops a `throw` and an `assert`, and not a missing attribute, a type
 #: error or a failed import from derivation. An overlay that names a missing
-#: input is one (nixidae/nixidae#1304). So when `walk` fails, the caller reads
-#: each attribute through `entry` and skips the ones that raise.
+#: input is one (nixidae/nixidae#1304). So when a walk fails, the caller reads
+#: each attribute through `entryAt` and skips the ones that raise.
 _COLLECT_PACKAGE_METADATA = """
 lib:
   let
-    entry = name: value:
+    record = path: value: {
+      attr = lib.concatStringsSep "." path;
+      pname = value.pname or value.name or (lib.last path);
+      version = value.version or "";
+      description = value.meta.description or null;
+      mainProgram = value.meta.mainProgram or null;
+      broken = value.meta.broken or false;
+      unfree = !(value.meta.available or true) || !(value.meta.license.free or true);
+    };
+    entry = path: value:
       let
         probed = builtins.tryEval (
-          if !(lib.isDerivation value)
-          then null
-          else {
-            attr = name;
-            pname = value.pname or value.name or name;
-            version = value.version or "";
-            description = value.meta.description or null;
-            mainProgram = value.meta.mainProgram or null;
-            broken = value.meta.broken or false;
-            unfree = !(value.meta.available or true) || !(value.meta.license.free or true);
-          }
+          if lib.isDerivation value
+          then let r = record path value; in builtins.deepSeq r { package = r; }
+          else if builtins.isAttrs value && (value.recurseForDerivations or false) == true
+          then { set = builtins.length (builtins.attrNames value); }
+          else null
         );
       in
         if probed.success then probed.value else null;
+    under = path: set: lib.concatLists (lib.mapAttrsToList (name: value:
+      let
+        here = path ++ [ name ];
+        found = entry here value;
+      in
+        if found == null then [ ]
+        else if found ? package then [ found.package ]
+        else under here value) set);
+    entries = pkgs: builtins.filter (x: x.found != null)
+      (lib.mapAttrsToList (name: value: { inherit name; found = entry [ name ] value; }) pkgs);
   in
   {
-    inherit entry;
-    walk = pkgs: builtins.filter (x: x != null) (lib.mapAttrsToList entry pkgs);
+    entryAt = pathJson: entry (builtins.fromJSON pathJson);
+    top = pkgs: let found = entries pkgs; in {
+      packages = map (x: x.found.package) (builtins.filter (x: x.found ? package) found);
+      sets = map (x: { inherit (x) name; size = x.found.set; }) (builtins.filter (x: x.found ? set) found);
+    };
+    group = pkgs: namesJson: lib.concatMap (name: under [ name ] pkgs.${name}) (builtins.fromJSON namesJson);
   }
 """
+
+#: Names per group of sets. A set larger than this is a group of its own.
+#: The peak follows the largest group, and each group costs one evaluation of
+#: the target: `haskellPackages` alone holds 19 446 names.
+_GROUP_NAMES = 10_000
+
+#: How the walk makes a fresh package set for a group: the target evaluated
+#: again, and the package set selected from it.
+Rebuild = Callable[[], Awaitable[AsyncValue]]
+
+
+@dataclass(frozen=True, slots=True)
+class _Set:
+    """A top-level set the walk enters, and how many names it holds."""
+
+    name: str
+    size: int
+
+
+def _groups(sets: Sequence[_Set]) -> list[list[str]]:
+    """*sets* in groups of about `_GROUP_NAMES` names, in their own order."""
+    groups: list[list[str]] = []
+    names = 0
+    for found in sets:
+        if not groups or names + found.size > _GROUP_NAMES:
+            groups.append([])
+            names = 0
+        groups[-1].append(found.name)
+        names += found.size
+    return groups
 
 
 @dataclass(frozen=True)
@@ -102,7 +159,8 @@ class PackageRecord:
     that the caller can see, and only those.
     """
 
-    #: The attribute path under the top level, for example `ripgrep`.
+    #: The attribute path under the top level, dotted: `ripgrep`, or
+    #: `python314Packages.requests` for a package in a set the walk enters.
     attr: str
     #: `meta.pname`, or the name when the package states no `pname`.
     pname: str
@@ -120,47 +178,101 @@ class PackageRecord:
 
 
 async def fetch_package_list(
-    state: AsyncEvalState, pkgs_value: AsyncValue, lib_value: AsyncValue
+    state: AsyncEvalState,
+    pkgs_value: AsyncValue,
+    lib_value: AsyncValue,
+    *,
+    rebuild: Rebuild | None = None,
 ) -> list[PackageRecord]:
-    """Extract every top-level package of *pkgs_value*.
+    """Extract every package of *pkgs_value*, in the sets it marks too.
 
     *lib_value* must be a nixpkgs `lib`, and ordinarily the one that
-    *pkgs_value* itself carries.
+    *pkgs_value* itself carries. *rebuild* makes a fresh package set for each
+    group of sets; without it, every group reads *pkgs_value*.
 
-    The walk runs inside the evaluator and returns one list, so this costs a
-    few round trips whatever the size of nixpkgs. When an attribute raises an
-    error that `tryEval` does not catch, the walk reads each attribute from
-    here and skips that one, where `nix search` skips it only in a flake's
-    `legacyPackages` (`search.cc:183`).
+    Each walk runs inside the evaluator and returns one list, so this costs a
+    few round trips per group whatever the size of nixpkgs. When an attribute
+    raises an error that `tryEval` does not catch, the walk reads each
+    attribute from here and skips that one, where `nix search` skips it only
+    in a flake's `legacyPackages` (`search.cc:183`).
     """
     collector = await call(await state.eval_expr(_COLLECT_PACKAGE_METADATA), lib_value)
+    entry_at = await collector.get("entryAt")
+    raw: list[JsonValue] = []
     with muted_warnings(state):
+        # The top level too, because the caller holds *pkgs_value* past the
+        # walk, and with it everything the walk forced.
+        pkgs = pkgs_value if rebuild is None else await rebuild()
         try:
-            raw = await to_python(await call(await collector.get("walk"), pkgs_value))
+            top = _object(await to_python(await call(await collector.get("top"), pkgs)))
+            raw += _list(top["packages"])
+            sets = [_parse_set(found) for found in _list(top["sets"])]
         except NixError:
-            raw = await _each_entry(state, await collector.get("entry"), pkgs_value)
-    if not isinstance(raw, list):
-        raise TypeError(f"package metadata walk must return a list, got {type(raw).__name__}")
-    records: list[PackageRecord] = []
-    for entry in cast("list[object]", raw):
-        if not isinstance(entry, dict):
-            raise TypeError(f"each package metadata entry must be an object, got {type(entry).__name__}")
-        records.append(_parse_record(cast("Mapping[str, object]", entry)))
-    return records
+            sets = await _each_entry(state, entry_at, pkgs, [], raw)
+        for names in _groups(sets):
+            pkgs = pkgs_value if rebuild is None else await rebuild()
+            try:
+                raw += _list(
+                    await to_python(
+                        await call(await collector.get("group"), pkgs, await state.make_string(json.dumps(names)))
+                    )
+                )
+            except NixError:
+                for name in names:
+                    await _each_entry(state, entry_at, await pkgs.get(name), [name], raw)
+    return [_parse_record(_object(entry)) for entry in raw]
 
 
-async def _each_entry(state: AsyncEvalState, entry: AsyncValue, pkgs_value: AsyncValue) -> list[JsonValue]:
-    """What `walk` returns, one attribute at a time, without the attributes that raise."""
-    entries: list[JsonValue] = []
-    for name in await pkgs_value.names():
+async def _each_entry(
+    state: AsyncEvalState, entry_at: AsyncValue, value: AsyncValue, path: list[str], packages: list[JsonValue]
+) -> list[_Set]:
+    """Add each package under *value* to *packages*, without the attributes
+    that raise, and return the sets at the top that a group should read.
+
+    Below the top level a set is entered here at once, so the list is empty.
+    """
+    sets: list[_Set] = []
+    for name in await value.names():
+        here = [*path, name]
         try:
-            probed = await to_python(await call(entry, await state.make_string(name), await pkgs_value.get(name)))
+            child = await value.get(name)
+            probed = await to_python(await call(entry_at, await state.make_string(json.dumps(here)), child))
         except NixError as exc:
-            logger.info("skipped an attribute that fails to evaluate", attr=name, error=exc.message)
+            logger.info("skipped an attribute that fails to evaluate", attr=".".join(here), error=exc.message)
             continue
-        if probed is not None:
-            entries.append(probed)
-    return entries
+        if probed is None:
+            continue
+        found = _object(probed)
+        if "package" in found:
+            packages.append(found["package"])
+        elif not path:
+            sets.append(_Set(name=name, size=_count(found["set"])))
+        else:
+            await _each_entry(state, entry_at, child, here, packages)
+    return sets
+
+
+def _object(value: object) -> Mapping[str, JsonValue]:
+    if not isinstance(value, dict):
+        raise TypeError(f"the package walk must return an object here, got {type(value).__name__}")
+    return cast("Mapping[str, JsonValue]", value)
+
+
+def _list(value: object) -> list[JsonValue]:
+    if not isinstance(value, list):
+        raise TypeError(f"the package walk must return a list here, got {type(value).__name__}")
+    return cast("list[JsonValue]", value)
+
+
+def _count(value: object) -> int:
+    if not isinstance(value, int):
+        raise TypeError(f"the package walk must count with an integer, got {type(value).__name__}")
+    return value
+
+
+def _parse_set(value: object) -> _Set:
+    found = _object(value)
+    return _Set(name=str(found["name"]), size=_count(found["size"]))
 
 
 def _record_fields(record: PackageRecord) -> dict[str, object]:
@@ -200,9 +312,10 @@ def _parse_record(entry: Mapping[str, object]) -> PackageRecord:
     )
 
 
-#: Bump this when `PackageRecord` gains or loses a field. A cache written by an
-#: older `pynix` is then ignored rather than read into the wrong shape.
-_CACHE_VERSION = 1
+#: Bump this when `PackageRecord` gains or loses a field, or the walk reads
+#: other packages. A cache written by an older `pynix` is then ignored rather
+#: than read into the wrong shape or answered with the old set.
+_CACHE_VERSION = 2
 
 
 def cache_path(identity: str) -> Path:
@@ -344,6 +457,7 @@ async def indexed_packages(
     lib_value: AsyncValue,
     *,
     refresh: bool = False,
+    rebuild: Rebuild | None = None,
 ) -> list[PackageRecord]:
     """Return the packages of *pkgs_value*, from the cache when there is one.
 
@@ -356,6 +470,6 @@ async def indexed_packages(
         cached = load_cache(path)
         if cached is not None:
             return cached
-    records = await fetch_package_list(state, pkgs_value, lib_value)
+    records = await fetch_package_list(state, pkgs_value, lib_value, rebuild=rebuild)
     save_cache(path, identity, records)
     return records

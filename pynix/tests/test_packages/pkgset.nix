@@ -81,5 +81,28 @@ in
     some = "attrset";
   };
 
+  # A package set the walk enters, as nixpkgs marks `python314Packages`, with
+  # a marked set inside it and a package that throws.
+  pythonPackages = lib.recurseIntoAttrs {
+    requests =
+      pkgs.runCommand "python3.14-requests-2.32.5" {
+        meta.description = "HTTP library for Python";
+      } "touch $out"
+      // {
+        pname = "requests";
+        version = "2.32.5";
+      };
+    nested = lib.recurseIntoAttrs {
+      deep = pkgs.runCommand "deep-1.0" { } "touch $out";
+    };
+    throwing = throw "this package cannot be evaluated";
+  };
+
+  # A set with no `recurseForDerivations`, as `python3Packages` is: the walk
+  # does not enter it, and neither does `nix search`.
+  hiddenPackages = {
+    hidden = pkgs.runCommand "hidden-1.0" { } "touch $out";
+  };
+
   inherit (default.internal) pkgs;
 }
