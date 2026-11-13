@@ -45,7 +45,7 @@ import inspect
 import os
 import types
 import typing
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, override
@@ -409,8 +409,18 @@ class _Once(argparse.Action):
         setattr(namespace, self.dest, values)
 
 
-def parse_args(parser: argparse.ArgumentParser, argv: Sequence[str] | None = None) -> argparse.Namespace:
+def parse_args(
+    parser: argparse.ArgumentParser,
+    argv: Sequence[str] | None = None,
+    *,
+    extend: Callable[[Sequence[argparse.ArgumentParser]], None] | None = None,
+) -> argparse.Namespace:
     """`parser.parse_args(argv)`, and a `--` after a remainder option reaches it.
+
+    *extend* adds options that cost too much to declare on every start: it
+    runs only when a first parse leaves an option over, gets the parsers of the
+    commands that the parse reached, and the line is parsed again. pynix adds
+    Nix's per-setting flags so, and a start that names none never loads them.
 
     argparse stops an option's `REMAINDER` at `--`, by design, and calls the
     rest unrecognized. So `--command git log -- file` would fail. The rest is
@@ -419,6 +429,10 @@ def parse_args(parser: argparse.ArgumentParser, argv: Sequence[str] | None = Non
     `--`: anything else is an unknown argument from before the remainder, and
     fails as `parse_args` fails.
     """
+    if extend is not None and any(
+        extra.startswith("--") and extra != "--" for extra in parser.parse_known_args(argv)[1]
+    ):
+        extend(list(built_leaf_parsers(parser)))
     namespace, extras = parser.parse_known_args(argv)
     if extras:
         field = getattr(namespace, _REMAINDER_FIELD, None)
@@ -426,6 +440,21 @@ def parse_args(parser: argparse.ArgumentParser, argv: Sequence[str] | None = Non
             parser.error(gettext.gettext("unrecognized arguments: %s") % " ".join(extras))
         getattr(namespace, field).extend(extras)
     return namespace
+
+
+def built_leaf_parsers(parser: argparse.ArgumentParser) -> Iterator[argparse.ArgumentParser]:
+    """Each parser under *parser*, itself included, that runs a command and is built.
+
+    A subparser is built when a parse reaches it; the others stay placeholders.
+    """
+    if parser.get_default("_command") is not None:
+        yield parser
+    for action in parser._actions:  # noqa: SLF001 -- argparse names no public way to list the actions of a parser
+        if isinstance(action, _LazySubParsersAction):
+            for name in list(action._lazy_map):  # noqa: SLF001 -- this module's own class
+                child = action._lazy_map.get_raw(name)  # noqa: SLF001 -- see above
+                if child is not None:
+                    yield from built_leaf_parsers(child)
 
 
 def _positional_kwargs(spec: Spec, *, repeated: bool) -> dict[str, Any]:

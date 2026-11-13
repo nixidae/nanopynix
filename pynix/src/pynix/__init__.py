@@ -20,6 +20,7 @@ deferimport.install("deny=rapidfuzz")
 from libpynix import Command, build_parser, complete, dispatch, group, parse_args
 from pynix import _impl
 from pynix._script import ShebangError, command_base_dir_of, expand_script
+from pynix._setting_flags import add_setting_flags
 from pynix._settings import PynixCommand, running
 from pynix._version import version_document, version_line
 from pynix.build import Build
@@ -125,7 +126,7 @@ def parse(argv: Sequence[str]) -> Command:
     the test sees.
     """
     parser = root_parser()
-    return _command_of(parser, parse_args(parser, list(argv)))
+    return _command_of(parser, parse_args(parser, list(argv), extend=add_setting_flags))
 
 
 def main() -> None:
@@ -141,7 +142,7 @@ def main() -> None:
         # Nix's words and exit status, before a logger exists (`args.cc:178`).
         sys.exit(f"error: {exc}")
     with command_base_dir_of(script.base_dir):
-        command = _command_of(parser, parse_args(parser, script.argv))
+        command = _command_of(parser, parse_args(parser, script.argv, extend=add_setting_flags))
         _impl.main.prepare(command.verbosity if isinstance(command, PynixCommand) else None)
         with running(command):
             _impl.main.run(command.run)

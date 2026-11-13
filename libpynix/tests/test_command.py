@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import gettext
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -500,3 +501,19 @@ def test_a_hidden_option_parses_and_is_not_in_the_help() -> None:
     assert command.habit is True
     assert "--habit" not in build_parser(Steps).format_help()
     assert "--up" in build_parser(Steps).format_help()
+
+
+def test_extend_runs_only_when_an_option_is_left_over() -> None:
+    calls: list[int] = []
+
+    def extend(parsers: Sequence[argparse.ArgumentParser]) -> None:
+        calls.append(len(parsers))
+        for parser in parsers:
+            parser.add_argument("--late", dest="late", action="store_true", help=argparse.SUPPRESS)
+
+    parser = build_parser(Leaf)
+    parse_args(parser, ["--loud"], extend=extend)
+    assert calls == []
+    namespace = parse_args(parser, ["--late", "--loud"], extend=extend)
+    assert calls == [1]
+    assert namespace.late is True
