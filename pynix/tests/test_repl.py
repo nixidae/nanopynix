@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import io
 import signal
 from collections import deque
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +46,16 @@ from pynix._impl.repl import (
 from pynix._verbosity import VerbosityInput, verbosity_of
 from pynix.repl import Repl
 from pynix.target import EvaluationTarget
+from support.ansi import strip_ansi
+
+
+def _collect(output: list[Any]) -> Callable[..., None]:
+    """A `print_formatted_text` that keeps what it prints, on stdout and stderr alike."""
+
+    def collect(text: object, **_: object) -> None:
+        output.append(text)
+
+    return collect
 
 
 class _Prompt:
@@ -274,7 +286,7 @@ class _CompletionRepl(_ReplEngine):
 
 async def test_repl_loop_keeps_bindings_and_prints_expression_values(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     repl = _Repl()
 
     await _run_repl_loop(repl, _Prompt(["answer = 42", "{ inherit answer; }", ":quit"]))
@@ -288,7 +300,7 @@ async def test_repl_loop_keeps_bindings_and_prints_expression_values(monkeypatch
 
 async def test_repl_load_command_uses_repl_load_file(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     repl = _Repl()
 
     await _run_repl_loop(repl, _Prompt([":load .", ":quit"]))
@@ -301,7 +313,7 @@ async def test_repl_loads_file_target_into_initial_scope(monkeypatch: Any, tmp_p
     (tmp_path / "default.nix").write_text("{ answer = 42; }\n")
     monkeypatch.chdir(tmp_path)
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     repl = _Repl()
 
     names = await _load_initial_target(repl, EvaluationTarget(file="default.nix", attr=None, flake=None))
@@ -313,7 +325,7 @@ async def test_repl_loads_file_target_into_initial_scope(monkeypatch: Any, tmp_p
 
 async def test_repl_last_loaded_includes_initial_target(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     repl = _Repl()
 
     await _run_repl_loop(repl, _Prompt([":ll", ":quit"]), initial_loaded=["flake", "pkgs"])
@@ -323,7 +335,7 @@ async def test_repl_last_loaded_includes_initial_target(monkeypatch: Any) -> Non
 
 async def test_repl_verbosity_shows_and_updates_nix_log_level(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     repl = _Repl()
 
     await _run_repl_loop(repl, _Prompt([":verbosity", ":verbosity debug", ":verbosity", ":quit"]))
@@ -333,7 +345,7 @@ async def test_repl_verbosity_shows_and_updates_nix_log_level(monkeypatch: Any) 
 
 def test_repl_preserves_nix_error_ansi(monkeypatch: Any) -> None:
     output: list[object] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
 
     error = NixError("\x1b[31;1merror:\x1b[0m undefined variable 'll'")
     _print_error(error)
@@ -354,7 +366,7 @@ def test_editor_argv_only_includes_line_for_line_aware_editors(monkeypatch: Any)
 async def test_repl_edit_reloads_initial_sources(monkeypatch: Any) -> None:
     output: list[str] = []
     edited: list[_EditValue] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
 
     async def edit(_repl: _Repl, value: _EditValue, line_editors: tuple[str, ...]) -> int:
         edited.append(value)
@@ -381,7 +393,7 @@ async def test_repl_edit_reloads_initial_sources(monkeypatch: Any) -> None:
 
 async def test_repl_run_prefers_meta_main_program(tmp_path: Path, monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     out = tmp_path / "out"
     program = out / "bin" / "actual-program"
     program.parent.mkdir(parents=True)
@@ -397,7 +409,7 @@ async def test_repl_run_prefers_meta_main_program(tmp_path: Path, monkeypatch: A
 
 async def test_repl_run_command_runs_evaluated_derivation(tmp_path: Path, monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     out = tmp_path / "out"
     program = out / "bin" / "run-me"
     program.parent.mkdir(parents=True)
@@ -415,7 +427,7 @@ async def test_repl_run_command_runs_evaluated_derivation(tmp_path: Path, monkey
 
 async def test_repl_exec_runs_realised_argv_list(tmp_path: Path, monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     marker = tmp_path / "exec-ran"
     repl = _Repl()
     repl.value = _CommandValue(argv=["/bin/sh", "-c", f"echo exec > {marker}"])
@@ -428,7 +440,7 @@ async def test_repl_exec_runs_realised_argv_list(tmp_path: Path, monkeypatch: An
 
 async def test_repl_shell_runs_realised_string(tmp_path: Path, monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     marker = tmp_path / "shell-ran"
     repl = _Repl()
     repl.value = _CommandValue(command=f"echo shell > {marker}")
@@ -441,7 +453,7 @@ async def test_repl_shell_runs_realised_string(tmp_path: Path, monkeypatch: Any)
 
 async def test_repl_run_warns_when_using_pname(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     value = _RunValue({"pname": "fallback-program"}, {})
 
     assert await _main_program(_Repl(), value) == (
@@ -623,7 +635,7 @@ def test_nix_input_returns_argument_and_offset_for_expression_command() -> None:
 
 async def test_repl_loop_returns_quietly_on_eof(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
 
     await _run_repl_loop(_Repl(), _EOFPrompt())
 
@@ -632,7 +644,7 @@ async def test_repl_loop_returns_quietly_on_eof(monkeypatch: Any) -> None:
 
 async def test_repl_loop_recovers_from_keyboard_interrupt(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
 
     await _run_repl_loop(_Repl(), _InterruptOncePrompt())
 
@@ -641,7 +653,7 @@ async def test_repl_loop_recovers_from_keyboard_interrupt(monkeypatch: Any) -> N
 
 async def test_repl_loop_skips_blank_lines(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     repl = _Repl()
 
     await _run_repl_loop(repl, _Prompt(["   ", ":quit"]))
@@ -652,7 +664,7 @@ async def test_repl_loop_skips_blank_lines(monkeypatch: Any) -> None:
 
 async def test_repl_loop_help_command_reprints_help(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
 
     await _run_repl_loop(_Repl(), _Prompt([":help", ":quit"]))
 
@@ -661,7 +673,7 @@ async def test_repl_loop_help_command_reprints_help(monkeypatch: Any) -> None:
 
 async def test_repl_loop_unknown_command_reports_error(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
 
     await _run_repl_loop(_Repl(), _Prompt([":bogus", ":quit"]))
 
@@ -670,7 +682,7 @@ async def test_repl_loop_unknown_command_reports_error(monkeypatch: Any) -> None
 
 async def test_repl_loop_print_command_evaluates_expression(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
 
     await _run_repl_loop(_Repl(), _Prompt([":print 1 + 1", ":quit"]))
 
@@ -679,7 +691,7 @@ async def test_repl_loop_print_command_evaluates_expression(monkeypatch: Any) ->
 
 async def test_repl_loop_type_command_shows_nix_type(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     repl = _Repl()
     repl.value = _TypedValue()
 
@@ -690,7 +702,7 @@ async def test_repl_loop_type_command_shows_nix_type(monkeypatch: Any) -> None:
 
 async def test_repl_loop_build_command_prints_outputs(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     repl = _Repl()
     repl.value = _RunValue({}, {"out": "/nix/store/xxx-out"})
 
@@ -701,7 +713,7 @@ async def test_repl_loop_build_command_prints_outputs(monkeypatch: Any) -> None:
 
 async def test_repl_loop_add_command_adds_attrs(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
 
     await _run_repl_loop(_Repl(), _Prompt([":add pkgs", ":quit"]))
 
@@ -710,7 +722,7 @@ async def test_repl_loop_add_command_adds_attrs(monkeypatch: Any) -> None:
 
 async def test_repl_loop_load_flake_command_uses_repl_eval_flake(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     repl = _Repl()
 
     await _run_repl_loop(repl, _Prompt([":load-flake .#hello", ":quit"]))
@@ -721,7 +733,7 @@ async def test_repl_loop_load_flake_command_uses_repl_eval_flake(monkeypatch: An
 
 async def test_repl_loop_reload_command_reruns_loaded_sources(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     repl = _Repl()
 
     await _run_repl_loop(repl, _Prompt([":reload", ":quit"]), initial_sources=[(":load", "default.nix")])
@@ -733,7 +745,7 @@ async def test_repl_loop_reload_command_reruns_loaded_sources(monkeypatch: Any) 
 
 async def test_repl_loop_verbosity_reports_invalid_level(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
 
     await _run_repl_loop(_Repl(), _Prompt([":verbosity bogus-level", ":quit"]))
 
@@ -745,7 +757,7 @@ async def test_repl_loop_verbosity_reports_invalid_level(monkeypatch: Any) -> No
 async def test_repl_loop_reports_nix_error_from_a_line_expression(monkeypatch: Any) -> None:
     """The loop's except clause must also fire for plain-expression evaluation, not just commands."""
     output: list[object] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     repl = _Repl()
     repl.raise_on_line = "boom"
 
@@ -758,7 +770,7 @@ async def test_repl_loop_reports_nix_error_from_a_line_expression(monkeypatch: A
 def test_print_error_formats_repl_run_error_as_plain_text(monkeypatch: Any) -> None:
     """Unlike NixError, a ReplRunError has no ANSI diagnostics to preserve."""
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
 
     _print_error(ReplRunError("boom"))
 
@@ -776,7 +788,7 @@ async def test_load_initial_target_returns_empty_when_no_file_or_flake_given() -
 
 async def test_run_derivation_prints_main_program_fallback_warning(tmp_path: Path, monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     out = tmp_path / "out"
     program = out / "bin" / "fallback-program"
     program.parent.mkdir(parents=True)
@@ -799,7 +811,7 @@ async def test_run_derivation_reports_exec_failure(tmp_path: Path) -> None:
 
 async def test_run_derivation_warns_on_nonzero_exit(tmp_path: Path, monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     out = tmp_path / "out"
     program = out / "bin" / "failing"
     program.parent.mkdir(parents=True)
@@ -848,7 +860,7 @@ async def test_edit_reports_launch_failure(monkeypatch: Any) -> None:
 
 async def test_edit_warns_on_nonzero_exit(tmp_path: Path, monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     editor = tmp_path / "editor.sh"
     editor.write_text("#!/bin/sh\nexit 3\n")
     editor.chmod(0o755)
@@ -877,7 +889,7 @@ async def test_exec_argv_reports_launch_failure() -> None:
 
 async def test_exec_argv_warns_on_nonzero_exit(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
 
     return_code = await _exec_argv(["/bin/sh", "-c", "exit 7"])
 
@@ -915,7 +927,7 @@ async def test_shell_reports_launch_failure(monkeypatch: Any) -> None:
 
 async def test_shell_warns_on_nonzero_exit(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
 
     return_code = await _shell("exit 5")
 
@@ -1006,8 +1018,9 @@ async def test_repl_run_executes_a_full_interactive_session(
         return _ScriptedPromptSession(["1 + 1", ":quit"], **kwargs)
 
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     monkeypatch.setattr("pynix._impl.repl.PromptSession", _fake_prompt_session)
+    monkeypatch.setattr("pynix._impl.repl._interactive", lambda: True)
 
     cmd = parse(["repl", *shared_nix_environment.pynix_store_args()])
     await cmd.run()
@@ -1019,7 +1032,7 @@ async def test_repl_run_executes_a_full_interactive_session(
 async def test_repl_run_rejects_mutually_exclusive_file_and_flake(tmp_path: Path, monkeypatch: Any) -> None:
     """Exercises Repl.run()'s own target.validate() error handling before any store is opened."""
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     nix_file = tmp_path / "test.nix"
     nix_file.write_text("{}")
 
@@ -1041,8 +1054,9 @@ async def test_repl_run_loads_a_file_target_into_initial_scope(
         return _ScriptedPromptSession([":quit"], **kwargs)
 
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     monkeypatch.setattr("pynix._impl.repl.PromptSession", _fake_prompt_session)
+    monkeypatch.setattr("pynix._impl.repl._interactive", lambda: True)
     nix_file = tmp_path / "test.nix"
     nix_file.write_text("{ answer = 42; }")
 
@@ -1065,8 +1079,9 @@ async def test_repl_calls_every_loaded_file_with_the_arguments(
         return _ScriptedPromptSession(["got", "number", f":load {other}", "again", ":quit"], **kwargs)
 
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     monkeypatch.setattr("pynix._impl.repl.PromptSession", _fake_prompt_session)
+    monkeypatch.setattr("pynix._impl.repl._interactive", lambda: True)
     nix_file = tmp_path / "test.nix"
     nix_file.write_text('{ c, n, unused ? throw "unused" }: { got = c; number = n; }')
 
@@ -1107,8 +1122,9 @@ async def test_repl_run_loads_a_flake_target_into_initial_scope(
         return _ScriptedPromptSession([":quit"], **kwargs)
 
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     monkeypatch.setattr("pynix._impl.repl.PromptSession", _fake_prompt_session)
+    monkeypatch.setattr("pynix._impl.repl._interactive", lambda: True)
 
     cmd = parse(["repl", "--flake", str(git_flake), *shared_nix_environment.pynix_store_args()])
     await cmd.run()
@@ -1130,8 +1146,9 @@ async def test_repl_run_reports_missing_attr_in_initial_target(
         return _ScriptedPromptSession([":quit"], **kwargs)
 
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     monkeypatch.setattr("pynix._impl.repl.PromptSession", _fake_prompt_session)
+    monkeypatch.setattr("pynix._impl.repl._interactive", lambda: True)
     nix_file = tmp_path / "test.nix"
     nix_file.write_text("{ answer = 42; }")
 
@@ -1177,7 +1194,7 @@ async def test_repl_loop_returns_to_the_prompt_when_ctrl_c_stops_an_evaluation(
     the evaluator thread ran on unwatched.
     """
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     repl = _HangingRepl()
 
     with anyio.fail_after(10):
@@ -1222,7 +1239,7 @@ async def test_ctrl_c_stops_a_build_and_returns_to_the_prompt(
     wakes the build loop (nixidae/nixidae#1058).
     """
     output: list[object] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     spin = "while :; do echo tick; i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done; done"
     build = (
         f'derivation {{ name = "repl-interrupt-{tmp_path.name}"; system = builtins.currentSystem; '
@@ -1272,7 +1289,7 @@ def _doc_text(printed: object) -> str:
 
 async def test_repl_doc_builtin(monkeypatch: Any) -> None:
     output: list[object] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     repl = _Repl()
     repl.value = _DocValue(_ValueDoc(name="add", args=("e1", "e2"), doc="Return the sum of the numbers e1 and e2."))
 
@@ -1286,7 +1303,7 @@ async def test_repl_doc_builtin(monkeypatch: Any) -> None:
 
 async def test_repl_doc_lambda(monkeypatch: Any) -> None:
     output: list[object] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     repl = _Repl()
     repl.value = _DocValue(_ValueDoc(name=None, args=(), doc="Function `f`\n  … defined at /tmp/f.nix:1\n\nAdds one."))
 
@@ -1301,7 +1318,7 @@ async def test_repl_doc_lambda(monkeypatch: Any) -> None:
 
 async def test_repl_doc_attr_selection(monkeypatch: Any) -> None:
     output: list[object] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     repl = _Repl()
     repl.value = _AttrDocValue(_AttrDoc(path="/tmp/pkgs.nix", line=42, doc="Hello package."))
 
@@ -1317,7 +1334,7 @@ async def test_repl_doc_attr_selection(monkeypatch: Any) -> None:
 
 async def test_repl_doc_attr_selection_no_doc(monkeypatch: Any) -> None:
     output: list[object] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     repl = _Repl()
     repl.value = _AttrDocValue(_AttrDoc(path="/tmp/pkgs.nix", line=42, doc=None))
 
@@ -1333,7 +1350,7 @@ async def test_repl_doc_attr_selection_no_doc(monkeypatch: Any) -> None:
 
 async def test_repl_doc_value_without_doc_prints_error(monkeypatch: Any) -> None:
     output: list[str] = []
-    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", output.append)
+    monkeypatch.setattr("pynix._impl.repl.print_formatted_text", _collect(output))
     repl = _Repl()
     repl.value = _DocValue(None)
 
@@ -1346,3 +1363,23 @@ async def test_repl_doc_value_without_doc_prints_error(monkeypatch: Any) -> None
 
 def test_repl_help_includes_doc_command() -> None:
     assert ":d, :doc <expr>" in _HELP
+
+
+async def test_a_piped_repl_writes_results_to_stdout_and_notes_to_stderr(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    monkeypatch: Any,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``echo expr | nix repl``: Nix writes the banner, "Added", warnings and errors to stderr."""
+    nix_file = tmp_path / "test.nix"
+    await anyio.Path(nix_file).write_text("{ answer = 42; }")
+    monkeypatch.setattr("sys.stdin", io.StringIO('answer + 1\nbuiltins.warn "careful" 2\nnope\n'))
+
+    await parse(["repl", "--file", str(nix_file), *shared_nix_environment.pynix_store_args()]).run()
+
+    captured = capsys.readouterr()
+    assert captured.out.split() == ["43", "2"]
+    assert "Added 1 variables: answer" in captured.err
+    assert "careful" in captured.err
+    assert "undefined variable 'nope'" in strip_ansi(captured.err)

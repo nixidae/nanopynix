@@ -28,11 +28,13 @@ import huggorm
 from huggorm import AsyncEvalState, AsyncRepl, AsyncSession, AsyncStore, AsyncValue
 from huggorm.errors import NixError
 from prompt_toolkit import PromptSession
+from prompt_toolkit.application import create_app_session
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import ANSI, StyleAndTextTuples
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.lexers import Lexer
+from prompt_toolkit.output import create_output
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import print_formatted_text
 from prompt_toolkit.styles import Style
@@ -375,7 +377,7 @@ class _LogForwarder:
     async def run(self, *, task_status: anyio.abc.TaskStatus[None] = anyio.TASK_STATUS_IGNORED) -> None:
         started = False
         while True:
-            async with forward_state_logs(self._session, self._state, verbosity=self.level, log_file=sys.stdout):
+            async with forward_state_logs(self._session, self._state, verbosity=self.level, log_file=sys.stderr):
                 self._ready.set()
                 if not started:
                     started = True
@@ -532,7 +534,7 @@ class _ReplState:
 
     async def add_attrs(self, value: AsyncValue) -> list[str]:
         self.last_loaded = await self.repl.add_attrs(value)
-        print_formatted_text(f"Added {len(self.last_loaded)} variables: {' '.join(self.last_loaded)}")
+        _note(f"Added {len(self.last_loaded)} variables: {' '.join(self.last_loaded)}")
         return self.last_loaded
 
     async def evaluate(self, expr: str) -> AsyncValue:
@@ -641,7 +643,7 @@ async def _cmd_verbosity(state: _ReplState, argument: str) -> None:
     try:
         verbosity = await (state.repl.get_verbosity() if not argument else state.repl.set_verbosity(argument))
     except (TypeError, ValueError) as exc:
-        print_formatted_text(f"error: {exc}")
+        _note(f"error: {exc}")
     else:
         print_formatted_text(f"{verbosity.name.lower()} ({int(verbosity)})")
 
@@ -692,7 +694,7 @@ async def _run_repl_loop(
         last_loaded=list(initial_loaded or []),
     )
 
-    print_formatted_text(_HELP)
+    _note(_HELP)
     while True:
         try:
             line = await prompt.prompt_async(_PROMPT)
@@ -731,7 +733,7 @@ async def _dispatch(
     if handler is not None:
         await handler(state, argument)
     elif command.startswith(":"):
-        print_formatted_text(f"unknown command: {command}; try :help")
+        _note(f"unknown command: {command}; try :help")
     else:
         value = await repl.line(line)
         if value is not None:
@@ -777,12 +779,35 @@ def _interruptible() -> Generator[anyio.CancelScope]:
             signal.signal(signal.SIGINT, signal.default_int_handler)
 
 
+def _note(text: str | ANSI) -> None:
+    """A message beside the results: stderr, as Nix's repl writes it, so stdout holds results alone."""
+    print_formatted_text(text, file=sys.stderr)
+
+
+def _interactive() -> bool:
+    """Whether a person types at the repl, and not a pipe or a file."""
+    return sys.stdin.isatty()
+
+
+class _PipedInput:
+    """Lines from a stdin that is not a terminal: no prompt, no line editor, no history."""
+
+    def __init__(self) -> None:
+        self._stdin = anyio.wrap_file(sys.stdin)
+
+    async def prompt_async(self, _message: str) -> str:
+        line = await self._stdin.readline()
+        if not line:
+            raise EOFError
+        return line.removesuffix("\n")
+
+
 def _print_error(exc: NixError | ReplRunError) -> None:
     """Print a REPL error, preserving Nix's ANSI diagnostics."""
     if isinstance(exc, NixError):
-        print_formatted_text(ANSI(exc.colored))
+        _note(ANSI(exc.colored))
     else:
-        print_formatted_text(f"error: {exc}")
+        _note(f"error: {exc}")
 
 
 async def _load_initial_target(repl: _ReplEngine, target: EvaluationTarget) -> list[str]:
@@ -790,7 +815,7 @@ async def _load_initial_target(repl: _ReplEngine, target: EvaluationTarget) -> l
     if target.file is None and target.flake is None:
         return []
     names = await repl.add_attrs(await repl.load_target(target))
-    print_formatted_text(f"Added {len(names)} variables: {' '.join(names)}")
+    _note(f"Added {len(names)} variables: {' '.join(names)}")
     return names
 
 
@@ -802,7 +827,7 @@ async def _run_derivation(repl: _ReplEngine, value: AsyncValue) -> int:
     """Build *value* and run it using Nix's derivation executable convention."""
     main_program, warning = await _main_program(repl, value)
     if warning is not None:
-        print_formatted_text(f"warning: {warning}")
+        _note(f"warning: {warning}")
 
     outputs = await repl.build(value)
     out_path = _primary_output(outputs)
@@ -813,7 +838,7 @@ async def _run_derivation(repl: _ReplEngine, value: AsyncValue) -> int:
         raise ReplRunError(f"cannot run {program}: {exc.strerror}") from exc
     return_code = await process.wait()
     if return_code != 0:
-        print_formatted_text(f"warning: {program} exited with status {return_code}")
+        _note(f"warning: {program} exited with status {return_code}")
     return return_code
 
 
@@ -849,7 +874,7 @@ async def _edit(repl: _ReplEngine, value: AsyncValue, line_editors: tuple[str, .
         raise ReplRunError(f"cannot start editor {argv[0]!r}: {exc.strerror}") from exc
     return_code = await process.wait()
     if return_code != 0:
-        print_formatted_text(f"warning: editor exited with status {return_code}")
+        _note(f"warning: editor exited with status {return_code}")
     return return_code
 
 
@@ -863,7 +888,7 @@ async def _exec_argv(argv: list[str]) -> int:
         raise ReplRunError(f"cannot run {argv[0]!r}: {exc.strerror}") from exc
     return_code = await process.wait()
     if return_code != 0:
-        print_formatted_text(f"warning: {argv[0]} exited with status {return_code}")
+        _note(f"warning: {argv[0]} exited with status {return_code}")
     return return_code
 
 
@@ -884,7 +909,7 @@ async def _shell(command: str) -> int:
         raise ReplRunError(f"cannot start shell: {exc.strerror}") from exc
     return_code = await process.wait()
     if return_code != 0:
-        print_formatted_text(f"warning: shell exited with status {return_code}")
+        _note(f"warning: shell exited with status {return_code}")
     return return_code
 
 
@@ -938,7 +963,7 @@ async def run_repl(command: Repl) -> None:
     try:
         target.validate()
     except EvaluationTargetError as exc:
-        print_formatted_text(f"error: {exc}")
+        _note(f"error: {exc}")
         raise SystemExit(1) from exc
 
     apply_nix_settings()
@@ -949,21 +974,28 @@ async def run_repl(command: Repl) -> None:
     async with huggorm.AsyncSession(command.store) as session:
         store = session.store()
         state = session.eval(store)
-        with patch_stdout():
+        # `patch_stdout` sends stderr to the terminal's output, which is stdout: only a terminal wants it.
+        # A pipe gets an output of its own on the `sys.stdout` of now: prompt_toolkit keeps the first one it made.
+        interactive = _interactive()
+        with patch_stdout() if interactive else create_app_session(output=create_output(sys.stdout)):
             async with _forwarding(session, state) as logs:
                 auto_args = await _evaluate.auto_arg_set(state, await target.arguments.resolve())
                 repl = _ReplEngine(store, state, await state.repl(), logs, auto_args)
-                prompt: PromptSession[str] = PromptSession(
-                    completer=_ReplCompleter(repl),
-                    complete_while_typing=True,
-                    history=_repl_history(),
-                    lexer=_NixLexer(),
-                    style=_REPL_STYLE,
+                prompt: PromptSession[str] | _PipedInput = (
+                    PromptSession(
+                        completer=_ReplCompleter(repl),
+                        complete_while_typing=True,
+                        history=_repl_history(),
+                        lexer=_NixLexer(),
+                        style=_REPL_STYLE,
+                    )
+                    if interactive
+                    else _PipedInput()
                 )
                 try:
                     initial_loaded = await _load_initial_target(repl, target)
                 except EvaluationTargetError as exc:
-                    print_formatted_text(f"error: {exc}")
+                    _note(f"error: {exc}")
                     raise SystemExit(1) from exc
                 initial_sources: list[tuple[str, str]] = []
                 if target.file is not None:
