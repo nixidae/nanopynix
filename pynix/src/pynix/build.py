@@ -130,6 +130,7 @@ class Build(ConfiguredCommand):
         False,
         help="Do not create symlinks to the build results. pynix creates none unless --out-link names a path, "
         "so this changes nothing; it is here for the commands written for nix build.",
+        hidden=True,
     )
 
     print_out_paths: bool = opt(

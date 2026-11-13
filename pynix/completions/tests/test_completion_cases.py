@@ -87,7 +87,6 @@ BUILD_OPTIONS = frozenset(
         "--linux-builder-guest",
         "--namespaced",
         "--no-copy-back",
-        "--no-link",
         "--no-print-build-logs",
         "--nom",
         "--option",
