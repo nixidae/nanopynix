@@ -408,7 +408,7 @@ async def run_print_dev_env(command: PrintDevEnv) -> None:
 
 async def run_develop(command: Develop) -> None:
     """The body of :meth:`pynix.develop.Develop.run`."""
-    words = command.command
+    words = command.words
     # Only an interactive shell needs one. develop.cc:688 appends its
     # `SHELL=` line after the `exec` of a command, where nothing runs it, so
     # resolving a shell for a command would cost a nixpkgs evaluation and

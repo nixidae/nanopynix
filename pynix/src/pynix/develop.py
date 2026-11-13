@@ -11,11 +11,12 @@ The first four steps are one call,
 three supported Nix versions disagree about how a derivation is written. The
 last two are here. :mod:`pynix._dev_env` turns the JSON back into bash.
 
-``develop`` takes its command after ``--``, and not from a ``--command``
-option. argparse treats everything after the first ``--`` as a positional, so
-``pynix develop -f . -- make -j4`` passes ``-j4`` through untouched. A pipeline
-belongs inside the command, as ``-- bash -c 'make | less'``, exactly as with
-``nix develop --command``.
+``develop`` documents its command after ``--``. argparse treats everything
+after the first ``--`` as a positional, so ``pynix develop -f . -- make -j4``
+passes ``-j4`` through untouched. A pipeline belongs inside the command, as
+``-- bash -c 'make | less'``, exactly as with ``nix develop --command``.
+Nix's ``--command``/``-c`` also works, hidden: agents type it from habit
+(nixidae/nixidae#1320 has the rule for such spellings).
 
 **The tail is an ordinary positional now.** clypi kept it on the *class* and
 offered no public way to clear it, so `pynix._impl.develop.take_unparsed`
@@ -118,6 +119,28 @@ class Develop(ConfiguredCommand):
 
     #: Everything after ``--``. Empty for an interactive shell.
     command: list[str] = pos(help="Command to run in the environment, after --. Omit for an interactive bash.")
+
+    #: Nix's spelling of the same thing (``develop.cc:520``). The trailing
+    #: underscore keeps the field apart from the positional; the flag is
+    #: ``--command``.
+    command_: list[str] = opt(
+        short="c",
+        remainder=True,
+        hidden=True,
+        help="Command and arguments to run, instead of an interactive bash. Takes every argument after it.",
+    )
+
+    @property
+    def words(self) -> list[str]:
+        """The command to run, from either spelling.
+
+        argparse ends ``--command`` at a ``--`` and gives the words after it
+        to the positional, which is still empty then. So both fields hold
+        words only for ``--command A -- B``, and Nix runs ``A -- B``.
+        """
+        if self.command_ and self.command:
+            return [*self.command_, "--", *self.command]
+        return self.command_ or self.command
 
     @override
     async def run(self) -> None:

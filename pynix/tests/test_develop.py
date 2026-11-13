@@ -200,7 +200,7 @@ def test_a_command_after_the_double_dash_reaches_the_command_untouched() -> None
     """argparse stops parsing options at ``--``, so nothing after it is one.
 
     This is what lets ``develop`` take its command the way the shell would,
-    rather than through a ``--command`` option as ``nix develop`` does. Every
+    and not only through a ``--command`` option as ``nix develop`` does. Every
     other test here assumes it.
 
     Measured across the move of issue #214: clypi and argparse hand back the
@@ -229,6 +229,29 @@ def test_a_second_parse_does_not_inherit_the_first_command() -> None:
     second = parse(["develop", "--file", "x.nix"])
     assert isinstance(second, Develop)
     assert second.command == []
+
+
+@pytest.mark.parametrize(
+    ("tail", "words"),
+    [
+        (["--command", "make", "-j4"], ["make", "-j4"]),
+        (["-c", "make", "-j4"], ["make", "-j4"]),
+        (["--command", "git", "log", "-p", "--", "README.md"], ["git", "log", "-p", "--", "README.md"]),
+        (["--", "make", "-j4"], ["make", "-j4"]),
+        ([], []),
+    ],
+)
+def test_nix_command_option_takes_every_word_after_it(tail: list[str], words: list[str]) -> None:
+    """``develop.cc:520``: ``--command`` takes the rest of the line, a ``--`` included."""
+    cmd = parse(["develop", "--file", "x.nix", *tail])
+    assert isinstance(cmd, Develop)
+    assert cmd.words == words
+
+
+def test_nix_command_option_is_hidden_from_help(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        parse(["develop", "--help"])
+    assert "--command" not in capsys.readouterr().out
 
 
 # --- which nixpkgs the interactive shell comes from ------------------------
