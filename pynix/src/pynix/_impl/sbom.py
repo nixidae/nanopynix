@@ -1,7 +1,7 @@
 """The implementation of ``pynix sbom``.
 
 The build closure and what each package says of itself come from one
-evaluation of ``sbom_walk.nix``. The runtime closure comes from the store,
+evaluation of ``nix/sbom.nix``. The runtime closure comes from the store,
 after the build.
 """
 
@@ -11,7 +11,6 @@ import importlib.metadata
 import os
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
-from pathlib import Path
 
 from anyio import Path as AnyioPath
 from huggorm import AsyncStore
@@ -21,12 +20,11 @@ from pynix._evaluate import JsonValue
 from pynix._impl import _sbom_cyclonedx, _sbom_spdx
 from pynix._impl._sbom_model import Inventory, inventory, parse_walk, serial_uuid
 from pynix._impl.env import output_paths
+from pynix._nix_helpers import helper
 from pynix._store_layout import StoreLayout
 from pynix._util import huggorm_build_session, print_json, report_and_exit
 from pynix.sbom import Sbom
 from pynix.target import EvaluationTarget, EvaluationTargetError
-
-_WALK = Path(__file__).with_name("sbom_walk.nix")
 
 
 async def runtime_closure(store: AsyncStore, roots: Iterable[str]) -> dict[str, tuple[str, ...]]:
@@ -76,7 +74,7 @@ async def build_inventory(command: Sbom) -> tuple[Inventory, dict[str, str]]:
                 auto_call_file=True,
                 attr_search=_evaluate.base_attr_search(),
             )
-            walk = await state.eval_file(str(_WALK))
+            walk = await helper(state, "sbom")
             await state.force(walk)
             records = parse_walk(await (await walk(value)).string_value())
             await state.force(value)

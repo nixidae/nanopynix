@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+import huggorm
 import pytest
 from cyclonedx.schema import SchemaVersion
 from cyclonedx.validation.json import JsonStrictValidator
@@ -308,3 +309,40 @@ def test_spdx_is_valid_and_states_the_graph(
     assert ("SPDXRef-DOCUMENT", "DESCRIBES", ids["pynix-sbom-app"]) in edges
     assert (ids["pynix-sbom-app"], "DEPENDS_ON", ids["pynix-sbom-lib"]) in edges
     assert (ids["pynix-sbom-app"], "DEPENDS_ON", ids["pynix-sbom-cc"]) in edges
+
+
+#: A flake evaluates pure, and pure evaluation refuses any absolute path that
+#: was not allowed: the walk of the SBOM included (nixidae/nixidae#1315).
+_FLAKE = """
+{
+  outputs = _: {
+    packages.SYSTEM.default = derivation {
+      name = "pynix-sbom-flake-1.0";
+      pname = "pynix-sbom-flake";
+      version = "1.0";
+      system = "SYSTEM";
+      builder = "/bin/sh";
+      args = [ "-c" "echo > $out" ];
+    };
+  };
+}
+"""
+
+
+def test_a_flake_target_gets_an_sbom(shared_nix_environment: NixTestEnvironment, tmp_path: Path) -> None:
+    (tmp_path / "flake.nix").write_text(_FLAKE.replace("SYSTEM", huggorm.current_system()), encoding="utf-8")
+    argv = [
+        sys.executable,
+        "-c",
+        "import sys; from pynix import main; sys.argv = ['pynix', *sys.argv[1:]]; main()",
+        "sbom",
+        "--flake",
+        f"path:{tmp_path}",
+        "--store",
+        shared_nix_environment.store_uri,
+    ]
+    result = subprocess.run(  # noqa: S603 -- fixed argv, no shell, every path from the test itself
+        argv, capture_output=True, text=True, check=False, env=os.environ.copy()
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["metadata"]["component"]["name"] == "pynix-sbom-flake"

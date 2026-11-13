@@ -1,6 +1,6 @@
 """The records of ``pynix sbom``, and the inventory that each format renders.
 
-``sbom_walk.nix`` gives one record for each output in the build closure. The
+``nix/sbom.nix`` gives one record for each output in the build closure. The
 store gives the runtime closure and its references. :func:`inventory` joins
 the two as bombon's ``transform`` does (``rust/transformer/src/transform.rs``).
 """
@@ -138,7 +138,7 @@ def _record(raw: dict[str, object]) -> Record:
 
 
 def parse_walk(text: str) -> dict[str, Record]:
-    """The records of ``sbom_walk.nix``, by store path."""
+    """The records of ``nix/sbom.nix``, by store path."""
     loaded: object = json.loads(text)
     if not isinstance(loaded, list):
         raise TypeError("the SBOM walk did not return a list")
