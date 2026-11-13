@@ -327,41 +327,6 @@ def save_cache(path: Path, identity: str, records: Sequence[PackageRecord]) -> N
     partial.replace(path)
 
 
-#: The facts that tell two package sets built from one source apart.
-#:
-#: **A config entry may be a function, and `builtins.toJSON` raises on one
-#: where `builtins.tryEval` does not catch it.** `allowUnfreePredicate` is
-#: such an entry. `mark` therefore never hands a function to `toJSON`: a
-#: scalar joins the key by its value, and anything else by its type name. So
-#: `gitConfig` reads as `"set"` and `allowUnfreePackages` as `"list"`.
-#:
-#: The limit that follows is worth stating: a change from one predicate to a
-#: different predicate is not distinguished. Every scalar change is.
-#:
-#: The three fields cover the three cases of issue #260. `system` covers a
-#: cross-compiled set, `config` covers `allowUnfree` and `allowBroken`, which
-#: change which attributes evaluate at all, and `attrs` covers an overlay that
-#: adds or removes an attribute.
-_IDENTITY_FACTS = """
-pkgs:
-  let
-    config = pkgs.config or { };
-    mark = value:
-      if builtins.isBool value then (if value then "true" else "false")
-      else if builtins.isString value then value
-      else if builtins.isInt value then builtins.toString value
-      else builtins.typeOf value;
-  in
-    builtins.toJSON {
-      system = pkgs.stdenv.hostPlatform.system or "unknown";
-      attrs = builtins.length (builtins.attrNames pkgs);
-      config = builtins.listToAttrs (map (name: {
-        inherit name;
-        value = mark (config.${name} or null);
-      }) (builtins.attrNames config));
-    }
-"""
-
 #: How much of the digest joins the identity. Sixteen hexadecimal characters
 #: is 64 bits, which no set of package sets on one machine will collide in,
 #: and it keeps the file name readable.
@@ -377,14 +342,13 @@ async def package_identity(state: AsyncEvalState, pkgs_value: AsyncValue) -> str
     `import <nixpkgs> { config.allowUnfree = true; }` have the same `path`, so
     the second read the walk of the first.
 
-    `_IDENTITY_FACTS` says what else joins the key, and why it cannot simply
+    `nix/identity.nix` says what else joins the key, and why it cannot simply
     be `pkgs.config`. Measured on real nixpkgs, 27 918 attributes: the facts
     cost 0.043 s against a walk of 15 s.
     """
     await state.force(pkgs_value)
     path = str(await to_python(await pkgs_value.get("path")))
-    collector = await state.eval_expr(_IDENTITY_FACTS)
-    facts = str(await to_python(await call(collector, pkgs_value)))
+    facts = str(await to_python(await call(await helper(state, "identity"), pkgs_value)))
     digest = hashlib.sha256(facts.encode()).hexdigest()[:_DIGEST_LENGTH]
     return f"{Path(path).name}-{digest}"
 
