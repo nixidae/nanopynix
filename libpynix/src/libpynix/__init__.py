@@ -84,4 +84,5 @@ from libpynix.nix_options import (
     file_option as file_option,
     flake_option as flake_option,
     impure_option as impure_option,
+    setting_option as setting_option,
 )

@@ -30,6 +30,8 @@ from structlog.typing import EventDict, WrappedLogger
 
 import pynix._util as pynix_util
 from pynix import parse
+from pynix._impl.settings import command_options_of
+from pynix._settings import option_pairs
 
 CURRENT_PYNIX_TEST: ContextVar[str] = ContextVar("CURRENT_PYNIX_TEST", default="unknown")
 
@@ -105,7 +107,8 @@ class PynixStoreScenario:
             # Reinstall the test collector before the command starts forwarding
             # Nix logs, so JSON command output remains machine-readable.
             structlog.configure(processors=[self.live_log.capture])
-            await cmd.run()
+            with command_options_of(option_pairs(cmd)):
+                await cmd.run()
         self.last_stdout = stdout.getvalue()
         self.last_stderr = stderr.getvalue()
         self.last_logs = [dict(entry) for entry in self.live_log.entries_for(test_name)[before:]]

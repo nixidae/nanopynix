@@ -43,7 +43,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from libpynix import Command, opt
+from libpynix import Command, opt, setting_option
 from libpynix._typecheck import no_runtime_type_check
 from pynix import _impl
 
@@ -87,6 +87,22 @@ class PynixCommand(Command):
     #: command runs, so pynix's own events honour it from the start
     #: (nixidae/nixidae#1224).
     verbosity: str | None = None
+
+    # Every command that runs, as `nix` takes it on every command. Not on a
+    # group: a group never runs, so a pair given there would reach nothing.
+    option: list[tuple[str, str]] = setting_option()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls.subcommands:
+            cls.specs = {field: spec for field, spec in cls.specs.items() if field != "option"}
+
+
+def option_pairs(command: Command) -> list[tuple[str, str]]:
+    """The ``--option`` pairs of *command*: none for a group, which declares no ``--option``."""
+    if isinstance(command, PynixCommand) and not command.subcommands:
+        return command.option
+    return []
 
 
 class ConfiguredCommand(PynixCommand):

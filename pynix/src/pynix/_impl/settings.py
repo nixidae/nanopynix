@@ -8,6 +8,9 @@ Four layers, and the first one that names a value wins:
 3. ``$XDG_CONFIG_HOME/pynix/config.toml``
 4. the built-in default
 
+``--option NAME VALUE`` sets a Nix setting above all four, as ``nix`` applies
+it after ``nix.conf`` (:func:`command_options`).
+
 An option the caller did not name is absent from the namespace until
 :class:`~pynix._settings.ConfiguredCommand` resolves it, which is how "absent"
 is told apart from "explicitly false".
@@ -38,7 +41,9 @@ from __future__ import annotations
 
 import os
 import tomllib
-from collections.abc import Collection
+from collections.abc import Collection, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Final, cast
 
@@ -209,6 +214,27 @@ def nix_settings(known: Collection[str], **flags: str | None) -> dict[str, str]:
     if unknown:
         raise SettingError(f"no such Nix setting: {', '.join(unknown)}")
     return settings
+
+
+#: The ``--option NAME VALUE`` pairs of the command that runs. A context
+#: variable, and not an argument: every helper that opens a store reads it,
+#: and a command that shares the process (a test) must not see another's.
+_command_options: ContextVar[tuple[tuple[str, str], ...]] = ContextVar("command_options", default=())
+
+
+@contextmanager
+def command_options_of(pairs: Sequence[tuple[str, str]]) -> Iterator[None]:
+    """Make *pairs* the ``--option`` pairs while the block runs."""
+    token = _command_options.set(tuple(pairs))
+    try:
+        yield
+    finally:
+        _command_options.reset(token)
+
+
+def command_options() -> tuple[tuple[str, str], ...]:
+    """The ``--option`` pairs of the command that runs, in command-line order."""
+    return _command_options.get()
 
 
 def configured_fields(command: type[Command]) -> list[str]:

@@ -87,6 +87,7 @@ BUILD_OPTIONS = frozenset(
         "--no-link",
         "--no-print-build-logs",
         "--nom",
+        "--option",
         "--out-link",
         "--overlay-dir",
         "--print-build-logs",

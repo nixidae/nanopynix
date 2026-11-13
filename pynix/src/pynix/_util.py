@@ -23,7 +23,7 @@ from structlog.typing import EventDict, WrappedLogger
 
 from libpynix._typecheck import no_runtime_type_check
 from pynix._build_monitor import MonitorState, RecordEvent, render
-from pynix._impl.settings import SettingError, nix_settings
+from pynix._impl.settings import SettingError, command_options, nix_settings
 from pynix._store_layout import StoreLayout
 from pynix._verbosity import VerbosityInput, verbosity_of
 from pynix.target import EvaluationTargetError
@@ -41,6 +41,7 @@ _ANSI_MAGENTA = "\x1b[35;1m"
 _ANSI_NORMAL = "\x1b[0m"
 
 _config_loaded = False
+_log = structlog.get_logger("pynix")
 
 # Build-progress/error messages go here, not stdout -- so a command's
 # print_json() output stays clean, machine-parseable JSON even when the same
@@ -255,6 +256,18 @@ def apply_nix_settings(settings: Mapping[str, str] | None = None) -> None:
     init_nix()
     for name, value in (configured_nix_settings() if settings is None else settings).items():
         huggorm.set_setting(name, value)
+    for name, value in command_options():
+        try:
+            huggorm.set_setting(name, value)
+        except huggorm.errors.UsageError as exc:
+            # `nix` warns and goes on, for an unknown name and for a bad
+            # value alike (`common-args.cc:42`, `config-global.cc:21`).
+            _log.warning(exc.message.removeprefix("error: "))
+
+
+def _restored_name(name: str) -> str:
+    """The setting that holds what *name* changes: ``extra-X`` appends to ``X``."""
+    return name.removeprefix("extra-")
 
 
 @contextmanager
@@ -267,7 +280,8 @@ def applied_nix_settings(settings: Mapping[str, str] | None = None) -> Iterator[
     """
     init_nix()
     wanted = configured_nix_settings() if settings is None else settings
-    before = {name: huggorm.get_setting(name) for name in wanted}
+    names = {*wanted, *(_restored_name(name) for name, _ in command_options())}
+    before = {name: huggorm.get_setting(name) for name in names}
     apply_nix_settings(wanted)
     try:
         yield
@@ -286,7 +300,8 @@ def evaluator_settings(settings: Mapping[str, str] | None = None, *, pure: bool)
     session applies, and None means the configured ones.
     """
     configured = configured_nix_settings() if settings is None else settings
-    if pure and "pure-eval" not in configured:
+    named = {*configured, *(name for name, _ in command_options())}
+    if pure and "pure-eval" not in named:
         return {"pure-eval": "true"}
     return None
 

@@ -133,6 +133,16 @@ def argjson_option() -> list[tuple[str, str]]:
 
 
 @no_runtime_type_check  # see file_option
+def setting_option() -> list[tuple[str, str]]:
+    """Declare ``--option NAME VALUE`` (``common-args.cc:42``). The field must be called ``option``."""
+    value: list[tuple[str, str]] = opt(
+        metavar=("NAME", "VALUE"),
+        help="Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable.",
+    )
+    return value
+
+
+@no_runtime_type_check  # see file_option
 def args_json_option() -> str | None:
     """Declare ``--args-json JSON``: each key of an object is one argument."""
     value: str | None = opt(
