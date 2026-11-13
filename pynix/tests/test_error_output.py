@@ -11,12 +11,12 @@ from __future__ import annotations
 import io
 
 import pytest
-from huggorm.errors import EvalError, SysError
+from huggorm.errors import EvalError, NixError, SysError
 from rich.console import Console
 from rich.text import Text
 
 from pynix import _util
-from pynix._error_hints import USE_CGROUPS_HINT
+from pynix._error_hints import USE_CGROUPS_HINT, sandbox_path_hint
 from pynix._impl import main
 
 # What Nix sends for `error: value is a string`, with its own colour. `\x1b[`
@@ -169,6 +169,16 @@ CGROUP_MESSAGE = (
 )
 
 
+# What `pynix build --namespaced` reported for a sandbox path that only root
+# can read (nixidae/nixidae#1072): a plain `NixError`, with the trace.
+SANDBOX_MESSAGE = (
+    "error:\n"
+    "       … while setting up the build environment\n"
+    "\n"
+    '       error: getting attributes of path "/var/cache/ccache/cache": Permission denied'
+)
+
+
 def _run_failing(exc: Exception, monkeypatch: pytest.MonkeyPatch) -> str:
     buffer = io.StringIO()
     monkeypatch.setattr(main, "error_console", Console(file=buffer, force_terminal=False, width=400))
@@ -187,6 +197,12 @@ def test_a_build_cgroup_failure_keeps_the_words_of_nix_and_adds_the_hint(monkeyp
     assert written.splitlines() == [CGROUP_MESSAGE, USE_CGROUPS_HINT]
 
 
+def test_a_sandbox_path_the_user_cannot_read_gets_the_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    written = _run_failing(NixError(SANDBOX_MESSAGE), monkeypatch)
+
+    assert written.splitlines() == [*SANDBOX_MESSAGE.splitlines(), sandbox_path_hint("/var/cache/ccache/cache")]
+
+
 @pytest.mark.parametrize(
     "exc",
     [
@@ -196,6 +212,10 @@ def test_a_build_cgroup_failure_keeps_the_words_of_nix_and_adds_the_hint(monkeyp
         ),
         SysError('error: opening file "/nix/store/x": Permission denied'),
         EvalError(CGROUP_MESSAGE),
+        # An absent path: `path?` is the way past it, and that is not this hint.
+        NixError(SANDBOX_MESSAGE.replace("Permission denied", "No such file or directory")),
+        # The same words outside the setup of a build.
+        SysError('error: getting attributes of path "/var/cache/ccache/cache": Permission denied'),
     ],
 )
 def test_another_failure_gets_no_hint(exc: Exception, monkeypatch: pytest.MonkeyPatch) -> None:

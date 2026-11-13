@@ -82,7 +82,6 @@ def run(body: Callable[[], Coroutine[object, object, None]]) -> None:
         # sequence does to the highlighter of rich. `colored` is the line Nix
         # prints, escape sequences and all.
         error_console.print(Text.from_ansi(exc.colored))
-        hint = hint_for(exc.message) if isinstance(exc, huggorm.errors.SysError) else None
-        if hint is not None:
+        if (hint := hint_for(exc)) is not None:
             error_console.print(Text(hint))
         raise SystemExit(1) from exc
