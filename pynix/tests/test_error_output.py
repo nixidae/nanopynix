@@ -11,11 +11,12 @@ from __future__ import annotations
 import io
 
 import pytest
-from huggorm.errors import EvalError
+from huggorm.errors import EvalError, SysError
 from rich.console import Console
 from rich.text import Text
 
 from pynix import _util
+from pynix._error_hints import USE_CGROUPS_HINT
 from pynix._impl import main
 
 # What Nix sends for `error: value is a string`, with its own colour. `\x1b[`
@@ -158,3 +159,44 @@ def test_a_failure_that_is_not_nix_keeps_its_traceback(monkeypatch: pytest.Monke
         main.run(_fail)
 
     assert buffer.getvalue() == ""
+
+
+# What `pynix build` against a store of the user reported on a host with
+# `use-cgroups = true` (nixidae/nixidae#1037).
+CGROUP_MESSAGE = (
+    'error: creating cgroup "/sys/fs/cgroup/user.slice/user-1000.slice/session-263.scope/nix-build-pid-1630457-0": '
+    "Permission denied"
+)
+
+
+def _run_failing(exc: Exception, monkeypatch: pytest.MonkeyPatch) -> str:
+    buffer = io.StringIO()
+    monkeypatch.setattr(main, "error_console", Console(file=buffer, force_terminal=False, width=400))
+
+    async def _fail() -> None:
+        raise exc
+
+    with pytest.raises(SystemExit):
+        main.run(_fail)
+    return buffer.getvalue()
+
+
+def test_a_build_cgroup_failure_keeps_the_words_of_nix_and_adds_the_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    written = _run_failing(SysError(CGROUP_MESSAGE), monkeypatch)
+
+    assert written.splitlines() == [CGROUP_MESSAGE, USE_CGROUPS_HINT]
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        # `daemon.cc:277`: the cgroup of the daemon, not of a build.
+        SysError(
+            "error: creating cgroup '/sys/fs/cgroup/system.slice/nix-daemon.service/supervisor': Permission denied"
+        ),
+        SysError('error: opening file "/nix/store/x": Permission denied'),
+        EvalError(CGROUP_MESSAGE),
+    ],
+)
+def test_another_failure_gets_no_hint(exc: Exception, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert "hint:" not in _run_failing(exc, monkeypatch)
