@@ -66,116 +66,12 @@ from typing import cast
 from huggorm import AsyncEvalState, AsyncValue
 
 from pynix._evaluate import call, to_python
-
-#: How deep the walk follows a sub-option, before it stops.
-#:
-#: `lib.optionAttrSetToDocList` has no bound, and carries a comment on how to
-#: find the infinite recursion when a type builds one. This walk states a bound
-#: instead. Measured against a real `nixosConfigurations` of 24 941 options:
-#: depth 4 reaches 24 935 of them and depth 6 reaches every one, so 8 leaves
-#: margin for a tree deeper than any that exists today.
-_SUB_OPTION_DEPTH = 8
-
-#: The walk itself, shared by the two collectors below.
-#:
-#: It defines `walk`, which takes the function that describes one option and
-#: returns one entry for each option under the tree. Both collectors are the
-#: same walk with a different `entry`, and a copy of the walk in each one would
-#: let the two disagree about which options exist.
-#:
-#: `lib` comes from the scope this is interpolated into. Both collectors are
-#: functions of `lib` and `options`, so `lib` is in scope where they use this.
-_WALK = f"""
-    walkWith = entry: depth: opts:
-      builtins.concatMap
-        (opt:
-          let
-            v = opt.visible or true;
-            subVisible = if builtins.isBool v then v else v == "transparent";
-            sub = (opt.type or {{ }}).getSubOptions or (_: {{ }}) opt.loc;
-          in
-            [ (entry opt) ]
-            ++ (if depth > 0 && subVisible && sub != {{ }} then walkWith entry (depth - 1) sub else [ ])
-        )
-        (lib.collect lib.isOption opts);
-    walk = entry: walkWith entry {_SUB_OPTION_DEPTH};
-"""
-
-_COLLECT_OPTION_METADATA = f"""
-lib: options:
-  let
-{_WALK}
-    entry = opt: {{
-      name = lib.showOption opt.loc;
-      description = opt.description or null;
-      declarations = builtins.filter (x: x != lib.unknownModule) opt.declarations;
-      internal = opt.internal or false;
-      visible =
-        let v = opt.visible or true;
-        in if builtins.isBool v then v else v == "shallow";
-      readOnly = opt.readOnly or false;
-      type = opt.type.description or "unspecified";
-    }};
-  in
-    walk entry options
-"""
-
-#: The second collector. It answers "what is the default of this one option",
-#: and it forces no default until a caller asks for one.
-#:
-#: **The result is one attrset, keyed by the name the metadata walk writes.**
-#: Nix builds an attrset lazily, so `builtins.listToAttrs` forces the walk and
-#: every `lib.showOption` and forces no `default` and no `example` at all. A
-#: caller selects one name, forces that, and pays for that option alone. An
-#: option that cannot answer raises where the caller can catch it, which is
-#: the whole difference from the bulk pass: the module docstring above says
-#: why one list forced in one JSON pass makes one bad default the failure of
-#: all 24 941.
-#:
-#: `defaultText` comes before `default`, because a module declares one exactly
-#: for a default that cannot print. `lib.options.renderOptionValue` is the
-#: same two branches, and this states them rather than depending on a name
-#: under `lib.options`.
-_COLLECT_OPTION_VALUES = f"""
-lib: options:
-  let
-{_WALK}
-    render = value:
-      if lib.isAttrs value && value ? _type && value ? text
-      then {{ type = value._type; text = value.text; }}
-      else {{ type = "literalExpression"; text = lib.generators.toPretty {{ multiline = true; }} value; }};
-    entry = opt: {{
-      name = lib.showOption opt.loc;
-      value = {{
-        default =
-          if opt ? defaultText then render opt.defaultText
-          else if opt ? default then render opt.default
-          else null;
-        example = if opt ? example then render opt.example else null;
-      }};
-    }};
-  in
-    builtins.listToAttrs (walk entry options)
-"""
+from pynix._nix_helpers import helper
 
 
-#: Render one value of a configuration the way a `default` is rendered.
-#:
-#: **The same two branches as `_COLLECT_OPTION_VALUES`.** A value that a
-#: module wrote through `lib.literalMD` or `lib.literalExpression` carries its
-#: own text and says so, and every other value goes through
-#: `lib.generators.toPretty`. A reader who compares the `default` line with
-#: the `value` line under it must not be reading two different renderers.
-#:
-#: It takes `lib` and gives back a function of one value, so the caller walks
-#: the attribute path from Python and never has to write a Nix path
-#: expression. A quoted segment then needs no escaping at all.
-_RENDER_ONE_VALUE = """
-lib: value:
-  if lib.isAttrs value && value ? _type && value ? text
-  then { type = value._type; text = value.text; }
-  else { type = "literalExpression"; text = lib.generators.toPretty { multiline = true; } value; }
-"""
+async def _walks(state: AsyncEvalState, lib_value: AsyncValue) -> AsyncValue:
+    """`nix/options.nix`, applied to *lib_value*."""
+    return await call(await helper(state, "options"), lib_value)
 
 
 async def fetch_value_renderer(state: AsyncEvalState, lib_value: AsyncValue) -> AsyncValue:
@@ -184,7 +80,7 @@ async def fetch_value_renderer(state: AsyncEvalState, lib_value: AsyncValue) -> 
     The caller selects the value it wants by walking attributes, and applies
     this to what it reaches. Nothing is forced until then.
     """
-    return await call(await state.eval_expr(_RENDER_ONE_VALUE), lib_value)
+    return await (await _walks(state, lib_value)).get("render")
 
 
 @dataclass(frozen=True)
@@ -211,8 +107,8 @@ async def fetch_option_doc_list(
     came from, though the walk is generic enough that any reasonably current
     ``lib`` works).
     """
-    collector = await state.eval_expr(_COLLECT_OPTION_METADATA)
-    raw = await to_python(await call(collector, lib_value, options_value))
+    collector = await (await _walks(state, lib_value)).get("metadata")
+    raw = await to_python(await call(collector, options_value))
     if not isinstance(raw, list):
         raise TypeError(f"option metadata walk must return a list, got {type(raw).__name__}")
     records: list[OptionRecord] = []
@@ -254,4 +150,4 @@ async def fetch_option_values(
     name. Nothing under a key is forced here. ``pynix._option_values`` forces
     one at a time, and catches what one bad default raises.
     """
-    return await call(await state.eval_expr(_COLLECT_OPTION_VALUES), lib_value, options_value)
+    return await call(await (await _walks(state, lib_value)).get("values"), options_value)
