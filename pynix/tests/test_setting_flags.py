@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import huggorm
 import pytest
@@ -82,3 +83,23 @@ def test_main_applies_a_setting_flag(child_env: dict[str, str]) -> None:
     )
     assert (result.returncode, result.stderr) == (0, "")
     assert json.loads(result.stdout) == {"max-jobs": "37"}
+
+
+@pytest.mark.parametrize(("flags", "code"), [([], 1), (["--extra-experimental-features", "blake3-hashes"], 0)])
+def test_a_command_with_no_session_gets_the_setting_flags(
+    flags: list[str], code: int, child_env: dict[str, str], tmp_path: Path
+) -> None:
+    """``hash`` opens no store or evaluator, and ``blake3`` needs ``blake3-hashes``."""
+    data = tmp_path / "data"
+    data.write_text("hello\n")
+    result = subprocess.run(  # noqa: S603 -- fixed argv, no shell
+        [sys.executable, "-c", _MAIN, "hash", "path", "--algo", "blake3", str(data), *flags],
+        env=child_env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert result.returncode == code, result.stderr
+    if code:
+        assert "blake3-hashes" in result.stderr

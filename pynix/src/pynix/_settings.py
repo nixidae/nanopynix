@@ -114,9 +114,18 @@ def running(command: Command) -> Iterator[None]:
 
     ``main`` and the in-process test harness wrap ``run`` in this; the session
     helpers read both, so no command passes them on by hand.
+
+    The configured Nix settings and the pairs are applied here too, once
+    around the whole command. A session applies them again, and that is
+    harmless. ``key``, ``hash``, ``nar`` and ``fmt`` open no session, so this
+    is where ``--extra-experimental-features cnsa`` reaches them.
     """
     verbosity = command.verbosity if isinstance(command, PynixCommand) else None
-    with _impl.settings.command_options_of(option_pairs(command)), _impl.settings.command_verbosity_of(verbosity):
+    with (
+        _impl.settings.command_options_of(option_pairs(command)),
+        _impl.settings.command_verbosity_of(verbosity),
+        _impl.main.applied_nix_settings(),
+    ):
         yield
 
 

@@ -28,7 +28,7 @@ import rich.traceback
 from rich.text import Text
 
 from pynix._error_hints import hint_for
-from pynix._util import configure_logging, error_console
+from pynix._util import applied_nix_settings as applied_nix_settings, configure_logging, error_console
 from pynix._verbosity import DEFAULT_VERBOSITY, verbosity_of
 
 

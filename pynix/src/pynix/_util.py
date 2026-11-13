@@ -23,7 +23,7 @@ from structlog.typing import EventDict, WrappedLogger
 
 from libpynix._typecheck import no_runtime_type_check
 from pynix._build_monitor import MonitorState, RecordEvent, render
-from pynix._impl.settings import SettingError, command_options, command_verbosity, nix_settings
+from pynix._impl.settings import SettingError, command_options, command_verbosity, first_refusal, nix_settings
 from pynix._store_layout import StoreLayout
 from pynix._verbosity import DEFAULT_VERBOSITY, VerbosityInput, verbosity_of
 from pynix.target import EvaluationTargetError
@@ -260,7 +260,8 @@ def apply_nix_settings(settings: Mapping[str, str] | None = None) -> None:
         except huggorm.errors.UsageError as exc:
             # `nix` warns and goes on, for an unknown name and for a bad
             # value alike (`common-args.cc:42`, `config-global.cc:21`).
-            _log.warning(exc.message.removeprefix("error: "))
+            if first_refusal((name, value)):
+                _log.warning(exc.message.removeprefix("error: "))
 
 
 def _restored_name(name: str) -> str:

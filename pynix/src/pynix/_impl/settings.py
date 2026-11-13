@@ -221,20 +221,37 @@ def nix_settings(known: Collection[str], **flags: str | None) -> dict[str, str]:
 #: and a command that shares the process (a test) must not see another's.
 _command_options: ContextVar[tuple[tuple[str, str], ...]] = ContextVar("command_options", default=())
 
+#: The pairs Nix refused, and that a warning already named. The pairs are
+#: applied around the command and again in each session, and `nix` warns once.
+_refused_options: ContextVar[set[tuple[str, str]] | None] = ContextVar("refused_options", default=None)
+
 
 @contextmanager
 def command_options_of(pairs: Sequence[tuple[str, str]]) -> Iterator[None]:
     """Make *pairs* the ``--option`` pairs while the block runs."""
     token = _command_options.set(tuple(pairs))
+    refused = _refused_options.set(set())
     try:
         yield
     finally:
+        _refused_options.reset(refused)
         _command_options.reset(token)
 
 
 def command_options() -> tuple[tuple[str, str], ...]:
     """The ``--option`` pairs of the command that runs, in command-line order."""
     return _command_options.get()
+
+
+def first_refusal(pair: tuple[str, str]) -> bool:
+    """Whether Nix's refusal of *pair* is new in the command that runs."""
+    refused = _refused_options.get()
+    if refused is None:
+        return True
+    if pair in refused:
+        return False
+    refused.add(pair)
+    return True
 
 
 #: The resolved ``--verbosity`` of the command that runs, for the same reason.
