@@ -7,6 +7,7 @@ on every start, and none of these imports is needed to list an option.
 
 from __future__ import annotations
 
+import dataclasses
 import difflib
 import sys
 import time
@@ -20,6 +21,7 @@ import structlog
 from anyio import Path as AnyioPath
 from huggorm import (
     TEMPORARY,
+    ActivityType,
     AsyncEvalState,
     AsyncRemoteSession,
     AsyncSession,
@@ -241,10 +243,27 @@ class _BuildLog:
     """
 
     messages: list[str] = field(default_factory=list)
+    #: Each derivation that Nix built resolved, by the path of the resolved
+    #: copy. Nix names the copy in a failure, and the copy is in no closure of
+    #: the target. Only the resolution activity carries two fields
+    #: (`derivation-resolution-goal.cc:138`): the original and the copy.
+    originals: dict[str, str] = field(default_factory=dict)
 
     def keep(self, record: LogRecord) -> None:
         if record.action() == "msg":
             self.messages.append(huggorm.filter_ansi_escapes(record_message(record), filter_all=True))
+        elif record.action() == "start" and record.type() == ActivityType.BUILD_WAITING:
+            match [entry.text() for entry in record.fields() if not entry.is_int()]:
+                case [original, resolved]:
+                    self.originals[resolved] = original
+                case _:
+                    pass
+
+    def attributed(self, mismatch: FodHashMismatch) -> FodHashMismatch:
+        """*mismatch*, named by the derivation the target holds."""
+        if mismatch.drv_path is None or mismatch.drv_path not in self.originals:
+            return mismatch
+        return dataclasses.replace(mismatch, drv_path=self.originals[mismatch.drv_path])
 
 
 async def _updated_source(source_file: Path, mismatch: FodHashMismatch) -> str:
@@ -323,6 +342,7 @@ async def _build_target(
         mismatch = extract_fod_hash_mismatch(str(error)) or extract_unique_fod_hash_mismatch(log.messages)
         if not update_fod or mismatch is None:
             raise error
+        mismatch = log.attributed(mismatch)
         if mismatch.drv_path is not None and not await _names_the_fod(build, found, mismatch):
             raise BuildTargetError(
                 "fixed-output hash mismatch was not found in the evaluated target derivation closure"

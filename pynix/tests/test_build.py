@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import anyio
+import huggorm
 import pytest
 from anyio import Path as AnyioPath
 from huggorm.errors import BuildError, NixError
@@ -961,6 +963,63 @@ runCommand "consumer" { } "cat ${payload} > $out"
 
     data = json.loads(capsys.readouterr().out)
     assert data["updatedFods"] == 1
+    assert "lib.fakeHash" not in await AnyioPath(nix_file).read_text()
+
+
+@pytest.fixture
+def ca_derivations() -> Iterator[None]:
+    """`ca-derivations` for the process, put back after the test."""
+    before = huggorm.get_setting("experimental-features") or ""
+    huggorm.set_setting("experimental-features", f"{before} ca-derivations")
+    yield
+    huggorm.set_setting("experimental-features", before)
+
+
+@LINUX_CHROOT_BUILD
+@pytest.mark.usefixtures("ca_derivations")
+async def test_build_update_fod_rewrites_a_dependency_that_builds_resolved(
+    shared_nix_environment: NixTestEnvironment,
+    nixpkgs_path: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A fixed-output derivation with a floating content-addressed input builds resolved.
+
+    Nix then reports the mismatch on the resolved derivation, a path that is
+    in no closure of the target (`derivation-resolution-goal.cc:138`). A
+    second fixed-output `payload` stops a match by name, as many `source`
+    fetchers do in one nixpkgs closure. Issue nixidae/nixidae#1157.
+    """
+    nix_file = tmp_path / "source.nix"
+    await AnyioPath(nix_file).write_text(
+        with_nixpkgs(
+            """with import <nixpkgs> {};
+let
+  input = runCommand "floating-input" { __contentAddressed = true; } "echo input > $out";
+  payload = runCommand "payload" {
+    inherit input;
+    outputHash = lib.fakeHash;
+    outputHashAlgo = "sha256";
+    outputHashMode = "flat";
+  } "printf '%s\\n' fixed-output-payload > $out";
+  other = runCommand "payload" {
+    outputHash = "sha256-99smzF56LF3VXKUUxc3ITc/4WQpqcUrLQ0PCMyiKv+g=";
+    outputHashAlgo = "sha256";
+    outputHashMode = "flat";
+  } "printf '%s\\n' other-payload > $out";
+in
+runCommand "consumer" { } "cat ${payload} ${other} > $out"
+""",
+            nixpkgs_path,
+        ),
+    )
+    cmd = parse(["build", "--file", str(nix_file), "--update-fod", *shared_nix_environment.pynix_store_args()])
+
+    await cmd.run()
+
+    data = json.loads(capsys.readouterr().out)
+    assert data["updatedFods"] == 1
+    assert data["outputs"]["out"]
     assert "lib.fakeHash" not in await AnyioPath(nix_file).read_text()
 
 
