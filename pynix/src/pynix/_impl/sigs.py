@@ -35,7 +35,7 @@ async def selected_paths(command: StorePaths, state: AsyncEvalState, store: Asyn
         if not named:
             error_exit("name a store path, or name --file, --flake or --all")
         try:
-            roots = [await store.parse_store_path(path) for path in named]
+            roots = [await store.follow_links_to_store_path(path) for path in named]
             if command.recursive:
                 roots = await store.compute_fs_closure(roots)
         except NixError as exc:

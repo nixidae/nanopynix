@@ -22,6 +22,7 @@ from typing import Protocol, runtime_checkable
 
 import structlog
 from huggorm import AsyncEvalState, AsyncStore, StorePath
+from huggorm.errors import NixError
 
 from pynix import _evaluate
 from pynix._util import error_exit, huggorm_eval_session, print_json, report_and_exit
@@ -81,6 +82,20 @@ async def evaluated_paths(
 
 async def _parsed(store: AsyncStore, paths: Iterable[str]) -> list[StorePath]:
     return [await store.parse_store_path(path) for path in paths]
+
+
+async def named_paths(store: AsyncStore, paths: Iterable[str]) -> list[str]:
+    """The store paths that *paths* name on the command line.
+
+    Nix reads such an argument with ``followLinksToStorePath``
+    (``libcmd/installable-derived-path.cc``): a symlink chain into the store
+    (``/run/current-system``, ``./result``) or a file below a store path names
+    that store path.
+    """
+    try:
+        return [await store.print_store_path(await store.follow_links_to_store_path(path)) for path in paths]
+    except NixError as exc:
+        error_exit(str(exc), cause=exc)
 
 
 async def _printed(store: AsyncStore, paths: Iterable[StorePath]) -> list[str]:
@@ -183,7 +198,8 @@ async def run_copy(command: Copy) -> None:
 
     target = EvaluationTarget.from_command(command)
     async with huggorm_eval_session(source_uri, pure=target.pure(impure=command.impure)) as (session, source, state):
-        requested = sorted({*command.paths, *await evaluated_paths(target, state, source, source_uri)})
+        named = await named_paths(source, command.paths)
+        requested = sorted({*named, *await evaluated_paths(target, state, source, source_uri)})
         if not requested:
             error_exit("name a store path, or name --file or --flake")
 

@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
+import anyio
 import huggorm
 import pytest
 from huggorm.errors import NixError
@@ -135,6 +136,30 @@ async def test_a_copy_carries_the_whole_closure_into_the_second_store(
         command = parse(["store", "is-valid-path", path, "--store", destination_store])
         await command.run()
         assert json.loads(capsys.readouterr().out)["valid"] is True
+
+
+@LINUX_CHROOT_BUILD
+async def test_a_symlink_into_the_store_names_the_path_to_copy(
+    shared_nix_environment: NixTestEnvironment,
+    built_closure: dict[str, str],
+    destination_store: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A ``./result`` link names its store path, as in Nix. nixidae/nixidae#1338."""
+    await anyio.Path(tmp_path / "result").symlink_to(built_closure["top"])
+    result = await _copy(
+        [
+            str(tmp_path / "result"),
+            "--to",
+            destination_store,
+            "--no-check-sigs",
+            *shared_nix_environment.pynix_store_args(),
+        ],
+        capsys,
+    )
+
+    assert result["requested"] == [built_closure["top"]]
 
 
 @LINUX_CHROOT_BUILD

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
+import anyio
 import huggorm
 import pytest
 from huggorm.testing.environment import NixTestEnvironment
@@ -67,3 +69,45 @@ async def test_path_info_nonexistent(
     # orphans the escape byte. `_util.error_exit` carries the measurement.
     assert "deadbeef-nonexistent" in captured.err
     assert "error:" in captured.err
+
+
+async def test_a_symlink_chain_into_the_store_names_its_store_path(
+    shared_nix_environment: NixTestEnvironment,
+    seeded_store_path: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``/run/current-system`` and ``./result``: Nix follows them (``followLinksToStorePath``,
+    ``libcmd/installable-derived-path.cc``). nixidae/nixidae#1338."""
+    await anyio.Path(tmp_path / "result").symlink_to(seeded_store_path)
+    await anyio.Path(tmp_path / "current").symlink_to(tmp_path / "result")
+
+    await parse(["path-info", str(tmp_path / "current"), *shared_nix_environment.pynix_store_args()]).run()
+
+    assert json.loads(capsys.readouterr().out)["path"] == seeded_store_path
+
+
+async def test_a_file_below_a_store_path_names_that_store_path(
+    shared_nix_environment: NixTestEnvironment,
+    seeded_store_path: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``Store::toStorePath`` drops what follows the store path's name."""
+    await parse(["path-info", f"{seeded_store_path}/bin/x", *shared_nix_environment.pynix_store_args()]).run()
+
+    assert json.loads(capsys.readouterr().out)["path"] == seeded_store_path
+
+
+async def test_a_symlink_out_of_the_store_is_refused(
+    shared_nix_environment: NixTestEnvironment,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    await anyio.Path(tmp_path / "elsewhere").symlink_to(tmp_path)
+
+    with pytest.raises(SystemExit):
+        await parse(["path-info", str(tmp_path / "elsewhere"), *shared_nix_environment.pynix_store_args()]).run()
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "is not in the Nix store" in captured.err

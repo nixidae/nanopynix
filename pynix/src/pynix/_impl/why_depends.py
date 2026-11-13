@@ -166,7 +166,9 @@ async def run_why_depends(command: WhyDepends) -> None:
     """The body of :meth:`pynix.why_depends.WhyDepends.run`."""
     async with huggorm_store_session(command.store) as (_session, store):
         try:
-            package = await store.parse_store_path(command.package)
+            package = await store.follow_links_to_store_path(command.package)
+            named_package = await store.print_store_path(package)
+            named_dependency = await store.print_store_path(await store.follow_links_to_store_path(command.dependency))
             closure = {await store.print_store_path(path) for path in await store.compute_fs_closure([package])}
         except Exception as exc:
             # stderr, and not stdout: the output of this command is JSON, and
@@ -178,22 +180,22 @@ async def run_why_depends(command: WhyDepends) -> None:
         # The closure answers "no chain" in one walk of Nix's own, where the
         # search below would need one `query_path_info` round trip for every
         # path in that closure to learn the same thing.
-        if command.dependency not in closure:
+        if named_dependency not in closure:
             error_exit(
-                f"{command.package} does not depend on {command.dependency}: "
+                f"{named_package} does not depend on {named_dependency}: "
                 f"the second path is not in the closure of the first",
             )
 
-        chain = await _shortest_chain(store, command.package, command.dependency)
+        chain = await _shortest_chain(store, named_package, named_dependency)
 
         if chain is None:
             # `compute_fs_closure` and the walk read the same references, so
             # this is unreachable unless the store changed under the command.
-            error_exit(f"{command.package} does not depend on {command.dependency}")
+            error_exit(f"{named_package} does not depend on {named_dependency}")
 
         result: dict[str, Any] = {
-            "package": command.package,
-            "dependency": command.dependency,
+            "package": named_package,
+            "dependency": named_dependency,
             "chain": chain,
         }
         # Inside the block, because it reads the store. The key is absent

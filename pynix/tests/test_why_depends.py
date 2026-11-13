@@ -11,6 +11,7 @@ import json
 import re
 from pathlib import Path
 
+import anyio
 import pytest
 from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, with_nixpkgs
 
@@ -94,6 +95,33 @@ async def test_a_transitive_reference_gives_the_whole_chain(
     await cmd.run()
 
     result = json.loads(capsys.readouterr().out)
+    assert result["chain"] == [reference_chain["top"], reference_chain["middle"], reference_chain["leaf"]]
+
+
+@LINUX_CHROOT_BUILD
+async def test_symlinks_into_the_store_name_both_paths(
+    shared_nix_environment: NixTestEnvironment,
+    reference_chain: dict[str, str],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``nix why-depends /run/current-system ...``: Nix follows each link (``followLinksToStorePath``).
+    nixidae/nixidae#1338."""
+    await anyio.Path(tmp_path / "package").symlink_to(reference_chain["top"])
+    await anyio.Path(tmp_path / "dependency").symlink_to(reference_chain["leaf"])
+
+    await parse(
+        [
+            "why-depends",
+            str(tmp_path / "package"),
+            str(tmp_path / "dependency"),
+            *shared_nix_environment.pynix_store_args(),
+        ],
+    ).run()
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["package"] == reference_chain["top"]
+    assert result["dependency"] == reference_chain["leaf"]
     assert result["chain"] == [reference_chain["top"], reference_chain["middle"], reference_chain["leaf"]]
 
 

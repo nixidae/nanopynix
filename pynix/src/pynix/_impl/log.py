@@ -16,7 +16,7 @@ from pynix.log import Log
 async def run_log(command: Log) -> None:
     """The body of :meth:`pynix.log.Log.run`."""
     async with huggorm_store_session(command.store) as (_session, store):
-        log = await store.get_build_log(await store.parse_store_path(command.path))
+        log = await store.get_build_log(await store.follow_links_to_store_path(command.path))
 
     if log is None:
         raise SystemExit(f"build log of '{command.path}' is not available")
