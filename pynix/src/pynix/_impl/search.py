@@ -46,6 +46,7 @@ import structlog
 from huggorm import AsyncEvalState, AsyncValue
 from huggorm.errors import NixError
 from rich.console import Console
+from rich.text import Text
 
 from libpynix import human_at_terminal
 from pynix import _impl
@@ -615,7 +616,9 @@ def _print(command: Search, found: Found, query: str) -> None:
         return
     for hit in results:
         tag = "opt" if kind(hit) == OPTION else "pkg"
-        console.print(f"[dim]{tag}[/dim] [bold]{hit_name(hit)}[/bold] :: {_summary(hit)}")
+        # `soft_wrap`: one line per match, which the terminal folds and a pipe does not.
+        # A `Text`: a description holding `[...]` is not markup.
+        console.print(Text.assemble((tag, "dim"), " ", (hit_name(hit), "bold"), " :: ", _summary(hit)), soft_wrap=True)
 
 
 def _as_json(hit: OptionRecord | SearchablePackage) -> dict[str, object]:

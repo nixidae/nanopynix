@@ -6,6 +6,7 @@ import re
 import sqlite3
 import sys
 from collections.abc import AsyncGenerator, Sequence
+from io import StringIO
 from pathlib import Path
 from typing import NamedTuple, cast
 
@@ -16,6 +17,7 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.formatted_text import StyleAndTextTuples
 from prompt_toolkit.input import PipeInput, create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from rich.console import Console
 
 import pynix._impl.search as search_module
 from pynix import parse
@@ -1264,3 +1266,19 @@ async def test_a_failed_refetch_leaves_the_search_running(
 
     assert result is cached, "it must not lose the walk"
     assert "finds nothing" in _stderr(capsys)
+
+
+def test_a_plain_match_is_one_line_at_any_width(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``nix search`` prints a match whole, so a pipe reads one match per line. nixidae/nixidae#1340."""
+    out = StringIO()
+    monkeypatch.setattr(search_module, "console", Console(file=out, width=40))
+    description = "Whether to enable the [beta] example daemon, which serves many virtual hosts."
+    record = OptionRecord(
+        name="services.example-daemon.enable", type="boolean", description=description, declarations=[], read_only=False
+    )
+
+    search_module._print(_search_command(), search_module.Found(options=[record], packages=[], subject=""), "example")
+
+    assert out.getvalue() == f"opt services.example-daemon.enable :: boolean -- {description}\n"
