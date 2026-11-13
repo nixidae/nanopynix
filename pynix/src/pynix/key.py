@@ -36,7 +36,23 @@ class ConvertSecretToPublic(ConfiguredCommand):
         await _impl.key.run_convert_secret_to_public(self)
 
 
+class ConvertSecretToPem(ConfiguredCommand):
+    """Convert a secret key read from standard input to PEM PKCS#8 format"""
+
+    @override
+    async def run(self) -> None:
+        await _impl.key.run_convert_secret_to_pem(self)
+
+
+class ConvertPublicToPem(ConfiguredCommand):
+    """Convert a public key read from standard input to PEM SubjectPublicKeyInfo format"""
+
+    @override
+    async def run(self) -> None:
+        await _impl.key.run_convert_public_to_pem(self)
+
+
 class Key(PynixCommand):
     """Generate and convert Nix signing keys"""
 
-    subcommands = (GenerateSecret, ConvertSecretToPublic)
+    subcommands = (GenerateSecret, ConvertSecretToPublic, ConvertSecretToPem, ConvertPublicToPem)

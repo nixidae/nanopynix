@@ -136,6 +136,38 @@ async def test_a_key_type_this_nix_lacks_is_refused_as_determinate_nix_refuses_i
     assert re.sub(r"\s+", "", expected) in re.sub(r"\s+", "", capsys.readouterr().err)
 
 
+@pytest.mark.parametrize("command", ["convert-secret-to-pem", "convert-public-to-pem"])
+async def test_an_ed25519_key_has_no_pem_form(
+    command: str, secret: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Determinate Nix converts only its OpenSSL keys; NixOS/nix has ed25519 keys alone."""
+    text = await anyio.Path(secret).read_text(encoding="utf-8")
+    if command == "convert-public-to-pem":
+        text = await _public(secret, capsys, monkeypatch)
+    monkeypatch.setattr("sys.stdin", io.StringIO(text))
+    assert await _pynix(["key", command]) == 1
+    assert "conversion to PEM is not implemented for this key type" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("key_type", [t for t in huggorm.KeyType if t is not huggorm.KeyType.ED25519])
+@pytest.mark.usefixtures("cnsa")
+async def test_a_pem_form_is_the_one_nix_prints(
+    key_type: huggorm.KeyType, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Determinate Nix's ``key convert-secret-to-pem`` and ``convert-public-to-pem`` (``sigs.cc``)."""
+    await require_matching_nix_cli()
+    secret = huggorm.generate_secret_key("cache-1", key_type).to_string()
+    public = huggorm.SecretKey(secret).to_public_key().to_string()
+    for command, text in (("convert-secret-to-pem", secret), ("convert-public-to-pem", public)):
+        monkeypatch.setattr("sys.stdin", io.StringIO(text))
+        ours = await _out(["key", command], capsys)
+        theirs = await anyio.run_process(
+            ["nix", "--extra-experimental-features", "nix-command cnsa", "key", command], input=text.encode()
+        )
+        assert ours == theirs.stdout.decode()
+        assert ours.startswith("-----BEGIN ")
+
+
 async def test_a_signed_path_verifies_with_the_public_key_only(
     tmp_path: Path, secret: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -472,6 +472,24 @@ Generate a public key for verifying store paths from a secret key read from stan
 | `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
 | `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
 
+#### `pynix key convert-secret-to-pem`
+
+Convert a secret key read from standard input to PEM PKCS#8 format
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
+
+#### `pynix key convert-public-to-pem`
+
+Convert a public key read from standard input to PEM SubjectPublicKeyInfo format
+
+| Argument | Type | Help |
+| --- | --- | --- |
+| `--option` | `list[tuple[str, str]]` | Set the Nix configuration setting NAME to VALUE (overriding nix.conf). Repeatable. (default: `None`) |
+| `--verbosity` | `str or None` | Nix log verbosity: error, warn, notice, info, talkative, chatty, debug, vomit, or 0-7. (default: `None`) |
+
 ### `pynix log`
 
 Show the build log for a store path

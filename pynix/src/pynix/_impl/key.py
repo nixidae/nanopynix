@@ -1,7 +1,7 @@
-"""The implementation of ``pynix key``: ``CmdKeyGenerateSecret`` and
-``CmdKeyConvertSecretToPublic`` of ``src/nix/sigs.cc``.
+"""The implementation of ``pynix key``: the ``CmdKey*`` commands of ``src/nix/sigs.cc``.
 
-Each prints the key with no newline after it, as Nix writes it.
+The two PEM commands are Determinate Nix's. Each command prints with no
+newline after it, as Nix writes it.
 """
 
 from __future__ import annotations
@@ -9,11 +9,11 @@ from __future__ import annotations
 import sys
 
 import anyio
-from huggorm import KeyType, SecretKey, aio
+from huggorm import KeyType, PublicKey, SecretKey, aio
 from huggorm.errors import NixError
 
 from pynix._util import error_exit
-from pynix.key import ConvertSecretToPublic, GenerateSecret
+from pynix.key import ConvertPublicToPem, ConvertSecretToPem, ConvertSecretToPublic, GenerateSecret
 
 
 def key_type(word: str) -> KeyType:
@@ -44,3 +44,23 @@ async def run_convert_secret_to_public(_command: ConvertSecretToPublic) -> None:
     except NixError as exc:
         error_exit(str(exc), cause=exc)
     sys.stdout.write(key.to_public_key().to_string())
+
+
+async def run_convert_secret_to_pem(_command: ConvertSecretToPem) -> None:
+    """The body of :meth:`pynix.key.ConvertSecretToPem.run`."""
+    text: str = await anyio.to_thread.run_sync(sys.stdin.read)
+    try:
+        pem = SecretKey(text).to_pem()
+    except NixError as exc:
+        error_exit(str(exc), cause=exc)
+    sys.stdout.write(pem)
+
+
+async def run_convert_public_to_pem(_command: ConvertPublicToPem) -> None:
+    """The body of :meth:`pynix.key.ConvertPublicToPem.run`."""
+    text: str = await anyio.to_thread.run_sync(sys.stdin.read)
+    try:
+        pem = PublicKey(text).to_pem()
+    except NixError as exc:
+        error_exit(str(exc), cause=exc)
+    sys.stdout.write(pem)
