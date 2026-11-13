@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
+import re
 import sys
 import time
 from collections.abc import AsyncGenerator, Callable, Iterator, Mapping, Sequence
@@ -13,7 +15,7 @@ from typing import Any, NoReturn, TextIO
 import anyio
 import huggorm
 import structlog
-from huggorm import AsyncEvalState, LogRecord
+from huggorm import AsyncEvalState, LogField, LogRecord
 from rich.console import Console
 from rich.live import Live
 from rich.text import Text
@@ -26,6 +28,8 @@ from pynix._store_layout import StoreLayout
 from pynix._verbosity import VerbosityInput, verbosity_of
 from pynix.target import EvaluationTargetError
 
+#: What `surrogateescape` decodes the bytes that are not UTF-8 to.
+_NOT_UTF8_RUN = re.compile("([\udc80-\udcff]+)")
 _LOG_LINE_RESULTS = frozenset({huggorm.ResultType.BUILD_LOG_LINE, huggorm.ResultType.POST_BUILD_LOG_LINE})
 # nom redraws on every event; four times a second shows the same thing.
 _MONITOR_REDRAW_SECONDS = 0.25
@@ -497,7 +501,7 @@ async def forward_state_logs(  # noqa: PLR0913 -- keyword-only, one per forwardi
     def write(record: LogRecord) -> None:
         line = _record_line(record, print_build_logs=print_build_logs, gate=gate)
         if line is not None:
-            out.write(f"{line if colour else huggorm.filter_ansi_escapes(line, filter_all=True)}\n")
+            write_log_line(out, line if colour else filter_log_escapes(line))
 
     def fold(record: LogRecord) -> None:
         event = monitor_event(record)
@@ -565,15 +569,20 @@ def monitor_event(record: LogRecord) -> RecordEvent | None:
     A message at the error level is an ``error``, and the fields of an
     activity are plain ints and strings. A warning carries error info too, so
     the info alone does not make an error.
+
+    A byte that is not UTF-8 becomes U+FFFD, as nom shows it: rich draws the
+    monitor, and it refuses the surrogates of :func:`log_text`.
     """
     match record.action():
         case "msg" if record.level() <= huggorm.Verbosity.ERROR:
-            return RecordEvent("error", [record.level(), record.text()], record.text())
+            text = _shown_text(record)
+            return RecordEvent("error", [record.level(), text], text)
         case "msg":
-            return RecordEvent("msg", [record.level(), record.text()], record.text())
+            text = _shown_text(record)
+            return RecordEvent("msg", [record.level(), text], text)
         case "start":
             fields = _field_values(record)
-            args = [record.id(), record.level(), record.type(), record.text(), fields, record.parent()]
+            args = [record.id(), record.level(), record.type(), _shown_text(record), fields, record.parent()]
             return RecordEvent("start", args)
         case "stop":
             return RecordEvent("stop", [record.id()])
@@ -584,7 +593,44 @@ def monitor_event(record: LogRecord) -> RecordEvent | None:
 
 
 def _field_values(record: LogRecord) -> list[int | str]:
-    return [field.integer() if field.is_int() else field.text() for field in record.fields()]
+    return [field.integer() if field.is_int() else _shown_text(field) for field in record.fields()]
+
+
+def _shown_text(item: LogRecord | LogField) -> str:
+    return item.text_bytes().decode("utf-8", "replace")
+
+
+def log_text(item: LogRecord | LogField) -> str:
+    """The text of *item*, with each byte that is not UTF-8 kept as a surrogate.
+
+    Nix logs bytes and never decodes them: a builder may print a gzip header.
+    :func:`write_log_line` writes the original bytes back. nixidae/nixidae#664.
+    """
+    return item.text_bytes().decode("utf-8", "surrogateescape")
+
+
+def filter_log_escapes(text: str) -> str:
+    """*text* with every ANSI escape removed, around the bytes that are not UTF-8.
+
+    huggorm's filter takes UTF-8 only. An escape is ASCII, so it never holds
+    one of those bytes.
+    """
+    # `split` with a group: the runs of those bytes sit at the odd indices.
+    return "".join(
+        part if index % 2 else huggorm.filter_ansi_escapes(part, filter_all=True)
+        for index, part in enumerate(_NOT_UTF8_RUN.split(text))
+    )
+
+
+@no_runtime_type_check  # out is duck-typed against TextIO, as in forward_state_logs.
+def write_log_line(out: TextIO, line: str) -> None:
+    """Write *line* and a newline to *out*, with the bytes Nix logged (`terminal.cc:39`)."""
+    if not isinstance(out, io.TextIOWrapper):
+        out.write(f"{line}\n")
+        return
+    out.flush()
+    out.buffer.write(f"{line}\n".encode("utf-8", "surrogateescape"))
+    out.buffer.flush()
 
 
 def record_message(record: LogRecord) -> str:
@@ -594,7 +640,7 @@ def record_message(record: LogRecord) -> str:
     ``showErrorInfo``, as ``SimpleLogger::logEI`` does, so it carries the
     prefix, the position and the trace that the bare message lacks.
     """
-    return record.text()
+    return log_text(record)
 
 
 def _record_line(record: LogRecord, *, print_build_logs: bool, gate: LogGate) -> str | None:
@@ -608,12 +654,12 @@ def _record_line(record: LogRecord, *, print_build_logs: bool, gate: LogGate) ->
         case "msg":
             return record_message(record)
         case "start":
-            text = record.text()
+            text = log_text(record)
             if not text or record.level() > gate.level:
                 return None
             return f"{text}..."
         case "result" if print_build_logs and record.type() in _LOG_LINE_RESULTS:
-            texts = [field.text() for field in record.fields() if not field.is_int()]
+            texts = [log_text(field) for field in record.fields() if not field.is_int()]
             return texts[-1] if texts else None
         case _:
             return None

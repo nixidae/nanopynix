@@ -55,9 +55,11 @@ from pynix._util import (
     error_console,
     error_exit,
     evaluator_settings,
+    filter_log_escapes,
     forward_state_logs,
     huggorm_build_session,
     huggorm_store_session,
+    log_text,
     print_json,
     record_message,
     report_and_exit,
@@ -251,9 +253,9 @@ class _BuildLog:
 
     def keep(self, record: LogRecord) -> None:
         if record.action() == "msg":
-            self.messages.append(huggorm.filter_ansi_escapes(record_message(record), filter_all=True))
+            self.messages.append(filter_log_escapes(record_message(record)))
         elif record.action() == "start" and record.type() == ActivityType.BUILD_WAITING:
-            match [entry.text() for entry in record.fields() if not entry.is_int()]:
+            match [log_text(entry) for entry in record.fields() if not entry.is_int()]:
                 case [original, resolved]:
                     self.originals[resolved] = original
                 case _:

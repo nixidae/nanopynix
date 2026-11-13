@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -177,6 +178,64 @@ async def test_build_file_derivation_attr(
     out_path = data["outputs"]["out"]
     assert "pynix-build-attr-test" in out_path
     assert await AnyioPath(shared_nix_environment.physical_path(out_path)).read_text() == "built-from-attr\n"
+
+
+@LINUX_CHROOT_BUILD
+async def test_build_print_build_logs_passes_bytes_that_are_not_utf8(
+    shared_nix_environment: NixTestEnvironment,
+    nixpkgs_path: str,
+    tmp_path: Path,
+    capsysbinary: pytest.CaptureFixture[bytes],
+) -> None:
+    """A build log is bytes, and pynix prints them as Nix does (`terminal.cc:39`).
+
+    The line starts as gzip does, as when nixpkgs gzips a man page.
+    Issue nixidae/nixidae#664.
+    """
+    err = await _build_a_binary_log(shared_nix_environment, nixpkgs_path, tmp_path, capsysbinary)
+
+    assert b"\x1f\x8b\x08not-utf8" in err, err
+
+
+@LINUX_CHROOT_BUILD
+async def test_build_nom_draws_a_build_log_that_is_not_utf8(
+    shared_nix_environment: NixTestEnvironment,
+    nixpkgs_path: str,
+    tmp_path: Path,
+    capsysbinary: pytest.CaptureFixture[bytes],
+) -> None:
+    """--nom draws the line as nom does, with U+FFFD for each such byte. Issue nixidae/nixidae#664."""
+    err = await _build_a_binary_log(shared_nix_environment, nixpkgs_path, tmp_path, capsysbinary, "--nom")
+
+    assert "\N{REPLACEMENT CHARACTER}".encode() in err, err
+    assert b"not-utf8" in err, err
+
+
+async def _build_a_binary_log(
+    environment: NixTestEnvironment,
+    nixpkgs_path: str,
+    tmp_path: Path,
+    capsysbinary: pytest.CaptureFixture[bytes],
+    *flags: str,
+) -> bytes:
+    """Build a derivation that prints bytes that are not UTF-8; return stderr."""
+    nix_file = tmp_path / "binary-log.nix"
+    await AnyioPath(nix_file).write_text(
+        with_nixpkgs(
+            f"""with import <nixpkgs> {{}};
+runCommand "binary-log" {{ nonce = "{uuid.uuid4()}"; }} "printf '\\\\037\\\\213\\\\010not-utf8\\\\n' >&2; touch $out"
+""",
+            nixpkgs_path,
+        ),
+    )
+    store_args = environment.pynix_store_args()
+    cmd = parse(["build", "--file", str(nix_file), *store_args, "--print-build-logs", *flags])
+
+    await cmd.run()
+
+    captured = capsysbinary.readouterr()
+    assert json.loads(captured.out)["outputs"]["out"]
+    return captured.err
 
 
 @LINUX_CHROOT_BUILD
