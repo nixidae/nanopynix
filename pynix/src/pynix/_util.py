@@ -5,7 +5,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import AsyncGenerator, Iterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager, nullcontext
 from pathlib import Path
 from typing import Any, NoReturn, TextIO
@@ -94,13 +94,61 @@ class LogGate:
     """The verbosity up to which :func:`forward_state_logs` prints an activity.
 
     Mutable, because a REPL's ``:verbosity`` moves the level after the
-    forwarder starts.
+    forwarder starts. ``muted`` counts the :func:`muted_warnings` blocks open
+    on it.
     """
 
-    __slots__ = ("level",)
+    __slots__ = ("level", "muted")
 
     def __init__(self, level: huggorm.Verbosity) -> None:
         self.level = level
+        self.muted = 0
+
+
+#: The gate of each state a forwarder prints for, by the state's identity, so
+#: that :func:`muted_warnings` reaches it from code that holds the state only.
+_GATES: dict[int, LogGate] = {}
+
+
+@contextmanager
+def muted_warnings(state: AsyncEvalState) -> Iterator[None]:
+    """Drop the warnings *state* logs while the block runs; an error still prints.
+
+    For a walk that forces attributes no caller asked for, such as the
+    package walk of ``pynix search``: nixpkgs warns once for each alias it
+    forces (nixidae/nixidae#1310). A warning the block itself causes is lost
+    too.
+    """
+    gate = _GATES.get(id(state))
+    if gate is None:
+        yield
+        return
+    gate.muted += 1
+    try:
+        yield
+    finally:
+        gate.muted -= 1
+
+
+def _unless_muted(callback: Callable[[LogRecord], None], gate: LogGate) -> Callable[[LogRecord], None]:
+    def forward(record: LogRecord) -> None:
+        if gate.muted > 0 and record.action() == "msg" and record.level() == huggorm.Verbosity.WARN:
+            return
+        callback(record)
+
+    return forward
+
+
+@asynccontextmanager
+async def _gate_of(state: AsyncEvalState | None, gate: LogGate) -> AsyncGenerator[None]:
+    if state is None:
+        yield
+        return
+    _GATES[id(state)] = gate
+    try:
+        yield
+    finally:
+        _GATES.pop(id(state), None)
 
 
 def _python_level(verbosity: huggorm.Verbosity) -> int:
@@ -460,9 +508,10 @@ async def forward_state_logs(  # noqa: PLR0913 -- keyword-only, one per forwardi
             # cannot be copied.
             live.console.print(line, soft_wrap=True)
 
-    callback = write if monitor is None else fold
+    callback = _unless_muted(write if monitor is None else fold, gate)
     try:
         async with (
+            _gate_of(state, gate),
             session.forward(state, callback, level=int(gate.level)) if state is not None else nullcontext(),
             session.forward_process(callback, level=int(gate.level)),
             _redrawing(live, monitor),

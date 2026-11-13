@@ -71,6 +71,23 @@ def test_a_package_that_throws_does_not_end_the_walk(packages: list[PackageRecor
     assert {"ripgrep", "hello-no-main", "broken", "unfree"} <= attrs
 
 
+async def test_the_walk_drops_the_warning_of_an_alias(
+    shared_nix_environment: NixTestEnvironment, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """nixpkgs warns once for each alias the walk forces, and no caller asked
+    for those (nixidae/nixidae#1310). A warning outside the walk still prints."""
+    target = EvaluationTarget(file=str(_PKGSET.with_name("pkgset-alias.nix")), attr=None, flake=None)
+    async with util_module.huggorm_eval_session(shared_nix_environment.store_uri) as (_session, _store, state):
+        root = await evaluate_target(target, state, auto_call_file=True)
+        lib_value = await select_attr(state, root, "lib")
+        records = await fetch_package_list(state, root, lib_value)
+        await state.force(await state.eval_expr('builtins.warn "a warning outside the walk" 1'))
+    assert "aliasedRipgrep" in {record.attr for record in records}
+    err = capsys.readouterr().err
+    assert "a warning outside the walk" in err
+    assert "has been renamed" not in err
+
+
 async def test_an_error_tryeval_misses_skips_one_attribute(
     shared_nix_environment: NixTestEnvironment, packages: list[PackageRecord]
 ) -> None:

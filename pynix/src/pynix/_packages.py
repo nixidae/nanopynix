@@ -45,6 +45,7 @@ from huggorm import AsyncEvalState, AsyncValue
 from huggorm.errors import NixError
 
 from pynix._evaluate import JsonValue, call, to_python
+from pynix._util import muted_warnings
 
 logger = structlog.get_logger("pynix.packages")
 
@@ -133,10 +134,11 @@ async def fetch_package_list(
     `legacyPackages` (`search.cc:183`).
     """
     collector = await call(await state.eval_expr(_COLLECT_PACKAGE_METADATA), lib_value)
-    try:
-        raw = await to_python(await call(await collector.get("walk"), pkgs_value))
-    except NixError:
-        raw = await _each_entry(state, await collector.get("entry"), pkgs_value)
+    with muted_warnings(state):
+        try:
+            raw = await to_python(await call(await collector.get("walk"), pkgs_value))
+        except NixError:
+            raw = await _each_entry(state, await collector.get("entry"), pkgs_value)
     if not isinstance(raw, list):
         raise TypeError(f"package metadata walk must return a list, got {type(raw).__name__}")
     records: list[PackageRecord] = []
