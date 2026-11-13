@@ -25,10 +25,31 @@ import pytest
 
 from test_support.subprocess_output import run_process
 
+#: Whether the bindings link Determinate Nix.
+DETERMINATE = hasattr(huggorm, "determinate_nix_version")
+
+
+def differs_on_determinate(issue: int) -> pytest.MarkDecorator:
+    """A comparison that fails against Determinate Nix, for the reason *issue* holds.
+
+    Strict, so the mark goes once the two agree.
+    """
+    return pytest.mark.xfail(DETERMINATE, reason=f"Determinate Nix differs: nixidae/nixidae#{issue}", strict=True)
+
 
 def _version_of(text: str) -> str | None:
     match = re.search(r"(\d+(?:\.\d+)+)", text)
     return match.group(1) if match else None
+
+
+def _cli_version_of(text: str) -> str | None:
+    """The Nix release in ``nix --version``: the number after the parenthesis.
+
+    Determinate Nix prints ``nix (Determinate Nix 3.24.0) 2.35.3``, and the
+    first number there is its own release, not the Nix one it links.
+    """
+    _, _, release = text.rpartition(")")
+    return _version_of(release)
 
 
 async def require_matching_nix_cli() -> str:
@@ -48,8 +69,11 @@ async def require_matching_nix_cli() -> str:
     if result.returncode != 0:
         pytest.skip(f"the nix CLI is the oracle for this test, and `nix --version` exited {result.returncode}")
 
-    cli = _version_of(result.stdout)
+    cli = _cli_version_of(result.stdout)
     linked = _version_of(huggorm.nix_version())
+    cli_is_determinate = "(Determinate Nix " in result.stdout
+    if cli_is_determinate != DETERMINATE:
+        pytest.skip(f"the `nix` on PATH ({result.stdout.strip()}) and the bindings are different Nix forks")
     if cli is None or linked is None:
         pytest.skip(f"cannot read both Nix versions to compare them: cli={cli!r} linked={linked!r}")
     if cli != linked:

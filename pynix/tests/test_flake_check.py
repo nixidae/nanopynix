@@ -19,7 +19,7 @@ from structlog.testing import capture_logs
 
 from pynix import parse
 from support.ansi import strip_ansi
-from support.nix_oracle import require_matching_nix_cli
+from support.nix_oracle import differs_on_determinate, require_matching_nix_cli
 from test_support.subprocess_output import run_process
 
 _SUMMARY = "error: some errors were encountered during the evaluation"
@@ -241,6 +241,7 @@ async def test_all_systems_checks_the_other_systems(
     assert "flake attribute 'packages.no-such-system.default' is not a derivation" in _failures(capsys.readouterr().err)
 
 
+@differs_on_determinate(1334)
 async def test_the_failures_are_the_ones_nix_reports(
     shared_nix_environment: NixTestEnvironment, broken: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -263,6 +264,7 @@ async def test_the_failures_are_the_ones_nix_reports(
     assert _failures(capsys.readouterr().err, positions=True) == _failures(result.stderr, positions=True)
 
 
+@differs_on_determinate(1334)
 async def test_hydra_jobs_import_no_derivation(
     shared_nix_environment: NixTestEnvironment, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -370,6 +372,7 @@ async def test_a_given_import_from_derivation_setting_wins(
     assert "expected a set but found an integer" in _failures(capsys.readouterr().err)
 
 
+@differs_on_determinate(1334)
 async def test_each_error_prints_as_nix_prints_it(
     shared_nix_environment: NixTestEnvironment, broken: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -383,6 +386,7 @@ async def test_each_error_prints_as_nix_prints_it(
 
 
 @pytest.mark.fresh_evaluator
+@differs_on_determinate(1334)
 async def test_the_first_failure_is_the_one_nix_stops_at(
     shared_nix_environment: NixTestEnvironment, broken: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -397,6 +401,7 @@ async def test_the_first_failure_is_the_one_nix_stops_at(
 
 
 @pytest.mark.parametrize("show_trace", [False, True], ids=["short", "show-trace"])
+@differs_on_determinate(1334)
 async def test_a_deep_failure_prints_every_frame_as_nix_does(
     shared_nix_environment: NixTestEnvironment,
     tmp_path: Path,

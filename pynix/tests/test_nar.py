@@ -15,7 +15,7 @@ from structlog.testing import capture_logs
 
 from pynix import parse
 from support.ansi import strip_ansi
-from support.nix_oracle import require_matching_nix_cli
+from support.nix_oracle import differs_on_determinate, require_matching_nix_cli
 
 
 async def _pynix(argv: list[str]) -> int:
@@ -108,7 +108,14 @@ _LS_CASES = [
 ]
 
 
-@pytest.mark.parametrize("case", _LS_CASES, ids=[" ".join(case) for case in _LS_CASES])
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(case, marks=differs_on_determinate(1332)) if {"-l", "-lR"} & set(case) else case
+        for case in _LS_CASES
+    ],
+    ids=[" ".join(case) for case in _LS_CASES],
+)
 async def test_ls_prints_what_nix_prints(
     packed: Path, case: list[str], capsysbinary: pytest.CaptureFixture[bytes]
 ) -> None:

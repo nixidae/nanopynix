@@ -25,7 +25,7 @@ from pynix._impl.build import (
 )
 from pynix.target import EvaluationTarget
 from support.ansi import strip_ansi
-from support.nix_oracle import require_matching_nix_cli
+from support.nix_oracle import differs_on_determinate, require_matching_nix_cli
 from test_support.git_fixtures import init_flake_repo
 
 
@@ -604,6 +604,7 @@ async def test_build_refuses_expr_with_a_file(
 
 @LINUX_CHROOT_BUILD
 @pytest.mark.parametrize("keep_going", [False, True], ids=["stop", "keep-going"])
+@differs_on_determinate(1333)
 async def test_build_keep_going_builds_past_a_failure_as_nix_does(
     shared_nix_environment: NixTestEnvironment,
     tmp_path: Path,
