@@ -7,7 +7,6 @@ end-to-end tests run ``pynix`` in a subprocess, because the command ends in
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -60,7 +59,7 @@ rec {
 
 
 def _shell(
-    store_uri: str, nix_file: Path, *args: str, spelling: tuple[str, ...] = ("env", "shell")
+    store_uri: str, nix_file: Path, *args: str, spelling: tuple[str, ...] = ("env", "shell"), env: dict[str, str]
 ) -> subprocess.CompletedProcess[str]:
     argv = [
         sys.executable,
@@ -74,7 +73,7 @@ def _shell(
         *args,
     ]
     return subprocess.run(  # noqa: S603 -- fixed argv, no shell, every path from the test itself
-        argv, capture_output=True, text=True, check=False, env=os.environ.copy()
+        argv, capture_output=True, text=True, check=False, env=env
     )
 
 
@@ -86,7 +85,7 @@ def packages(tmp_path: Path, nixpkgs_path: str) -> Path:
 
 
 def test_the_command_finds_the_package_and_what_it_propagates(
-    shared_nix_environment: NixTestEnvironment, packages: Path
+    child_env: dict[str, str], shared_nix_environment: NixTestEnvironment, packages: Path
 ) -> None:
     result = _shell(
         shared_nix_environment.store_uri,
@@ -96,26 +95,31 @@ def test_the_command_finds_the_package_and_what_it_propagates(
         "sh",
         "-c",
         "pynix-test-tool a -- b; pynix-test-helper",
+        env=child_env,
     )
     assert (result.returncode, result.stdout) == (0, "tool a -- b\nhelper\n"), result.stderr
 
 
 def test_a_double_dash_in_the_command_reaches_the_command(
-    shared_nix_environment: NixTestEnvironment, packages: Path
+    child_env: dict[str, str], shared_nix_environment: NixTestEnvironment, packages: Path
 ) -> None:
-    result = _shell(shared_nix_environment.store_uri, packages, "tool", "--command", "pynix-test-tool", "--", "x")
+    result = _shell(
+        shared_nix_environment.store_uri, packages, "tool", "--command", "pynix-test-tool", "--", "x", env=child_env
+    )
     assert (result.returncode, result.stdout) == (0, "tool -- x\n"), result.stderr
 
 
 def test_the_exit_status_of_the_command_reaches_the_caller(
-    shared_nix_environment: NixTestEnvironment, packages: Path
+    child_env: dict[str, str], shared_nix_environment: NixTestEnvironment, packages: Path
 ) -> None:
-    result = _shell(shared_nix_environment.store_uri, packages, "tool", "-c", "sh", "-c", "exit 42")
+    result = _shell(shared_nix_environment.store_uri, packages, "tool", "-c", "sh", "-c", "exit 42", env=child_env)
     assert result.returncode == 42, result.stderr
 
 
-def test_shell_is_env_shell(shared_nix_environment: NixTestEnvironment, packages: Path) -> None:
+def test_shell_is_env_shell(
+    child_env: dict[str, str], shared_nix_environment: NixTestEnvironment, packages: Path
+) -> None:
     """``nix shell`` is an alias of ``nix env shell`` (``main.cc:166``)."""
     argv = ("tool", "--command", "pynix-test-tool", "x")
-    result = _shell(shared_nix_environment.store_uri, packages, *argv, spelling=("shell",))
+    result = _shell(shared_nix_environment.store_uri, packages, *argv, spelling=("shell",), env=child_env)
     assert (result.returncode, result.stdout) == (0, "tool x\n"), result.stderr

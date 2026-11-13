@@ -6,7 +6,6 @@ cases follow ``tests/functional/flakes/shebang.sh``.
 
 from __future__ import annotations
 
-import os
 import sys
 import uuid
 from pathlib import Path
@@ -17,6 +16,7 @@ from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, 
 
 from pynix._script import ShebangError, command_base_dir_of, expand_script, parse_shebang_content
 from pynix.target import resolve_file_reference
+from support.child_env import child_environment
 
 _CLI = "import sys, pynix; sys.argv[0] = 'pynix'; pynix.main()"
 
@@ -184,16 +184,11 @@ writeShellScriptBin "prog" ''
     store_args = " ".join(f"``{arg}``" for arg in shared_nix_environment.pynix_store_args())
     script = scripts / "script.sh"
     await anyio.Path(script).write_text(f"#!/usr/bin/env pynix\n#! pynix run --file ./prog.nix {store_args} --\necho\n")
-    # No configuration of the host or of the user, as test_stderr.py has it.
-    env = {
-        **os.environ,
-        "NIX_CONF_DIR": str(tmp_path),
-        "NIX_USER_CONF_FILES": str(tmp_path / "absent.conf"),
-        "PYNIX_CONFIG": str(tmp_path / "absent.toml"),
-    }
-
     result = await anyio.run_process(
-        [sys.executable, "-c", _CLI, str(script), "a", "b c"], cwd=elsewhere, env=env, check=False
+        [sys.executable, "-c", _CLI, str(script), "a", "b c"],
+        cwd=elsewhere,
+        env=child_environment(tmp_path),
+        check=False,
     )
 
     assert result.returncode == 3, result.stderr.decode()

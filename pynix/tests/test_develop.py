@@ -151,7 +151,7 @@ def _normalise(value: object) -> object:
     return value
 
 
-async def _nix_print_dev_env(nix_file: Path, store_uri: str) -> dict[str, Any]:
+async def _nix_print_dev_env(nix_file: Path, store_uri: str, *, env: dict[str, str]) -> dict[str, Any]:
     """The oracle: what ``nix print-dev-env --json`` says about the same file."""
     await require_matching_nix_cli()
     result = await run_process(
@@ -167,6 +167,7 @@ async def _nix_print_dev_env(nix_file: Path, store_uri: str) -> dict[str, Any]:
             "--json",
         ],
         check=False,
+        env=env,
     )
     if result.returncode != 0:
         pytest.fail(f"the oracle failed: nix print-dev-env exited {result.returncode}\n{result.stderr.decode()}")
@@ -311,13 +312,14 @@ async def test_a_nixpkgs_input_that_is_not_a_flake_falls_back() -> None:
 
 @LINUX_CHROOT_BUILD
 async def test_print_dev_env_json_matches_nix(
+    child_env: dict[str, str],
     shared_nix_environment: NixTestEnvironment,
     nixpkgs_path: str,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     nix_file = _write(tmp_path, "plain.nix", _PLAIN_DERIVATION, nixpkgs_path)
-    theirs = await _nix_print_dev_env(nix_file, shared_nix_environment.store_uri)
+    theirs = await _nix_print_dev_env(nix_file, shared_nix_environment.store_uri, env=child_env)
 
     cmd = parse(
         ["print-dev-env", "--file", str(nix_file), "--json", *shared_nix_environment.pynix_store_args()],
@@ -331,13 +333,14 @@ async def test_print_dev_env_json_matches_nix(
 
 @LINUX_CHROOT_BUILD
 async def test_print_dev_env_json_matches_nix_for_structured_attrs(
+    child_env: dict[str, str],
     shared_nix_environment: NixTestEnvironment,
     nixpkgs_path: str,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     nix_file = _write(tmp_path, "structured.nix", _STRUCTURED_DERIVATION, nixpkgs_path)
-    theirs = await _nix_print_dev_env(nix_file, shared_nix_environment.store_uri)
+    theirs = await _nix_print_dev_env(nix_file, shared_nix_environment.store_uri, env=child_env)
 
     cmd = parse(
         ["print-dev-env", "--file", str(nix_file), "--json", *shared_nix_environment.pynix_store_args()],
@@ -427,7 +430,7 @@ async def test_a_derivation_whose_builder_is_not_bash_is_refused(
 
 
 def _run_develop(
-    nix_file: Path, store_uri: str, command: list[str], nixpkgs_path: str
+    nix_file: Path, store_uri: str, command: list[str], nixpkgs_path: str, *, env: dict[str, str]
 ) -> subprocess.CompletedProcess[str]:
     """Run ``pynix develop`` in a subprocess.
 
@@ -451,11 +454,12 @@ def _run_develop(
         capture_output=True,
         text=True,
         check=False,
-        env={**os.environ, "NIX_PATH": f"nixpkgs={nixpkgs_path}"},
+        env={**env, "NIX_PATH": f"nixpkgs={nixpkgs_path}"},
     )
 
 
 def test_develop_runs_a_command_in_the_environment(
+    child_env: dict[str, str],
     shared_nix_environment: NixTestEnvironment,
     nixpkgs_path: str,
     tmp_path: Path,
@@ -466,19 +470,23 @@ def test_develop_runs_a_command_in_the_environment(
         shared_nix_environment.store_uri,
         ["bash", "-c", 'echo "[$PYNIX_MARKER][$PYNIX_SHELL_HOOK_RAN]"'],
         nixpkgs_path,
+        env=child_env,
     )
     assert result.returncode == 0, result.stderr
     assert "[a marker with 'quotes' and $dollars][1]" in result.stdout
 
 
 def test_develop_reports_the_exit_status_of_its_command(
+    child_env: dict[str, str],
     shared_nix_environment: NixTestEnvironment,
     nixpkgs_path: str,
     tmp_path: Path,
 ) -> None:
     """``exec`` is what makes the command's status the status of pynix."""
     nix_file = _write(tmp_path, "plain.nix", _PLAIN_DERIVATION, nixpkgs_path)
-    result = _run_develop(nix_file, shared_nix_environment.store_uri, ["bash", "-c", "exit 42"], nixpkgs_path)
+    result = _run_develop(
+        nix_file, shared_nix_environment.store_uri, ["bash", "-c", "exit 42"], nixpkgs_path, env=child_env
+    )
     assert result.returncode == 42, result.stderr
 
 

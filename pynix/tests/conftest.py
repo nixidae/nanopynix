@@ -36,6 +36,7 @@ from huggorm.testing.environment import NixTestEnvironment, anyio_backend as any
 
 import pynix._util as pynix_util
 from _shared_sessions import FAITHFUL_SESSIONS_ENV_VAR, SharedSessions
+from support.child_env import child_environment
 from support.store_scenario import (
     CURRENT_PYNIX_TEST,
     PynixLiveLog,
@@ -83,6 +84,12 @@ def _host_nix_conf_stays_out() -> Iterator[None]:
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(pynix_util, "_config_loaded", True)
         yield
+
+
+@pytest.fixture(scope="session")
+def child_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
+    """The environment of a child process: the settings of this one, not the host's."""
+    return child_environment(tmp_path_factory.mktemp("child-env"))
 
 
 @pytest.fixture(scope="module", autouse=True)

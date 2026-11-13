@@ -8,7 +8,6 @@ nothing, as ``nix build`` prints nothing. Issue nixidae/nixidae#863.
 from __future__ import annotations
 
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -23,6 +22,7 @@ import pynix._impl.main as main_module
 import pynix._util as util_module
 from pynix import parse
 from pynix._build_monitor import MonitorState
+from support.child_env import child_environment
 
 _CLI = "import sys, pynix; sys.argv[0] = 'pynix'; pynix.main()"
 
@@ -159,19 +159,11 @@ derivation {{
 }}
 """
     )
-    # No configuration of the host or of the user: as `load_config=False`
-    # does for the tests in this process.
-    env = {
-        **os.environ,
-        "NIX_CONF_DIR": str(tmp_path),
-        "NIX_USER_CONF_FILES": str(tmp_path / "absent.conf"),
-        "PYNIX_CONFIG": str(tmp_path / "absent.toml"),
-    }
     argv = [sys.executable, "-c", _CLI, "build", "--file", str(nix_file), *shared_nix_environment.pynix_store_args()]
     if print_build_logs:
         argv.append("--print-build-logs")
 
-    result = await anyio.run_process(argv, env=env, check=False)
+    result = await anyio.run_process(argv, env=child_environment(tmp_path), check=False)
 
     err = result.stderr.decode()
     assert result.returncode == 0, err

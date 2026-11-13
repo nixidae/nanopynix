@@ -8,7 +8,6 @@ format reads what it prints.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -204,7 +203,7 @@ rec {
 """
 
 
-def _sbom(store_uri: str, nix_file: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _sbom(store_uri: str, nix_file: Path, *args: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     argv = [
         sys.executable,
         "-c",
@@ -219,7 +218,7 @@ def _sbom(store_uri: str, nix_file: Path, *args: str) -> subprocess.CompletedPro
         *args,
     ]
     return subprocess.run(  # noqa: S603 -- fixed argv, no shell, every path from the test itself
-        argv, capture_output=True, text=True, check=False, env=os.environ.copy()
+        argv, capture_output=True, text=True, check=False, env=env
     )
 
 
@@ -250,8 +249,10 @@ def _components(bom: dict[str, object]) -> dict[str, dict[str, object]]:
     return {str(component["name"]): component for component in listed}
 
 
-def test_cyclonedx_lists_the_runtime_closure(shared_nix_environment: NixTestEnvironment, packages: Path) -> None:
-    result = _sbom(shared_nix_environment.store_uri, packages)
+def test_cyclonedx_lists_the_runtime_closure(
+    child_env: dict[str, str], shared_nix_environment: NixTestEnvironment, packages: Path
+) -> None:
+    result = _sbom(shared_nix_environment.store_uri, packages, env=child_env)
     assert result.returncode == 0, result.stderr
     assert JsonStrictValidator(SchemaVersion.V1_7).validate_str(result.stdout) is None
     bom = json.loads(result.stdout)
@@ -280,9 +281,9 @@ def test_cyclonedx_lists_the_runtime_closure(shared_nix_environment: NixTestEnvi
 
 
 def test_cyclonedx_buildtime_adds_build_inputs_and_survives_a_throwing_meta(
-    shared_nix_environment: NixTestEnvironment, packages: Path
+    child_env: dict[str, str], shared_nix_environment: NixTestEnvironment, packages: Path
 ) -> None:
-    result = _sbom(shared_nix_environment.store_uri, packages, "--buildtime")
+    result = _sbom(shared_nix_environment.store_uri, packages, "--buildtime", env=child_env)
     assert result.returncode == 0, result.stderr
     assert JsonStrictValidator(SchemaVersion.V1_7).validate_str(result.stdout) is None
     components = _components(json.loads(result.stdout))
@@ -293,9 +294,9 @@ def test_cyclonedx_buildtime_adds_build_inputs_and_survives_a_throwing_meta(
 
 
 def test_spdx_is_valid_and_states_the_graph(
-    shared_nix_environment: NixTestEnvironment, packages: Path, tmp_path: Path
+    child_env: dict[str, str], shared_nix_environment: NixTestEnvironment, packages: Path, tmp_path: Path
 ) -> None:
-    result = _sbom(shared_nix_environment.store_uri, packages, "--format", "spdx", "--buildtime")
+    result = _sbom(shared_nix_environment.store_uri, packages, "--format", "spdx", "--buildtime", env=child_env)
     assert result.returncode == 0, result.stderr
     written = tmp_path / "sbom.spdx.json"
     written.write_text(result.stdout, encoding="utf-8")
@@ -329,7 +330,9 @@ _FLAKE = """
 """
 
 
-def test_a_flake_target_gets_an_sbom(shared_nix_environment: NixTestEnvironment, tmp_path: Path) -> None:
+def test_a_flake_target_gets_an_sbom(
+    child_env: dict[str, str], shared_nix_environment: NixTestEnvironment, tmp_path: Path
+) -> None:
     (tmp_path / "flake.nix").write_text(_FLAKE.replace("SYSTEM", huggorm.current_system()), encoding="utf-8")
     argv = [
         sys.executable,
@@ -342,7 +345,7 @@ def test_a_flake_target_gets_an_sbom(shared_nix_environment: NixTestEnvironment,
         shared_nix_environment.store_uri,
     ]
     result = subprocess.run(  # noqa: S603 -- fixed argv, no shell, every path from the test itself
-        argv, capture_output=True, text=True, check=False, env=os.environ.copy()
+        argv, capture_output=True, text=True, check=False, env=child_env
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["metadata"]["component"]["name"] == "pynix-sbom-flake"

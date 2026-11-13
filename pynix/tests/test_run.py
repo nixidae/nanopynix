@@ -7,7 +7,6 @@ replace the pytest interpreter.
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -92,7 +91,7 @@ def _flake(path: Path, nixpkgs_path: str, outputs: str) -> Path:
     return path
 
 
-def _run(store_uri: str, flake: str, *args: str) -> subprocess.CompletedProcess[str]:
+def _run(store_uri: str, flake: str, *args: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     argv = [
         sys.executable,
         "-c",
@@ -105,53 +104,55 @@ def _run(store_uri: str, flake: str, *args: str) -> subprocess.CompletedProcess[
         *args,
     ]
     return subprocess.run(  # noqa: S603 -- fixed argv, no shell, every path from the test itself
-        argv, capture_output=True, text=True, check=False, env=os.environ.copy()
+        argv, capture_output=True, text=True, check=False, env=env
     )
 
 
 def test_run_prefers_the_default_app(
-    shared_nix_environment: NixTestEnvironment, nixpkgs_path: str, tmp_path: Path
+    child_env: dict[str, str], shared_nix_environment: NixTestEnvironment, nixpkgs_path: str, tmp_path: Path
 ) -> None:
     flake = _flake(
         tmp_path / "app",
         nixpkgs_path,
         'apps.SYSTEM.default = { type = "app"; program = "${tools}/bin/first"; }; packages.SYSTEM.default = tools;',
     )
-    result = _run(shared_nix_environment.store_uri, f"{flake}#", "--", "a", "b")
+    result = _run(shared_nix_environment.store_uri, f"{flake}#", "--", "a", "b", env=child_env)
     assert (result.returncode, result.stdout) == (0, "first a b\n"), result.stderr
 
 
 def test_run_uses_main_program_without_apps(
-    shared_nix_environment: NixTestEnvironment, nixpkgs_path: str, tmp_path: Path
+    child_env: dict[str, str], shared_nix_environment: NixTestEnvironment, nixpkgs_path: str, tmp_path: Path
 ) -> None:
     flake = _flake(tmp_path / "package", nixpkgs_path, "packages.SYSTEM.default = tools;")
-    result = _run(shared_nix_environment.store_uri, f"{flake}#")
+    result = _run(shared_nix_environment.store_uri, f"{flake}#", env=child_env)
     assert (result.returncode, result.stdout) == (0, "second\n"), result.stderr
 
 
 def test_run_returns_the_exit_status_of_the_program(
-    shared_nix_environment: NixTestEnvironment, nixpkgs_path: str, tmp_path: Path
+    child_env: dict[str, str], shared_nix_environment: NixTestEnvironment, nixpkgs_path: str, tmp_path: Path
 ) -> None:
     flake = _flake(tmp_path / "package", nixpkgs_path, "packages.SYSTEM.default = tools;")
-    result = _run(shared_nix_environment.store_uri, f"{flake}#", "--bin", "fails")
+    result = _run(shared_nix_environment.store_uri, f"{flake}#", "--bin", "fails", env=child_env)
     assert result.returncode == 42, result.stderr
 
 
 def test_run_bin_selects_another_program(
-    shared_nix_environment: NixTestEnvironment, nixpkgs_path: str, tmp_path: Path
+    child_env: dict[str, str], shared_nix_environment: NixTestEnvironment, nixpkgs_path: str, tmp_path: Path
 ) -> None:
     flake = _flake(tmp_path / "package", nixpkgs_path, "packages.SYSTEM.default = tools;")
     store_uri = shared_nix_environment.store_uri
-    chosen = _run(store_uri, f"{flake}#", "--bin", "first")
-    unknown = _run(store_uri, f"{flake}#", "--bin", "third")
+    chosen = _run(store_uri, f"{flake}#", "--bin", "first", env=child_env)
+    unknown = _run(store_uri, f"{flake}#", "--bin", "third", env=child_env)
     assert (chosen.returncode, chosen.stdout) == (0, "first\n"), chosen.stderr
     assert unknown.returncode == 1
     assert "it holds: fails, first, second" in " ".join(unknown.stderr.split())
 
 
-def test_an_app_must_be_an_app(shared_nix_environment: NixTestEnvironment, nixpkgs_path: str, tmp_path: Path) -> None:
+def test_an_app_must_be_an_app(
+    child_env: dict[str, str], shared_nix_environment: NixTestEnvironment, nixpkgs_path: str, tmp_path: Path
+) -> None:
     """``toApp`` refuses a derivation under ``apps``, and so does ``pynix run``."""
     flake = _flake(tmp_path / "wrong", nixpkgs_path, "apps.SYSTEM.default = tools;")
-    result = _run(shared_nix_environment.store_uri, f"{flake}#")
+    result = _run(shared_nix_environment.store_uri, f"{flake}#", env=child_env)
     assert result.returncode == 1
     assert f"attribute 'apps.{huggorm.current_system()}.default' should have type 'app'" in result.stderr
