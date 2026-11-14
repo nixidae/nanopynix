@@ -7,59 +7,20 @@ after the build.
 
 from __future__ import annotations
 
-import importlib.metadata
 import os
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Mapping
 from datetime import UTC, datetime
-
-from anyio import Path as AnyioPath
-from huggorm import AsyncStore
 
 from pynix import _evaluate
 from pynix._evaluate import JsonValue
-from pynix._impl import _sbom_cyclonedx, _sbom_spdx
-from pynix._impl._sbom_model import Inventory, inventory, parse_walk, serial_uuid
-from pynix._impl.env import output_paths
-from pynix._nix_helpers import helper
-from pynix._store_layout import StoreLayout
 from pynix._util import huggorm_build_session, print_json, report_and_exit
+from pynix.bom import Bom, cyclonedx, inventory_of, spdx
 from pynix.sbom import Sbom
 from pynix.target import EvaluationTarget, EvaluationTargetError
 
 
-async def runtime_closure(store: AsyncStore, roots: Iterable[str]) -> dict[str, tuple[str, ...]]:
-    """Each path of the closure of *roots*, with its references."""
-    parsed = [await store.parse_store_path(root) for root in roots]
-    closure = {await store.print_store_path(path): path for path in await store.compute_fs_closure(parsed)}
-    return {
-        printed: tuple(
-            sorted(
-                [
-                    await store.print_store_path(ref)
-                    for ref in (await store.query_path_info(closure[printed])).references()
-                ]
-            )
-        )
-        for printed in sorted(closure)
-    }
-
-
-async def _patch_texts(listed: Inventory, to_disk: Callable[[str], str]) -> dict[str, str]:
-    """The text of each patch of a listed package that this host can read."""
-    texts: dict[str, str] = {}
-    for record in (listed.target, *listed.components):
-        for patch in record.patches:
-            path = AnyioPath(to_disk(patch))
-            if patch not in texts and await path.is_file():
-                texts[patch] = await path.read_text(errors="replace")
-    return texts
-
-
-async def build_inventory(command: Sbom) -> tuple[Inventory, dict[str, str]]:
-    """Evaluate and build the target of *command*, and list what its SBOM holds.
-
-    The second value holds the text of each patch, by path.
-    """
+async def build_inventory(command: Sbom) -> Bom:
+    """Evaluate and build the target of *command*, and list what its SBOM holds."""
     try:
         evaluation = EvaluationTarget.from_command(command)
         async with huggorm_build_session(
@@ -74,16 +35,7 @@ async def build_inventory(command: Sbom) -> tuple[Inventory, dict[str, str]]:
                 auto_call_file=True,
                 attr_search=_evaluate.base_attr_search(),
             )
-            walk = await helper(state, "sbom")
-            await state.force(walk)
-            records = parse_walk(await (await walk(value)).string_value())
-            await state.force(value)
-            out_path = await value.get("outPath")
-            await state.force(out_path)
-            target = await out_path.string_value()
-            roots = await output_paths(state, value)
-            listed = inventory(records, target, await runtime_closure(store, roots), buildtime=command.buildtime)
-            return listed, await _patch_texts(listed, (await StoreLayout.of(store)).to_disk)
+            return await inventory_of(state, store, value, buildtime=command.buildtime)
     except EvaluationTargetError as exc:
         report_and_exit(exc)
 
@@ -95,21 +47,13 @@ def created_at(environ: Mapping[str, str], now: datetime) -> str:
     return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def render(command: Sbom, listed: Inventory, patches: dict[str, str]) -> dict[str, JsonValue]:
+def render(command: Sbom, found: Bom) -> dict[str, JsonValue]:
     """The document that *command* asks for."""
-    unique = serial_uuid(f"{listed.target.path}:{command.format}:{command.buildtime}").urn
-    tool_version = importlib.metadata.version("pynix")
     if command.format == "spdx":
-        return _sbom_spdx.document(
-            listed,
-            namespace=unique,
-            created=created_at(os.environ, datetime.now(UTC)),
-            tool_version=tool_version,
-        )
-    return _sbom_cyclonedx.document(listed, serial_number=unique, tool_version=tool_version, patches=patches)
+        return spdx(found, created=created_at(os.environ, datetime.now(UTC)))
+    return cyclonedx(found)
 
 
 async def run_sbom(command: Sbom) -> None:
     """The body of :meth:`pynix.sbom.Sbom.run`."""
-    listed, patches = await build_inventory(command)
-    print_json(render(command, listed, patches))
+    print_json(render(command, await build_inventory(command)))
