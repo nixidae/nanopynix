@@ -31,7 +31,7 @@ import struct
 import sys
 import tempfile
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,12 +39,15 @@ import anyio
 import structlog
 from anyio import Path as AnyioPath
 from anyio.abc import ByteStream, Process, SocketStream, TaskStatus
+from huggorm import AsyncStore
 
 from libpynix._typecheck import no_runtime_type_check
 from pynix._util import error_exit
 
 logger = structlog.get_logger("pynix.darwin_builder")
 
+#: What darwin-virtiofsd shares; the guest's store has the same store dir.
+_HOST_STORE_DIR = "/nix/store"
 _WORD = struct.Struct("<Q")
 _WORKER_MAGIC_1 = 0x6E697863
 _WORKER_MAGIC_2 = 0x6478696F
@@ -62,6 +65,20 @@ class DarwinBuilderError(Exception):
 
 
 @dataclass(frozen=True)
+class HostStore:
+    """A snapshot whose store lies over the host's, through virtiofs.
+
+    The guest's own store is a volume union-mounted on ``/nix/store``. After
+    a start the guest's ``builder-store`` service puts the host store, which
+    ``server`` shares, under that volume. A path the host has then needs only
+    its database row in the guest.
+    """
+
+    server: str
+    store_vsock_port: int
+
+
+@dataclass(frozen=True)
 class Snapshot:
     """What ``snapshot.json`` says about one saved guest."""
 
@@ -74,6 +91,10 @@ class Snapshot:
     state: str
     daemon_vsock_port: int
     clock_vsock_port: int
+    #: The multifd channels of a mapped-ram ``state``, which then holds all of
+    #: guest RAM; None for RAM mapped from a file and a state without it.
+    mapped_ram: int | None = None
+    host_store: HostStore | None = None
 
     @classmethod
     async def read(cls, directory: str) -> Snapshot:
@@ -91,11 +112,21 @@ class Snapshot:
                 state=str(Path(directory) / data["state"]),
                 daemon_vsock_port=int(data["daemonVsockPort"]),
                 clock_vsock_port=int(data["clockVsockPort"]),
+                mapped_ram=int(data["mappedRam"]) if "mappedRam" in data else None,
+                host_store=HostStore(
+                    server=data["virtiofs"]["server"],
+                    store_vsock_port=int(data["virtiofs"]["storeVsockPort"]),
+                )
+                if "virtiofs" in data
+                else None,
             )
         except (OSError, ValueError, KeyError, TypeError) as exc:
             msg = f"cannot read the macOS builder snapshot {path}: {exc}"
             raise DarwinBuilderError(msg) from exc
-        for needed in (snapshot.qemu, snapshot.qemu_img, snapshot.overlay, snapshot.aux, snapshot.state):
+        needs = [snapshot.qemu, snapshot.qemu_img, snapshot.overlay, snapshot.aux, snapshot.state]
+        if snapshot.host_store is not None:
+            needs.append(snapshot.host_store.server)
+        for needed in needs:
             if not await AnyioPath(needed).exists():
                 msg = f"the macOS builder snapshot {directory} needs {needed}, which is missing"
                 raise DarwinBuilderError(msg)
@@ -240,7 +271,18 @@ async def _forward(vsock: Path, port: int, listen: Path, *, task_status: TaskSta
 
 
 async def _load(qmp: _Qmp, vm: Process, snapshot: Snapshot) -> None:
-    await qmp.call("migrate-set-capabilities", capabilities=_X_IGNORE_SHARED)
+    if snapshot.mapped_ram is not None:
+        # RAM at fixed offsets in the file, loaded by as many threads as saved it.
+        await qmp.call(
+            "migrate-set-capabilities",
+            capabilities=[
+                {"capability": "mapped-ram", "state": True},
+                {"capability": "multifd", "state": True},
+            ],
+        )
+        await qmp.call("migrate-set-parameters", **{"multifd-channels": snapshot.mapped_ram})
+    else:
+        await qmp.call("migrate-set-capabilities", capabilities=_X_IGNORE_SHARED)
     await qmp.call("migrate-incoming", uri=f"file:{snapshot.state}")
     while True:
         status = await qmp.call("query-status")
@@ -300,12 +342,82 @@ def requested_snapshot(*, snapshot: str | None, store_named: bool) -> str:
     return snapshot
 
 
+@contextlib.asynccontextmanager
+async def _virtiofs_server(server: str, work: Path) -> AsyncIterator[None]:
+    """darwin-virtiofsd sharing the host store on ``WORK/vfs.sock``, for one QEMU.
+
+    It serves one connection, so each start runs its own.
+    """
+    sock = work / "vfs.sock"
+    log = await AnyioPath(work / "vfsd.log").open("wb")
+    argv = [server, "--socket-path", str(sock), "--shared-dir", _HOST_STORE_DIR]
+    async with log, await anyio.open_process(argv, stdout=log.wrapped, stderr=log.wrapped) as proc:
+        with anyio.move_on_after(_QMP_TIMEOUT) as scope:
+            while not await AnyioPath(sock).exists():
+                if proc.returncode is not None:
+                    msg = f"darwin-virtiofsd exited with status {proc.returncode}"
+                    raise DarwinBuilderError(msg)
+                await anyio.sleep(0.005)
+        if scope.cancelled_caught:
+            msg = f"darwin-virtiofsd did not listen within {_QMP_TIMEOUT:.0f} s"
+            raise DarwinBuilderError(msg)
+        try:
+            yield
+        finally:
+            with anyio.CancelScope(shield=True):
+                if proc.returncode is None:
+                    proc.terminate()
+                with anyio.move_on_after(_STOP_TIMEOUT):
+                    await proc.wait()
+                if proc.returncode is None:
+                    proc.kill()
+                    await proc.wait()
+
+
+async def _store_command(vsock: Path, port: int, command: str, data: bytes = b"") -> None:
+    """One command to the guest's ``builder-store`` service, which answers ``ok`` last."""
+    async with await connect_guest(vsock, port) as stream:
+        await stream.send(f"{command}\n".encode() + data)
+        await stream.send_eof()
+        reply = b""
+        with contextlib.suppress(anyio.EndOfStream):
+            while True:
+                reply += await stream.receive()
+    text = reply.decode(errors="replace").strip()
+    if not text.endswith("ok"):
+        msg = f"the guest's builder-store {command} failed: {text}"
+        raise DarwinBuilderError(msg)
+
+
 @dataclass(frozen=True)
 class DarwinBuilder:
     """A running guest: its daemon as a store URI."""
 
     store: str
     work: Path
+    vsock: Path
+    host_store: HostStore | None = None
+
+    async def register(self, source: AsyncStore, drv_paths: Sequence[str]) -> None:
+        """Make the guest's store take the host's part of what *drv_paths* need.
+
+        The derivations' closure, with each output *source* has, goes into
+        the guest's database as ``nix-store --load-db`` reads it. The guest
+        reads those paths over virtiofs, so none is copied. Nothing to do
+        when the guest does not see the host store.
+        """
+        if self.host_store is None:
+            return
+        started = time.monotonic()
+        roots = [await source.parse_store_path(path) for path in drv_paths]
+        closure = await source.compute_fs_closure(roots, include_outputs=True)
+        rows = await source.make_validity_registration(closure)
+        await _store_command(self.vsock, self.host_store.store_vsock_port, "load-db", rows.encode())
+        logger.info(
+            "pynix darwin builder registered the host's paths",
+            paths=len(closure),
+            seconds=round(time.monotonic() - started, 3),
+        )
 
 
 @contextlib.asynccontextmanager
@@ -327,12 +439,15 @@ async def darwin_builder(directory: str) -> AsyncIterator[DarwinBuilder]:
         if overlay.returncode != 0:
             msg = f"qemu-img cannot make the overlay: {overlay.stderr.decode(errors='replace').strip()}"
             raise DarwinBuilderError(msg)
-        log = await AnyioPath(work / "qemu.log").open("wb")
         vsock = work / "vsock.sock"
-        async with (
-            log,
-            await anyio.open_process(snapshot.qemu_argv(work), stdout=log.wrapped, stderr=log.wrapped) as vm,
-        ):
+        async with contextlib.AsyncExitStack() as stack:
+            # Entered first, so it stops after QEMU, its only client.
+            if snapshot.host_store is not None:
+                await stack.enter_async_context(_virtiofs_server(snapshot.host_store.server, work))
+            log = await stack.enter_async_context(await AnyioPath(work / "qemu.log").open("wb"))
+            vm = await stack.enter_async_context(
+                await anyio.open_process(snapshot.qemu_argv(work), stdout=log.wrapped, stderr=log.wrapped)
+            )
             qmp = None
             try:
                 qmp = await _Qmp.connect(work / "qmp.sock", vm)
@@ -340,13 +455,17 @@ async def darwin_builder(directory: str) -> AsyncIterator[DarwinBuilder]:
                 await _wait_for_daemon(vm, vsock, snapshot.daemon_vsock_port)
                 if not await _set_clock(vsock, snapshot.clock_vsock_port):
                     logger.warning("pynix darwin builder: the guest has no network address, so it cannot substitute")
+                if snapshot.host_store is not None:
+                    # The share stays unmounted in a snapshot: its FUSE session
+                    # cannot outlive the server that saved it.
+                    await _store_command(vsock, snapshot.host_store.store_vsock_port, "host")
                 logger.info(
                     "pynix darwin builder is ready", seconds=round(time.monotonic() - started, 3), work=str(work)
                 )
                 async with anyio.create_task_group() as tg:
                     socket = work / "daemon.sock"
                     await tg.start(_forward, vsock, snapshot.daemon_vsock_port, socket)
-                    yield DarwinBuilder(f"unix://{socket}?local-fs=false", work)
+                    yield DarwinBuilder(f"unix://{socket}?local-fs=false", work, vsock, snapshot.host_store)
                     tg.cancel_scope.cancel()
             except DarwinBuilderError as exc:
                 tail = await _log_tail(work / "qemu.log")

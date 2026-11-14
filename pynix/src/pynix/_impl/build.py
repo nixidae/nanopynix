@@ -11,7 +11,7 @@ import dataclasses
 import difflib
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -160,6 +160,8 @@ class BuildSession:
     build_store: AsyncStore
     evaluation_store: AsyncStore
     state: AsyncEvalState
+    #: Called with the evaluation store and the derivations, before they build.
+    before_build: Callable[[AsyncStore, Sequence[str]], Awaitable[None]] | None = None
 
 
 async def _evaluate_build_target(target: EvaluationTarget, state: AsyncEvalState) -> list[tuple[str, AsyncValue]]:
@@ -302,6 +304,8 @@ async def _build_all(
     drv_paths = list(dict.fromkeys(drv_path for _, drv_path in named))
     if monitor is not None:
         monitor.plan = await _plan_or_none(build, drv_paths)
+    if build.before_build is not None:
+        await build.before_build(build.evaluation_store, drv_paths)
     outputs = await build_derivations(build.build_store, drv_paths, eval_store=build.evaluation_store, mode=mode)
     return [BuiltTarget(attr, drv_path, outputs[drv_path]) for attr, drv_path in named]
 
@@ -377,7 +381,12 @@ class _StoreUris:
 
 
 async def _build_on_huggorm(
-    command: Build, targets: Sequence[EvaluationTarget], settings: dict[str, str], uris: _StoreUris
+    command: Build,
+    targets: Sequence[EvaluationTarget],
+    settings: dict[str, str],
+    uris: _StoreUris,
+    *,
+    before_build: Callable[[AsyncStore, Sequence[str]], Awaitable[None]] | None = None,
 ) -> tuple[list[BuiltTarget], int, dict[str, Any] | None]:
     monitor = MonitorState(started=time.monotonic(), print_build_logs=command.print_build_logs) if command.nom else None
     async with huggorm_build_session(
@@ -392,7 +401,7 @@ async def _build_on_huggorm(
         logger.info("pynix build evaluating target")
         built, updates = await _build_target(
             targets,
-            BuildSession(session, build_store, eval_store, state),
+            BuildSession(session, build_store, eval_store, state, before_build),
             update_fod=command.update_fod,
             dry_run=command.dry_run,
             mode=_build_mode(command),
@@ -629,8 +638,9 @@ async def _build_on_darwin_builder(
     """Build in a macOS VM, evaluating against the host store.
 
     Nix copies the derivations to the guest; the guest substitutes their
-    inputs, or builds them. Unlike the Linux builder's, its store holds none of
-    the host's paths.
+    inputs, or builds them. A snapshot over the host store instead registers
+    the closure the host has (``DarwinBuilder.register``), and the guest reads
+    those paths over virtiofs.
     """
     async with darwin_builder(snapshot) as vm:
         uris = _StoreUris(
@@ -638,7 +648,7 @@ async def _build_on_darwin_builder(
             command.eval_store or _HOST_STORE_URI,
             _HOST_STORE_URI if command.copy_back else None,
         )
-        return await _build_on_huggorm(command, targets, settings, uris)
+        return await _build_on_huggorm(command, targets, settings, uris, before_build=vm.register)
 
 
 def _resolve_darwin_builder(command: Build, *, namespaced: bool, linux: bool) -> str | None:
