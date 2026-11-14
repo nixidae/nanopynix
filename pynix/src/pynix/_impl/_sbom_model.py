@@ -167,6 +167,7 @@ def inventory(
     runtime: dict[str, tuple[str, ...]],
     *,
     buildtime: bool,
+    always: frozenset[str] = frozenset(),
 ) -> Inventory:
     """Join the walk and the runtime closure into what an SBOM lists.
 
@@ -176,6 +177,7 @@ def inventory(
     One package URL is one component, as in bombon, so two outputs of one
     package (``glibc`` and ``glibc-bin``) are one component. An edge to the
     output that is left out goes to the one that stays, so the graph keeps it.
+    A path in *always* is listed though it has no version.
     """
     target_record = records.get(target) or from_store_path(target)
     candidates = [target_record, *(records.get(path) or from_store_path(path) for path in sorted(runtime))]
@@ -186,7 +188,7 @@ def inventory(
     kept: dict[str, Record] = {}
     alias: dict[str, str] = {}
     for record in candidates:
-        if record.path == target or _listed(record):
+        if record.path == target or record.path in always or _listed(record):
             alias[record.path] = kept.setdefault(record.purl, record).path
 
     edges: dict[str, set[str]] = {path: set() for path in set(alias.values())}
