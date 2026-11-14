@@ -7,12 +7,11 @@ on every start, and none of these imports is needed to list an option.
 
 from __future__ import annotations
 
-import dataclasses
 import difflib
 import sys
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -21,13 +20,11 @@ import structlog
 from anyio import Path as AnyioPath
 from huggorm import (
     TEMPORARY,
-    ActivityType,
     AsyncEvalState,
     AsyncRemoteSession,
     AsyncSession,
     AsyncStore,
     AsyncValue,
-    LogRecord,
     ServerOptions,
     worker,
 )
@@ -45,6 +42,7 @@ from huggorm.fod import (
 from huggorm.namespace import Temporary
 
 from pynix import _evaluate
+from pynix._build_log import CAUSE_LEVEL, BuildLog
 from pynix._build_monitor import BuildPlan, MonitorState
 from pynix._impl.copy import StoreEnds, closure_of, copy_verified
 from pynix._impl.linux_builder import LinuxBuilderError, linux_builder, requested_guest
@@ -55,13 +53,10 @@ from pynix._util import (
     error_console,
     error_exit,
     evaluator_settings,
-    filter_log_escapes,
     forward_state_logs,
     huggorm_build_session,
     huggorm_store_session,
-    log_text,
     print_json,
-    record_message,
     report_and_exit,
 )
 from pynix.build import Build
@@ -75,8 +70,6 @@ from pynix.target import (
 logger = structlog.get_logger("pynix.build")
 _HOST_STORE_URI = "daemon"
 _MAX_FOD_UPDATES = 10
-#: Nix logs the cause of a failed dependency, such as a hash mismatch, as an error.
-_CAUSE_LEVEL = int(huggorm.Verbosity.WARN)
 
 
 def _server_options(overlay: Path | Temporary, settings: Mapping[str, str], sandbox_paths: list[str]) -> ServerOptions:
@@ -234,40 +227,6 @@ async def _drv_path(build: BuildSession, root: AsyncValue) -> str:
     return await build.evaluation_store.print_store_path(await root.drv_path())
 
 
-@dataclass
-class _BuildLog:
-    """The messages of a build, which hold the cause of a failed dependency.
-
-    A callback on the process stream, and not a capture: a capture holds a
-    fixed number of messages and results together, so a long build log fills
-    it, and the mismatch that comes last is dropped. This keeps the messages
-    alone, so no amount of build progress pushes one out.
-    """
-
-    messages: list[str] = field(default_factory=list)
-    #: Each derivation that Nix built resolved, by the path of the resolved
-    #: copy. Nix names the copy in a failure, and the copy is in no closure of
-    #: the target. Only the resolution activity carries two fields
-    #: (`derivation-resolution-goal.cc:138`): the original and the copy.
-    originals: dict[str, str] = field(default_factory=dict)
-
-    def keep(self, record: LogRecord) -> None:
-        if record.action() == "msg":
-            self.messages.append(filter_log_escapes(record_message(record)))
-        elif record.action() == "start" and record.type() == ActivityType.BUILD_WAITING:
-            match [log_text(entry) for entry in record.fields() if not entry.is_int()]:
-                case [original, resolved]:
-                    self.originals[resolved] = original
-                case _:
-                    pass
-
-    def attributed(self, mismatch: FodHashMismatch) -> FodHashMismatch:
-        """*mismatch*, named by the derivation the target holds."""
-        if mismatch.drv_path is None or mismatch.drv_path not in self.originals:
-            return mismatch
-        return dataclasses.replace(mismatch, drv_path=self.originals[mismatch.drv_path])
-
-
 async def _updated_source(source_file: Path, mismatch: FodHashMismatch) -> str:
     """The text of *source_file* with the hash of *mismatch* replaced, and its diff printed."""
     try:
@@ -337,8 +296,8 @@ async def _build_target(  # noqa: PLR0913 -- keyword-only, one per build option;
         found: list[tuple[str, AsyncValue]] = []
         # A failed dependency's cause is not in the error of the target that
         # needed it. It arrives on the process stream.
-        log = _BuildLog()
-        async with build.session.forward_process(log.keep, level=_CAUSE_LEVEL):
+        log = BuildLog()
+        async with build.session.forward_process(log.keep, level=CAUSE_LEVEL):
             try:
                 for target in targets:
                     found.extend(await _evaluate_build_target(target, build.state))
