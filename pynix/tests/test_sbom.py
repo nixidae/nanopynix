@@ -8,6 +8,7 @@ format reads what it prints.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -177,24 +178,41 @@ rec {
     };
     passthru.patches = [ ./fix.patch ];
     meta.license = [ lib.licenses.mit lib.licenses.asl20 ];
-    meta.homepage = "https://example.org/lib";
+    meta.homepage = [ "https://example.org/lib" "https://mirror.example.org/lib" ];
+    meta.changelog = "https://example.org/lib/NEWS";
+    meta.downloadPage = "https://example.org/lib/download";
+    meta.longDescription = "A library that the app links.";
+    meta.mainProgram = "foo";
+    meta.maintainers = [ { name = "Ada"; email = "ada@example.org"; github = "ada"; } ];
+    meta.identifiers.purlParts = { type = "github"; spec = "example/lib@2.0"; };
   } "mkdir $out $man";
-  raw = pname: version: meta: (derivation {
-    name = "${pname}-${version}";
-    inherit pname version;
-    system = builtins.currentSystem;
-    builder = runtimeShell;
-    args = [ "-c" "echo > $out" ];
-  }) // { inherit meta; };
+  # `meta` on `out` too: mkDerivation puts an input's `out` into `drvAttrs`.
+  raw = pname: version: meta:
+    let
+      d = derivation {
+        name = "${pname}-${version}";
+        inherit pname version;
+        system = builtins.currentSystem;
+        builder = runtimeShell;
+        args = [ "-c" "echo > $out" ];
+      } // { inherit meta; };
+    in
+    d // { out = d; };
   broken = raw "pynix-sbom-broken" "4.0" (throw "this meta throws");
   deep = raw "pynix-sbom-deep" "5.0" {
     license = [ lib.licenses.mit (throw "this license throws") ];
     homepage = [ ];
+    description = "Its meta reaches the walk";
   };
+  compound = runCommand "pynix-sbom-compound-6.0" {
+    pname = "pynix-sbom-compound";
+    version = "6.0";
+    meta.license = with lib.licenses; AND [ mit (WITH asl20 llvm-exception) ];
+  } "mkdir $out";
   app = runCommand "pynix-sbom-app-1.0" {
     pname = "pynix-sbom-app";
     version = "1.0";
-    nativeBuildInputs = [ cc broken deep ];
+    nativeBuildInputs = [ cc broken deep compound ];
     buildInputs = [ libfoo ];
     meta.license = lib.licenses.gpl3Plus;
     meta.description = "The target";
@@ -262,14 +280,40 @@ def test_cyclonedx_lists_the_runtime_closure(
     assert lib["licenses"] == [{"license": {"id": "MIT"}}, {"license": {"id": "Apache-2.0"}}]
     assert lib["externalReferences"] == [
         {
-            "type": "vcs",
+            "type": "source-distribution",
             "url": "https://example.org/lib-2.0.tar.gz",
             "hashes": [
                 {"alg": "SHA-256", "content": "0d5f60154382fee10b114a1c34e785d8b1f492073ae2d3a6f7b147687b366aa0"}
             ],
         },
         {"type": "website", "url": "https://example.org/lib"},
+        {"type": "website", "url": "https://mirror.example.org/lib"},
+        {"type": "release-notes", "url": "https://example.org/lib/NEWS"},
+        {"type": "distribution", "url": "https://example.org/lib/download"},
     ]
+    assert lib["evidence"] == {
+        "identity": [
+            {
+                "field": "purl",
+                "methods": [
+                    {"technique": "manifest-analysis", "confidence": 1.0, "value": "pkg:github/example/lib@2.0"}
+                ],
+            }
+        ]
+    }
+    # A runtime path is valid, so the store gives its NAR hash.
+    assert [h["alg"] for h in _objects(lib["hashes"])] == ["SHA-256"]
+    properties: dict[str, list[str]] = {}
+    for prop in _objects(lib["properties"]):
+        properties.setdefault(str(prop["name"]), []).append(str(prop["value"]))
+    assert properties["nix:outputName"] == ["out"]
+    assert properties["nix:drvPath"][0].endswith("-pynix-sbom-lib-2.0.drv")
+    assert properties["nix:outputPath"][0].endswith("-pynix-sbom-lib-2.0")
+    assert int(properties["nix:narSize"][0]) > 0
+    assert re.fullmatch(r".*/packages\.nix:\d+", properties["nix:position"][0])
+    assert properties["nix:mainProgram"] == ["foo"]
+    assert properties["nix:longDescription"] == ["A library that the app links."]
+    assert properties["nix:maintainer"] == ["Ada <ada@example.org> (github:ada)"]
     assert lib["pedigree"] == {
         "patches": [
             {"type": "unofficial", "diff": {"text": {"contentType": "text/plain", "content": "--- a\n+++ b\n"}}}
@@ -290,6 +334,8 @@ def test_cyclonedx_buildtime_adds_build_inputs_and_survives_a_throwing_meta(
     assert {"pynix-sbom-lib", "pynix-sbom-cc", "pynix-sbom-broken", "pynix-sbom-deep"} <= set(components)
     assert "licenses" not in components["pynix-sbom-broken"]
     assert "licenses" not in components["pynix-sbom-deep"]
+    assert components["pynix-sbom-deep"]["description"] == "Its meta reaches the walk"
+    assert components["pynix-sbom-compound"]["licenses"] == [{"expression": "MIT AND (Apache-2.0 WITH LLVM-exception)"}]
     assert all(not str(c["bom-ref"]).endswith("-man") for c in components.values())
 
 

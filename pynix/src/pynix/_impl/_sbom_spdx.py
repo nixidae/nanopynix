@@ -35,7 +35,11 @@ def _declared_license(record: Record) -> str:
 
     A list in `meta.license` does not say whether the licenses apply together
     or as a choice, so more than one gives no assertion, as in sbomnix.
+    A compound license gives its expression, unless it names a license with
+    no SPDX identifier: SPDX needs each `LicenseRef-` defined in the document.
     """
+    if record.license_expression and "LicenseRef-" not in record.license_expression:
+        return record.license_expression
     if len(record.licenses) == 1 and record.licenses[0].spdx_id:
         return record.licenses[0].spdx_id
     return _NOASSERTION
@@ -53,8 +57,8 @@ def package(record: Record) -> dict[str, JsonValue]:
         "licenseDeclared": _declared_license(record),
         "copyrightText": _NOASSERTION,
     }
-    if record.homepage:
-        result["homepage"] = record.homepage
+    if record.homepages:
+        result["homepage"] = record.homepages[0]
     if record.description:
         result["summary"] = record.description
     if digest := sri_digest(record.output_hash):

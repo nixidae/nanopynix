@@ -97,32 +97,79 @@ let
         license m.license
     );
 
+  # nixpkgs `lib.licenses.toSPDX`, for a compound license (`AND`, `WITH`,
+  # `+`). A plain license or a list stays in `license`.
+  spdxExpression =
+    l:
+    let
+      bracket = x: if x.licenseType == "compound" || x.licenseType == "exception" then "(${spdxExpression x})" else spdxExpression x;
+    in
+    if l.licenseType == "simple" then
+      l.spdxId or "LicenseRef-nixos-${l.shortName}"
+    else if l.licenseType == "compound" then
+      builtins.concatStringsSep " ${l.operator} " (map bracket l.licenses)
+    else if l.licenseType == "exception" then
+      "${bracket l.license} ${l.operator} ${bracket l.exception}"
+    else if l.licenseType == "plus" then
+      "${bracket l.license}${l.operator}"
+    else
+      throw "unknown license type";
+
+  licenseExpression =
+    m:
+    guard null (
+      _:
+      let
+        l = m.license or null;
+      in
+      if isAttrs l && builtins.elem (l.licenseType or null) [ "compound" "exception" "plus" ] then
+        spdxExpression l
+      else
+        null
+    );
+
   stringOrNull = v: if isString v then v else null;
+  boolOrNull = v: if builtins.isBool v then v else null;
+  strings = v: if isList v then filter isString v else if isString v then [ v ] else [ ];
+
+  maintainer = p: {
+    name = stringOrNull (p.name or null);
+    email = stringOrNull (p.email or null);
+    github = stringOrNull (p.github or null);
+  };
 
   meta =
     d:
     let
       m = shallow { } (_: if isAttrs (d.meta or null) then d.meta else { });
       identifiers = shallow { } (_: if isAttrs (m.identifiers or null) then m.identifiers else { });
+      # `v1` is the stable interface; the top level mirrors it.
+      v1 = shallow { } (_: if isAttrs (identifiers.v1 or null) then identifiers.v1 else { });
     in
     {
       license = licenses m;
-      homepage = guard null (
-        _:
-        let
-          h = m.homepage or null;
-        in
-        if isList h then (if h == [ ] then null else stringOrNull (builtins.head h)) else stringOrNull h
-      );
+      licenseExpression = licenseExpression m;
+      homepages = guard [ ] (_: strings (m.homepage or null));
+      changelogs = guard [ ] (_: strings (m.changelog or null));
+      downloadPage = guard null (_: stringOrNull (m.downloadPage or null));
       description = guard null (_: stringOrNull (m.description or null));
-      cpe = guard null (_: stringOrNull (identifiers.cpe or null));
+      longDescription = guard null (_: stringOrNull (m.longDescription or null));
+      mainProgram = guard null (_: stringOrNull (m.mainProgram or null));
+      position = guard null (_: stringOrNull (m.position or null));
+      maintainers = guard [ ] (_: map maintainer (filter isAttrs (m.maintainers or [ ])));
+      unfree = guard null (_: boolOrNull (m.unfree or null));
+      insecure = guard null (_: boolOrNull (m.insecure or null));
+      broken = guard null (_: boolOrNull (m.broken or null));
+      knownVulnerabilities = guard [ ] (_: strings (m.knownVulnerabilities or null));
+      cpe = guard null (_: stringOrNull (v1.cpe or identifiers.cpe or null));
       possibleCpes = guard [ ] (
         _:
         let
-          given = identifiers.possibleCPEs or [ ];
+          given = v1.possibleCPEs or identifiers.possibleCPEs or [ ];
         in
         if isList given then filter isString (map (c: c.cpe or null) given) else [ ]
       );
+      purls = guard [ ] (_: strings (v1.purls or identifiers.purls or v1.purl or identifiers.purl or null));
     };
 
   src =
@@ -132,10 +179,12 @@ let
       let
         s = d.src or null;
       in
-      if isAttrs s && isList (s.urls or null) then
+      # fetchurl and fetchzip name `urls`; fetchgit names one `url` and a `rev`.
+      if isAttrs s && (isList (s.urls or null) || isString (s.url or null)) then
         {
-          urls = filter isString s.urls;
+          urls = if isList (s.urls or null) then filter isString s.urls else [ s.url ];
           hash = stringOrNull (s.outputHash or null);
+          rev = stringOrNull (s.rev or null);
         }
       else
         null
@@ -167,6 +216,7 @@ let
       version = guard null (_: stringOrNull (d.version or null));
       outputName = guard null (_: stringOrNull (d.outputName or null));
       outputHash = guard null (_: stringOrNull (d.outputHash or null));
+      drvPath = guard null (_: stringOrNull (d.drvPath or null));
       meta = meta d;
       src = src d;
       patches = patches d;

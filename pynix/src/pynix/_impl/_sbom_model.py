@@ -39,6 +39,17 @@ class Source:
 
     urls: tuple[str, ...]
     hash: str | None
+    #: The revision a VCS fetch checks out (fetchgit's ``rev``).
+    rev: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Maintainer:
+    """A nixpkgs maintainer of a package: ``meta.maintainers``."""
+
+    name: str | None
+    email: str | None
+    github: str | None
 
 
 class Origin(StrEnum):
@@ -62,13 +73,32 @@ class Record:
     output_name: str | None = None
     output_hash: str | None = None
     licenses: tuple[License, ...] = ()
-    homepage: str | None = None
+    #: An SPDX expression for a compound license (``AND``, ``WITH``, ``+``); it replaces *licenses*.
+    license_expression: str | None = None
+    homepages: tuple[str, ...] = ()
+    changelogs: tuple[str, ...] = ()
+    download_page: str | None = None
     description: str | None = None
+    long_description: str | None = None
+    main_program: str | None = None
+    #: ``meta.position``: the file and line that define the package.
+    position: str | None = None
+    maintainers: tuple[Maintainer, ...] = ()
+    unfree: bool | None = None
+    insecure: bool | None = None
+    broken: bool | None = None
+    known_vulnerabilities: tuple[str, ...] = ()
     cpe: str | None = None
     possible_cpes: tuple[str, ...] = ()
+    #: Package URLs that ``meta.identifiers`` declares, beside the ``pkg:nix`` one.
+    purls: tuple[str, ...] = ()
     source: Source | None = None
     patches: tuple[str, ...] = ()
     build_references: tuple[str, ...] = ()
+    drv_path: str | None = None
+    #: The SRI SHA-256 of the output's NAR serialisation, from the store.
+    nar_hash: str | None = None
+    nar_size: int | None = None
     origin: Origin = Origin.VALUE
 
     @property
@@ -124,10 +154,23 @@ def _licenses(value: object) -> tuple[License, ...]:
     return tuple(entry for entry in map(_license, items) if entry is not None)
 
 
+def _bool(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
 def _source(value: object) -> Source | None:
     fields = _object(value)
     urls = _strings(fields.get("urls"))
-    return Source(urls=urls, hash=_string(fields.get("hash"))) if urls else None
+    return Source(urls=urls, hash=_string(fields.get("hash")), rev=_string(fields.get("rev"))) if urls else None
+
+
+def _maintainers(value: object) -> tuple[Maintainer, ...]:
+    people = (_object(item) for item in _list(value))
+    found = (
+        Maintainer(name=_string(p.get("name")), email=_string(p.get("email")), github=_string(p.get("github")))
+        for p in people
+    )
+    return tuple(m for m in found if m.name or m.email or m.github)
 
 
 def _record(raw: dict[str, object]) -> Record:
@@ -140,13 +183,26 @@ def _record(raw: dict[str, object]) -> Record:
         output_name=_string(raw.get("outputName")),
         output_hash=_string(raw.get("outputHash")),
         licenses=_licenses(meta.get("license")),
-        homepage=_string(meta.get("homepage")),
+        license_expression=_string(meta.get("licenseExpression")),
+        homepages=_strings(meta.get("homepages")),
+        changelogs=_strings(meta.get("changelogs")),
+        download_page=_string(meta.get("downloadPage")),
         description=_string(meta.get("description")),
+        long_description=_string(meta.get("longDescription")),
+        main_program=_string(meta.get("mainProgram")),
+        position=_string(meta.get("position")),
+        maintainers=_maintainers(meta.get("maintainers")),
+        unfree=_bool(meta.get("unfree")),
+        insecure=_bool(meta.get("insecure")),
+        broken=_bool(meta.get("broken")),
+        known_vulnerabilities=_strings(meta.get("knownVulnerabilities")),
         cpe=_string(meta.get("cpe")),
         possible_cpes=_strings(meta.get("possibleCpes")),
+        purls=_strings(meta.get("purls")),
         source=_source(raw.get("src")),
         patches=_strings(raw.get("patches")),
         build_references=_strings(raw.get("buildReferences")),
+        drv_path=_string(raw.get("drvPath")),
     )
 
 

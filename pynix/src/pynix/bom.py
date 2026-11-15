@@ -19,7 +19,7 @@ from __future__ import annotations
 import importlib.metadata
 import json
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from anyio import Path as AnyioPath
 from huggorm import AsyncDerivation, AsyncEvalState, AsyncStore, AsyncValue
@@ -30,6 +30,7 @@ from pynix._impl import _sbom_cyclonedx, _sbom_spdx
 from pynix._impl._sbom_model import (
     Inventory as Inventory,
     License as License,
+    Maintainer as Maintainer,
     Origin as Origin,
     Record as Record,
     Source as Source,
@@ -69,6 +70,27 @@ async def runtime_closure(store: AsyncStore, roots: Iterable[str]) -> dict[str, 
     }
 
 
+async def with_store_facts(store: AsyncStore, records: Mapping[str, Record], paths: Iterable[str]) -> dict[str, Record]:
+    """*records*, each of *paths* with the NAR hash, NAR size and deriver *store* holds for it.
+
+    *paths* must be valid in *store*. A record that names its ``.drv`` keeps it.
+    """
+    result = dict(records)
+    for path in paths:
+        record = result.get(path)
+        if record is None:
+            continue
+        info = await store.query_path_info(await store.parse_store_path(path))
+        deriver = info.deriver()
+        result[path] = replace(
+            record,
+            nar_hash=info.nar_hash().sri(),
+            nar_size=info.nar_size(),
+            drv_path=record.drv_path or (await store.print_store_path(deriver) if deriver else None),
+        )
+    return result
+
+
 async def _patch_texts(listed: Inventory, to_disk: Callable[[str], str]) -> dict[str, str]:
     texts: dict[str, str] = {}
     for record in (listed.target, *listed.components):
@@ -93,7 +115,9 @@ async def inventory_of(state: AsyncEvalState, store: AsyncStore, value: AsyncVal
     await state.force(out_path)
     target = await out_path.string_value()
     roots = await output_paths(state, value)
-    listed = inventory(records, target, await runtime_closure(store, roots), buildtime=buildtime)
+    runtime = await runtime_closure(store, roots)
+    records = await with_store_facts(store, records, runtime)
+    listed = inventory(records, target, runtime, buildtime=buildtime)
     return Bom(listed, await _patch_texts(listed, (await StoreLayout.of(store)).to_disk), buildtime)
 
 
@@ -156,10 +180,10 @@ async def record_of_path(store: AsyncStore, drv_store: AsyncStore, path: str) ->
         derivation = await drv_store.read_derivation(deriver)
     except NixError:
         return from_store_path(path)
-    return await _record_of_derivation(drv_store, derivation, path)
+    return await _record_of_derivation(drv_store, derivation, await store.print_store_path(deriver), path)
 
 
-async def _record_of_derivation(drv_store: AsyncStore, derivation: AsyncDerivation, path: str) -> Record:
+async def _record_of_derivation(drv_store: AsyncStore, derivation: AsyncDerivation, drv_path: str, path: str) -> Record:
     named = from_store_path(path)
     env = await _attrs(derivation)
     output_name = next((name for name in sorted(env) if env[name] == path), None)
@@ -169,6 +193,7 @@ async def _record_of_derivation(drv_store: AsyncStore, derivation: AsyncDerivati
         version=env.get("version") or named.version,
         output_name=output_name,
         output_hash=env.get("outputHash"),
+        drv_path=drv_path,
         source=await _source(drv_store, derivation, env.get("src")),
         patches=tuple(env.get("patches", "").split()),
         origin=Origin.DERIVATION,
@@ -209,8 +234,8 @@ async def context_roots(store: AsyncStore, value: AsyncValue) -> tuple[str, ...]
 class _BuildGraph:
     #: Each output and input source of the build closure, and what its build reads.
     reads: dict[str, tuple[str, ...]]
-    #: The ``.drv`` of each output in *reads*; an input source has none.
-    derivations: dict[str, AsyncDerivation]
+    #: The ``.drv`` path and file of each output in *reads*; an input source has none.
+    derivations: dict[str, tuple[str, AsyncDerivation]]
 
 
 async def _read(drv_store: AsyncStore, parsed: dict[str, AsyncDerivation], drv: str) -> AsyncDerivation:
@@ -234,7 +259,7 @@ async def _build_graph(drv_store: AsyncStore, roots: Mapping[str, str | None]) -
     store_dir = await drv_store.store_dir()
     parsed: dict[str, AsyncDerivation] = {}
     reads: dict[str, tuple[str, ...]] = {}
-    derivations: dict[str, AsyncDerivation] = {}
+    derivations: dict[str, tuple[str, AsyncDerivation]] = {}
     done: set[str] = set()
     pending = [drv for drv in roots.values() if drv is not None]
     for path, drv in roots.items():
@@ -259,9 +284,9 @@ async def _build_graph(drv_store: AsyncStore, roots: Mapping[str, str | None]) -
             reads.setdefault(src, ())
         built = tuple(sorted(needed.union(sources)))
         for output in sorted(await derivation.outputs()):
-            if (path := await _output_path(drv_store, parsed, drv, output)) is not None:
-                reads[path] = built
-                derivations[path] = derivation
+            if (out := await _output_path(drv_store, parsed, drv, output)) is not None:
+                reads[out] = built
+                derivations[out] = (drv, derivation)
     return _BuildGraph(dict(sorted(reads.items())), derivations)
 
 
@@ -287,9 +312,9 @@ async def build_bom(
     records = await recorded_records(state, graph.reads) if state is not None else {}
     for path in graph.reads:
         if path not in records:
-            derivation = graph.derivations.get(path)
+            built = graph.derivations.get(path)
             records[path] = (
-                await _record_of_derivation(drv_store, derivation, path) if derivation else from_store_path(path)
+                await _record_of_derivation(drv_store, built[1], built[0], path) if built else from_store_path(path)
             )
     records[name] = Record(path=name, name=name, version=version)
     wanted = tuple(sorted(roots))
@@ -341,6 +366,7 @@ async def closure_bom(
     for path in runtime:
         if path not in records:
             records[path] = await record_of_path(store, readers, path)
+    records = await with_store_facts(store, records, runtime)
     target = Record(path=name, name=name, version=version)
     records[name] = target
     # A root is what the caller deploys: listed though it has no version.
