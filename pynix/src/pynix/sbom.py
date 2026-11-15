@@ -29,7 +29,8 @@ class Sbom(ConfiguredCommand):
     Examples:
       pynix sbom --flake nixpkgs#hello
       pynix sbom --file '<nixpkgs>' --attr hello --format spdx
-      pynix sbom --flake .#default --buildtime"""
+      pynix sbom --flake .#default --buildtime
+      pynix sbom --flake nixpkgs#hello --cpe-dictionary cpes.csv"""
 
     file: str | None = file_option()
 
@@ -57,6 +58,12 @@ class Sbom(ConfiguredCommand):
     )
 
     buildtime: bool = opt(False, help="Also list the build closure: compilers, build tools and sources.")
+
+    cpe_dictionary: str | None = opt(
+        None,
+        help="A CSV of NVD vendor and product names (github.com/tiiuae/cpedict). A package that states no CPE "
+        "lists the one its product name suggests, as evidence in CycloneDX.",
+    )
 
     @override
     async def run(self) -> None:

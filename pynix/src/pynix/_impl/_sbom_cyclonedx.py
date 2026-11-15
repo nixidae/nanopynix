@@ -78,6 +78,10 @@ def _evidence(record: Record) -> JsonValue | None:
             {"technique": "manifest-analysis", "confidence": confidence, "value": cpe} for cpe in record.possible_cpes
         ]
         identity.append({"field": "cpe", "methods": cpes})
+    elif record.generated_cpe:
+        # A product name looked up in the NVD CPE dictionary: no ecosystem, no vendor from the package.
+        guess: JsonValue = {"technique": "other", "confidence": 0.5, "value": record.generated_cpe}
+        identity.append({"field": "cpe", "methods": [guess]})
     if record.purls:
         # Declared by the package (`meta.identifiers.purls`), not guessed.
         purls: list[JsonValue] = [

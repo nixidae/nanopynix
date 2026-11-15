@@ -29,6 +29,7 @@ from huggorm.errors import NixError
 
 from pynix._evaluate import JsonValue
 from pynix._impl import _sbom_cyclonedx, _sbom_embedded, _sbom_spdx
+from pynix._impl._sbom_cpe import CpeDictionary as CpeDictionary, with_generated_cpes
 from pynix._impl._sbom_embedded import Ecosystem as Ecosystem, Package as Package
 from pynix._impl._sbom_model import (
     Aggregate as Aggregate,
@@ -441,6 +442,11 @@ async def closure_bom(  # noqa: PLR0913 -- keyword-only, one per source of what 
 
 def _serial(bom: Bom, kind: str) -> str:
     return serial_uuid(f"{bom.inventory.target.path}:{kind}:{bom.buildtime}").urn
+
+
+def with_cpe_dictionary(bom: Bom, dictionary: CpeDictionary) -> Bom:
+    """*bom*, where each package that states no CPE lists the one *dictionary* suggests, as evidence."""
+    return replace(bom, inventory=with_generated_cpes(bom.inventory, dictionary))
 
 
 def cyclonedx(bom: Bom) -> dict[str, JsonValue]:

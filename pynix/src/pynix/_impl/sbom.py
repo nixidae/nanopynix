@@ -11,10 +11,12 @@ import os
 from collections.abc import Mapping
 from datetime import UTC, datetime
 
+import anyio
+
 from pynix import _evaluate
 from pynix._evaluate import JsonValue
 from pynix._util import huggorm_build_session, print_json, report_and_exit
-from pynix.bom import Bom, cyclonedx, inventory_of, spdx
+from pynix.bom import Bom, CpeDictionary, cyclonedx, inventory_of, spdx, with_cpe_dictionary
 from pynix.sbom import Sbom
 from pynix.target import EvaluationTarget, EvaluationTargetError
 
@@ -35,9 +37,13 @@ async def build_inventory(command: Sbom) -> Bom:
                 auto_call_file=True,
                 attr_search=_evaluate.base_attr_search(),
             )
-            return await inventory_of(state, store, value, buildtime=command.buildtime)
+            found = await inventory_of(state, store, value, buildtime=command.buildtime)
     except EvaluationTargetError as exc:
         report_and_exit(exc)
+    if command.cpe_dictionary is None:
+        return found
+    text = await anyio.Path(command.cpe_dictionary).read_text()
+    return with_cpe_dictionary(found, CpeDictionary.parse(text))
 
 
 def created_at(environ: Mapping[str, str], now: datetime) -> str:

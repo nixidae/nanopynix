@@ -105,6 +105,13 @@ class Record:
     known_vulnerabilities: tuple[str, ...] = ()
     cpe: str | None = None
     possible_cpes: tuple[str, ...] = ()
+    #: ``meta.identifiers.cpeParts``: what a generated CPE takes as its part and product.
+    cpe_part: str | None = None
+    cpe_product: str | None = None
+    #: A CPE that a dictionary of product names suggests (:func:`with_generated_cpes`); a guess.
+    generated_cpe: str | None = None
+    #: The language a package is a module of (``python``, ``perl``, ``php``), as its nixpkgs builder marks it.
+    language: str | None = None
     #: Package URLs that ``meta.identifiers`` declares, beside the ``pkg:nix`` one.
     purls: tuple[str, ...] = ()
     source: Source | None = None
@@ -218,6 +225,7 @@ def _maintainers(value: object) -> tuple[Maintainer, ...]:
 
 def _record(raw: dict[str, object]) -> Record:
     meta = _object(raw.get("meta"))
+    cpe_parts = _object(meta.get("cpeParts"))
     path = str(raw["path"])
     return Record(
         path=path,
@@ -241,6 +249,9 @@ def _record(raw: dict[str, object]) -> Record:
         known_vulnerabilities=_strings(meta.get("knownVulnerabilities")),
         cpe=_string(meta.get("cpe")),
         possible_cpes=_strings(meta.get("possibleCpes")),
+        cpe_part=_string(cpe_parts.get("part")),
+        cpe_product=_string(cpe_parts.get("product")),
+        language=_string(raw.get("language")),
         purls=_strings(meta.get("purls")),
         source=_source(raw.get("src")),
         patches=_strings(raw.get("patches")),

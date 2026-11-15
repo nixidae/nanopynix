@@ -188,6 +188,19 @@ let
         in
         if isList given then filter isString (map (c: c.cpe or null) given) else [ ]
       );
+      cpeParts = guard null (
+        _:
+        let
+          given = v1.cpeParts or identifiers.cpeParts or null;
+        in
+        if isAttrs given then
+          {
+            part = stringOrNull (given.part or null);
+            product = stringOrNull (given.product or null);
+          }
+        else
+          null
+      );
       purls = guard [ ] (
         _: strings (v1.purls or identifiers.purls or v1.purl or identifiers.purl or null)
       );
@@ -245,6 +258,18 @@ let
       src = src d;
       patches = patches d;
       buildReferences = map (o: o.outPath) (depsOf d);
+      # The language a package is a module of, as its nixpkgs builder marks it.
+      language = guard null (
+        _:
+        if d ? pythonModule then
+          "python"
+        else if d ? perlModule then
+          "perl"
+        else if d ? extensionName then
+          "php"
+        else
+          null
+      );
     };
 
   json = entries: builtins.unsafeDiscardStringContext (builtins.toJSON (map record entries));

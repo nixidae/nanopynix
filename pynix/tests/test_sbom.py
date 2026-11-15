@@ -281,6 +281,8 @@ rec {
     buildInputs = [ libfoo ];
     meta.license = lib.licenses.gpl3Plus;
     meta.description = "The target";
+    # What `toPerlModule` sets: a CPE dictionary does not guess for it.
+    passthru.perlModule = null;
   } "mkdir $out; echo ${libfoo} > $out/lib";
 }
 """
@@ -406,6 +408,22 @@ def test_cyclonedx_lists_the_runtime_closure(
     assert set(_components(bom)) == {"pynix-sbom-lib"}
     app_ref = bom["metadata"]["component"]["bom-ref"]
     assert {d["ref"]: d["dependsOn"] for d in bom["dependencies"]}[app_ref] == [lib["bom-ref"]]
+
+
+def test_a_cpe_dictionary_suggests_a_cpe_as_evidence(
+    child_env: dict[str, str], shared_nix_environment: NixTestEnvironment, packages: Path
+) -> None:
+    dictionary = packages.parent / "cpes.csv"
+    dictionary.write_text('"vendor","product"\n"example","pynix-sbom-lib"\n"example","pynix-sbom-app"\n')
+    result = _sbom(shared_nix_environment.store_uri, packages, "--cpe-dictionary", str(dictionary), env=child_env)
+    assert result.returncode == 0, result.stderr
+    bom = json.loads(result.stdout)
+    lib = _components(bom)["pynix-sbom-lib"]
+    assert "cpe" not in lib
+    guess = {"technique": "other", "confidence": 0.5, "value": "cpe:2.3:a:example:pynix-sbom-lib:2.0:*:*:*:*:*:*:*"}
+    assert {"field": "cpe", "methods": [guess]} in _objects(_objects([lib["evidence"]])[0]["identity"])
+    # The target is a Perl module.
+    assert "evidence" not in bom["metadata"]["component"]
 
 
 def test_cyclonedx_buildtime_adds_build_inputs_and_survives_a_throwing_meta(
