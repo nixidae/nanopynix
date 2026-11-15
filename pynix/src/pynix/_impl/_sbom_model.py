@@ -13,6 +13,7 @@ import json
 import re
 import uuid
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import cast
 from urllib.parse import quote
@@ -40,6 +41,17 @@ class Source:
     hash: str | None
 
 
+class Origin(StrEnum):
+    """What a record was read from, so a reader knows what it can lack."""
+
+    #: An evaluated derivation value: ``meta`` included, with licenses and CPEs.
+    VALUE = "value"
+    #: The output's ``.drv``: name, version, the fetch behind ``src``, patches. No ``meta``.
+    DERIVATION = "derivation"
+    #: The store path's name alone.
+    NAME = "name"
+
+
 @dataclass(frozen=True, slots=True)
 class Record:
     """One output of a derivation, with what Nix knows about its package."""
@@ -57,6 +69,7 @@ class Record:
     source: Source | None = None
     patches: tuple[str, ...] = ()
     build_references: tuple[str, ...] = ()
+    origin: Origin = Origin.VALUE
 
     @property
     def ref(self) -> str:
@@ -154,7 +167,8 @@ def from_store_path(path: str) -> Record:
     """
     _, _, rest = PurePosixPath(path).name.partition("-")
     parts = _VERSION_DASH.split(rest, maxsplit=1)
-    return Record(path=path, name=parts[0], version=parts[1] if len(parts) == 2 else None)  # noqa: PLR2004 -- a name and a version
+    version = parts[1] if len(parts) == 2 else None  # noqa: PLR2004 -- a name and a version
+    return Record(path=path, name=parts[0], version=version, origin=Origin.NAME)
 
 
 def _listed(record: Record) -> bool:

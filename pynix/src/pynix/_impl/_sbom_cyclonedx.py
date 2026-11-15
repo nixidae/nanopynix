@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from pynix._evaluate import JsonValue
-from pynix._impl._sbom_model import Inventory, License, Record, sri_digest
+from pynix._impl._sbom_model import Inventory, License, Origin, Record, sri_digest
 
 SPEC_VERSION = "1.7"
 
@@ -80,6 +80,9 @@ def component(record: Record, patches: Mapping[str, str]) -> dict[str, JsonValue
             {"type": "unofficial", "diff": {"text": {"contentType": "text/plain", "content": text}}} for text in texts
         ]
         result["pedigree"] = {"patches": diffs}
+    if record.origin is not Origin.VALUE:
+        # No `meta` behind it: a missing license or CPE is unknown, not absent.
+        result["properties"] = [{"name": "nix:recordOrigin", "value": record.origin.value}]
     return result
 
 

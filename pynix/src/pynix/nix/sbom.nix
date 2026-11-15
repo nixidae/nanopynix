@@ -1,14 +1,19 @@
-# The build closure of a derivation, as JSON: one record for each output.
+# Records of derivations, as JSON: one record for each output.
 #
-# A dependency is a derivation, or a list of derivations, in the attributes
-# that `derivation` receives (`drvAttrs`), as bombon reads it. The walk uses
-# no nixpkgs `lib`, because the target can come from any flake.
+# `closure drv`: the build closure of one derivation. A dependency is a
+# derivation, or a list of derivations, in the attributes that `derivation`
+# receives (`drvAttrs`), as bombon reads it.
+#
+# `values drvs`: each of a list of derivations and its sibling outputs, and
+# nothing they depend on. For values an evaluator recorded as it coerced
+# them (huggorm `recorded_derivation`), which already hold the closure.
+#
+# The walk uses no nixpkgs `lib`, because a value can come from any flake.
 #
 # `tryEval` guards each field that a package computes, so one package whose
 # `meta` throws (an unfree license, a broken `src`) does not stop the SBOM.
 # The JSON carries no string context: with it, the caller would realise the
 # whole build closure.
-drv:
 let
   inherit (builtins)
     concatLists
@@ -66,11 +71,6 @@ let
   item = d: {
     key = d.outPath;
     drv = d;
-  };
-
-  closure = genericClosure {
-    startSet = map item (outputsOf drv);
-    operator = entry: map item (depsOf entry.drv);
   };
 
   license =
@@ -164,5 +164,20 @@ let
       patches = patches d;
       buildReferences = map (o: o.outPath) (depsOf d);
     };
+
+  json = entries: builtins.unsafeDiscardStringContext (builtins.toJSON (map record entries));
 in
-builtins.unsafeDiscardStringContext (builtins.toJSON (map record closure))
+{
+  closure =
+    drv:
+    json (genericClosure {
+      startSet = map item (outputsOf drv);
+      operator = entry: map item (depsOf entry.drv);
+    });
+  values =
+    drvs:
+    json (genericClosure {
+      startSet = map item (concatMap outputsOf drvs);
+      operator = _: [ ];
+    });
+}

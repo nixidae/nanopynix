@@ -5,10 +5,13 @@ evaluator and store, or its own components to add, calls them directly:
 :func:`inventory_of` lists what the SBOM holds, and :func:`cyclonedx` and
 :func:`spdx` render it. Both documents are deterministic for one inventory.
 
-:func:`closure_bom` is for a caller that holds store paths and no value,
-such as the paths a Kubernetes manifest names. It builds nothing. Each
-record comes from the path's deriver, so it has no license and no CPE:
-those live in ``meta``, which no ``.drv`` holds.
+:func:`closure_bom` is for a caller that holds store paths, not one
+derivation: the paths a Kubernetes manifest names, read from its string
+context by :func:`context_roots`. It builds nothing. A state that recorded
+its derivations (huggorm ``set_record_derivations``) gives each path the
+value it was coerced from, with ``meta``. A path with no recorded value
+gets its record from its ``.drv``, with no license and no CPE, and says so
+in :attr:`Record.origin`.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from pynix._impl import _sbom_cyclonedx, _sbom_spdx
 from pynix._impl._sbom_model import (
     Inventory as Inventory,
     License as License,
+    Origin as Origin,
     Record as Record,
     Source as Source,
     from_store_path,
@@ -81,7 +85,7 @@ async def inventory_of(state: AsyncEvalState, store: AsyncStore, value: AsyncVal
     The runtime closure of those outputs, and with *buildtime* the build
     closure too. *store* is the store *state* builds in.
     """
-    walk = await helper(state, "sbom")
+    walk = await (await helper(state, "sbom")).get("closure")
     await state.force(walk)
     records = parse_walk(await (await walk(value)).string_value())
     await state.force(value)
@@ -163,7 +167,50 @@ async def record_of_path(store: AsyncStore, drv_store: AsyncStore, path: str) ->
         output_hash=env.get("outputHash"),
         source=await _source(drv_store, derivation, env.get("src")),
         patches=tuple(env.get("patches", "").split()),
+        origin=Origin.DERIVATION,
     )
+
+
+async def context_roots(store: AsyncStore, value: AsyncValue) -> tuple[str, ...]:
+    """The store paths the string context of *value* names, forced all the way down.
+
+    A plain path names itself. A built output names the path its ``.drv``
+    in *store* gives it, and a floating content-addressed one, which has no
+    path yet, is left out. A ``.drv`` with its whole closure
+    (``addDrvOutputDependencies``) names the ``.drv``.
+    """
+    # Each element names its paths by base name, with no store directory.
+    store_dir = await store.store_dir()
+    roots: set[str] = set()
+    for element in await value.string_context():
+        if element.startswith("!"):
+            output, drv = element[1:].split("!", 1)
+            env = await (await store.read_derivation(await store.parse_store_path(f"{store_dir}/{drv}"))).env()
+            path = env.get(output, "")
+            if path.startswith(store_dir + "/"):
+                roots.add(path)
+        else:
+            roots.add(f"{store_dir}/{element.removeprefix('=')}")
+    return tuple(sorted(roots))
+
+
+async def recorded_records(state: AsyncEvalState, paths: Iterable[str]) -> dict[str, Record]:
+    """The records of the values *state* recorded for *paths*, and of their sibling outputs.
+
+    Empty unless *state* recorded its derivations as it evaluated.
+    """
+    recorded = set(await state.recorded_out_paths())
+    wanted = sorted(recorded.intersection(paths))
+    if not wanted:
+        return {}
+    values = await state.make_list()
+    for path in wanted:
+        found = await state.recorded_derivation(path)
+        if found is not None:
+            await state.list_append(values, found)
+    walk = await (await helper(state, "sbom")).get("values")
+    await state.force(walk)
+    return parse_walk(await (await walk(values)).string_value())
 
 
 async def closure_bom(
@@ -173,17 +220,23 @@ async def closure_bom(
     name: str,
     version: str | None = None,
     drv_store: AsyncStore | None = None,
+    state: AsyncEvalState | None = None,
 ) -> Bom:
     """The SBOM of the runtime closure of *roots*, valid paths in *store*. Builds nothing.
 
     *name* and *version* name the target, which depends on every root.
-    *drv_store* holds the derivers, when that is not *store*: the local
-    store after evaluation, for paths that live in a remote one.
+    *state*, when it recorded its derivations, gives each path the value it
+    coerced to it. Any other path's record comes from its deriver, which
+    *drv_store* holds when *store* does not: the local store after
+    evaluation, for paths that live in a remote one.
     """
     wanted = sorted(set(roots))
     runtime = await runtime_closure(store, wanted)
     readers = drv_store or store
-    records = {path: await record_of_path(store, readers, path) for path in runtime}
+    records = await recorded_records(state, runtime) if state is not None else {}
+    for path in runtime:
+        if path not in records:
+            records[path] = await record_of_path(store, readers, path)
     target = Record(path=name, name=name, version=version)
     records[name] = target
     # A root is what the caller deploys: listed though it has no version.
