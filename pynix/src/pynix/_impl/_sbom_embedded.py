@@ -18,7 +18,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, Protocol, cast
+from typing import BinaryIO, Protocol, cast, runtime_checkable
 from urllib.parse import quote
 
 from elftools.common.exceptions import ELFError
@@ -37,10 +37,12 @@ _AUDIT_LIMIT = 8 << 20
 _GO_RELEASE = re.compile(r"go(\d+\.\d+(?:\.\d+)?(?:(?:rc|beta)\d+)?)$")
 
 
+@runtime_checkable
 class _Section(Protocol):
     def data(self) -> bytes: ...
 
 
+@runtime_checkable
 class _Elf(Protocol):
     """The part of pyelftools' ``ELFFile`` this module calls; pyelftools has no type hints."""
 
