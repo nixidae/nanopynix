@@ -105,6 +105,15 @@ def test_a_path_with_no_version_is_not_a_component() -> None:
     assert listed.dependencies[_APP] == frozenset()
 
 
+def test_the_graph_passes_through_a_path_with_no_version() -> None:
+    etc = "/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-etc"
+    unit = "/nix/store/gggggggggggggggggggggggggggggggg-unit-app.service"
+    runtime = {_APP: (etc,), etc: (etc, unit), unit: (_LIB, _APP), _LIB: ()}
+    listed = inventory(_records(), _APP, runtime, buildtime=False)
+    assert {record.path for record in listed.components} == {_APP, _LIB}
+    assert listed.dependencies == {_APP: frozenset({_LIB}), _LIB: frozenset()}
+
+
 def test_an_edge_to_a_merged_output_goes_to_the_output_that_stays() -> None:
     lib_bin = "/nix/store/ffffffffffffffffffffffffffffffff-lib-2.0-bin"
     records = _records() | _walk(

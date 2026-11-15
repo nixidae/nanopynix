@@ -252,6 +252,10 @@ def inventory(
     package (``glibc`` and ``glibc-bin``) are one component. An edge to the
     output that is left out goes to the one that stays, so the graph keeps it.
     A path in *always* is listed though it has no version.
+
+    A path with no version is no component, but the graph passes through it:
+    a NixOS system reaches its packages through ``etc`` and ``system-path``,
+    which have none. Without that, most of a system hangs off nothing.
     """
     target_record = records.get(target) or from_store_path(target)
     candidates = [target_record, *(records.get(path) or from_store_path(path) for path in sorted(runtime))]
@@ -265,19 +269,35 @@ def inventory(
         if record.path == target or record.path in always or _listed(record):
             alias[record.path] = kept.setdefault(record.purl, record).path
 
-    edges: dict[str, set[str]] = {path: set() for path in set(alias.values())}
-
-    def link(source: str, references: tuple[str, ...]) -> None:
-        start = alias.get(source)
-        if start is None:
-            return
-        edges[start].update(end for ref in references if (end := alias.get(ref)) is not None and end != start)
-
-    for path, references in runtime.items():
-        link(path, references)
+    graph: dict[str, set[str]] = {path: set(references) for path, references in runtime.items()}
     if buildtime:
         for record in records.values():
-            link(record.path, record.build_references)
+            graph.setdefault(record.path, set()).update(record.build_references)
+
+    # The listed paths each unlisted path reaches through unlisted paths alone.
+    through: dict[str, frozenset[str]] = {}
+
+    def reached(path: str) -> frozenset[str]:
+        if path in through:
+            return through[path]
+        through[path] = frozenset()  # A path that refers to itself.
+        found: set[str] = set()
+        for ref in graph.get(path, ()):
+            if ref in alias:
+                found.add(alias[ref])
+            elif ref != path:
+                found |= reached(ref)
+        through[path] = frozenset(found)
+        return through[path]
+
+    edges: dict[str, set[str]] = {path: set() for path in set(alias.values())}
+    for path, references in graph.items():
+        start = alias.get(path)
+        if start is None:
+            continue
+        for ref in references:
+            ends = {alias[ref]} if ref in alias else reached(ref)
+            edges[start].update(ends - {start})
     return Inventory(
         target=target_record,
         components=tuple(kept.values()),
