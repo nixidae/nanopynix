@@ -1,10 +1,17 @@
-"""The packages a compiled program names inside itself: Go build info and cargo-auditable data.
+"""The packages a store path names inside itself: Go build info, cargo-auditable data and Python metadata.
 
 A Go binary holds the modules it was built from, in its ``.go.buildinfo``
 section (``debug/buildinfo``). nixpkgs builds Rust with cargo-auditable,
 which writes the crates and the edges between them, as zlib-compressed JSON,
-to a ``.dep-v0`` section. Both name what is compiled in, from the artifact
-itself: no lock file, no build and no network.
+to a ``.dep-v0`` section. An installed Python distribution has a
+``METADATA`` file in its ``.dist-info`` directory (``PKG-INFO`` for the
+older ``.egg-info``), and a package that vendors others has theirs too.
+All of them name what is in the artifact, from the artifact itself: no lock
+file, no build and no network.
+
+A Python distribution's name is not proof that the code came from PyPI:
+a package built from a Git checkout, or one never published, names itself
+the same way.
 """
 
 from __future__ import annotations
@@ -16,6 +23,7 @@ import stat
 import zlib
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, replace
+from email.parser import BytesHeaderParser
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Protocol, cast, runtime_checkable
@@ -54,11 +62,12 @@ class Ecosystem(StrEnum):
 
     GOLANG = "golang"
     CARGO = "cargo"
+    PYPI = "pypi"
 
 
 @dataclass(frozen=True, slots=True)
 class Package:
-    """One package compiled into the binaries at *files*."""
+    """One package compiled into, or installed at, the *files*."""
 
     ecosystem: Ecosystem
     name: str
@@ -74,7 +83,9 @@ class Package:
 
     @property
     def purl(self) -> str:
-        name = "/".join(quote(part, safe="") for part in self.name.split("/"))
+        # The purl spec's PyPI rule, as packageurl-python applies it: PEP 503 also folds ".", the spec does not.
+        own = self.name.lower().replace("_", "-") if self.ecosystem is Ecosystem.PYPI else self.name
+        name = "/".join(quote(part, safe="") for part in own.split("/"))
         return (
             f"pkg:{self.ecosystem}/{name}@{quote(self.version, safe='')}"
             if self.version
@@ -229,8 +240,29 @@ def read_binary(stream: BinaryIO) -> tuple[Package, ...] | None:
     return None
 
 
-def _executables(root: Path) -> Iterator[Path]:
-    """Every regular file under *root* that some user may run; *root* itself when it is one."""
+def parse_python(metadata: bytes) -> Package | None:
+    """The distribution a core metadata file (``METADATA``, ``PKG-INFO``) describes; ``None`` without a name."""
+    headers = BytesHeaderParser().parsebytes(metadata)
+    name, version = (headers.get(field, "").strip() for field in ("Name", "Version"))
+    return Package(Ecosystem.PYPI, name, version or None) if name else None
+
+
+def _is_python_metadata(path: Path) -> bool:
+    """Whether *path* is the core metadata of an installed distribution, in any of the layouts pip and setuptools write."""
+    parent = path.parent.name
+    return (
+        (parent.endswith(".dist-info") and path.name == "METADATA")
+        or (parent.endswith(".egg-info") and path.name == "PKG-INFO")
+        or path.name.endswith(".egg-info")
+    )
+
+
+def _regular_files(root: Path) -> Iterator[tuple[Path, int]]:
+    """Every regular file under *root*, with its mode; *root* itself when it is one.
+
+    A symbolic link is not followed: a Python environment links each
+    distribution of another store path, which that store path names itself.
+    """
     if root.is_symlink() or not root.exists():
         return
     if root.is_file():
@@ -238,25 +270,34 @@ def _executables(root: Path) -> Iterator[Path]:
     else:
         candidates = (Path(top, name) for top, _, names in os.walk(root) for name in names)
     for path in candidates:
-        info = path.lstat()
-        if stat.S_ISREG(info.st_mode) and info.st_mode & 0o111:
-            yield path
+        mode = path.lstat().st_mode
+        if stat.S_ISREG(mode):
+            yield path, mode
+
+
+def _read(path: Path, mode: int) -> tuple[Package, ...] | None:
+    """The packages the file *path* names: an executable's compiled-in ones, or a Python distribution's own."""
+    if _is_python_metadata(path):
+        package = parse_python(path.read_bytes())
+        return (package,) if package else None
+    if not mode & 0o111:
+        return None
+    with path.open("rb") as stream:
+        if stream.read(len(_ELF_MAGIC)) != _ELF_MAGIC:
+            return None
+        stream.seek(0)
+        return read_binary(stream)
 
 
 def scan(disk: Path, store_path: str) -> tuple[Package, ...]:
-    """The packages each executable of the store path *store_path*, at *disk* on this host, names.
+    """The packages the files of the store path *store_path*, at *disk* on this host, name.
 
     Each package carries the store path of the files that hold it. One
     package in two files is one package.
     """
     found: list[Package] = []
-    for path in _executables(disk):
-        with path.open("rb") as stream:
-            if stream.read(len(_ELF_MAGIC)) != _ELF_MAGIC:
-                continue
-            stream.seek(0)
-            packages = read_binary(stream)
-        if packages:
+    for path, mode in _regular_files(disk):
+        if packages := _read(path, mode):
             name = str(PurePosixPath(store_path, path.relative_to(disk).as_posix())) if path != disk else store_path
             found.extend(replace(p, files=(name,)) for p in packages)
     return merge(found)

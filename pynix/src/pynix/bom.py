@@ -101,7 +101,7 @@ async def with_store_facts(store: AsyncStore, records: Mapping[str, Record], pat
 
 
 async def embedded_packages(store: AsyncStore, paths: Iterable[str]) -> dict[str, tuple[Package, ...]]:
-    """The packages that the binaries of each of *paths* name inside themselves: Go modules, Rust crates.
+    """The packages that each of *paths* names inside itself: Go modules, Rust crates, Python distributions.
 
     A path this host cannot read names none.
     """

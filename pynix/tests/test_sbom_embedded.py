@@ -1,11 +1,13 @@
-"""The packages a binary names inside itself: Go build info and cargo-auditable data.
+"""The packages a store path names inside itself: Go build info, cargo-auditable data and Python metadata.
 
 The binaries are nixpkgs builds on the suite's PATH (``nix/suite-runtime.nix``).
-cargo-auditable's own reader, ``rust-audit-info``, is the oracle for Rust.
+cargo-auditable's own reader, ``rust-audit-info``, is the oracle for Rust, and
+``importlib.metadata`` for Python.
 """
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import shutil
 import subprocess
@@ -150,6 +152,63 @@ def test_a_scan_finds_the_executables_of_a_store_path(tmp_path: Path) -> None:
     found = scan(tmp_path, store_path)
     assert {p.ecosystem for p in found} == {Ecosystem.GOLANG}
     assert {file for p in found for file in p.files} == {f"{store_path}/bin/go-md2man"}
+
+
+def test_a_scan_reads_the_python_distribution_importlib_reads() -> None:
+    oracle = importlib.metadata.distribution("packageurl-python")
+    # The test environment links each distribution; the link resolves into the store path that holds it.
+    metadata = Path(str(oracle.locate_file(next(f for f in oracle.files or () if f.name == "METADATA")))).resolve()
+    store_path = str(Path(*metadata.parts[:4]))
+    found = scan(Path(store_path), store_path)
+    own = next(p for p in found if p.ecosystem is Ecosystem.PYPI and p.name == oracle.metadata["Name"])
+    assert own.version == oracle.version
+    assert own.purl == f"pkg:pypi/packageurl-python@{oracle.version}"
+    assert [file.rsplit("/", 2)[-2] for file in own.files] == [f"packageurl_python-{oracle.version}.dist-info"]
+
+
+def test_a_scan_finds_each_python_distribution_once_and_follows_no_link(tmp_path: Path) -> None:
+    store_path = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-python3-tools-1.0"
+    site = tmp_path / "lib" / "python3.13" / "site-packages"
+
+    def install(directory: Path, name: str, text: str) -> None:
+        directory.mkdir(parents=True)
+        (directory / name).write_text(text)
+
+    install(
+        site / "Typing_Extensions-4.15.0.dist-info",
+        "METADATA",
+        "Metadata-Version: 2.4\nName: Typing_Extensions\nVersion: 4.15.0\n\nbody\nName: not-a-header\n",
+    )
+    install(site / "tool" / "_vendor" / "packaging-26.0.dist-info", "METADATA", "Name: packaging\nVersion: 26.0\n")
+    install(site / "LibAppArmor-5.0.2-py3.13.egg-info", "PKG-INFO", "Name: LibAppArmor\nVersion: 5.0.2\n")
+    (site / "legacy-1.0-py3.13.egg-info").write_text("Name: legacy\nVersion: 1.0\n")
+    install(site / "nameless-1.0.dist-info", "METADATA", "Version: 1.0\n")
+    install(site / "elsewhere", "METADATA", "Name: not-in-a-dist-info\nVersion: 1.0\n")
+    # An environment links the distributions of other store paths; those name themselves.
+    (site / "linked-1.0.dist-info").symlink_to(site / "Typing_Extensions-4.15.0.dist-info")
+    found = scan(tmp_path, store_path)
+    assert {(p.purl, p.files) for p in found} == {
+        (
+            "pkg:pypi/typing-extensions@4.15.0",
+            (f"{store_path}/lib/python3.13/site-packages/Typing_Extensions-4.15.0.dist-info/METADATA",),
+        ),
+        (
+            "pkg:pypi/packaging@26.0",
+            (f"{store_path}/lib/python3.13/site-packages/tool/_vendor/packaging-26.0.dist-info/METADATA",),
+        ),
+        (
+            "pkg:pypi/libapparmor@5.0.2",
+            (f"{store_path}/lib/python3.13/site-packages/LibAppArmor-5.0.2-py3.13.egg-info/PKG-INFO",),
+        ),
+        ("pkg:pypi/legacy@1.0", (f"{store_path}/lib/python3.13/site-packages/legacy-1.0-py3.13.egg-info",)),
+    }
+    assert {p.name for p in found} >= {"Typing_Extensions", "LibAppArmor"}
+    assert {(p.complete, p.root, p.dependencies) for p in found} == {(None, False, ())}
+
+
+def test_a_pypi_purl_folds_case_and_underscores_but_not_dots() -> None:
+    assert Package(Ecosystem.PYPI, "ruamel.yaml_Clib", "0.2").purl == "pkg:pypi/ruamel.yaml-clib@0.2"
+    assert Package(Ecosystem.GOLANG, "example.org/Some_Module", "v1").purl == "pkg:golang/example.org/Some_Module@v1"
 
 
 _APP = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-app-1.0"

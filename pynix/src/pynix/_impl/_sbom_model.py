@@ -151,7 +151,7 @@ class Inventory:
     aliases: dict[str, str] = field(default_factory=dict[str, str])
     #: How complete the edges of each listed path are; a path absent here is not specified.
     completeness: dict[str, Aggregate] = field(default_factory=dict[str, Aggregate])
-    #: The packages the binaries of each listed path name inside themselves (:func:`with_embedded`).
+    #: The packages each listed path names inside itself (:func:`with_embedded`).
     embedded: dict[str, tuple[Package, ...]] = field(default_factory=dict[str, tuple[Package, ...]])
 
 
