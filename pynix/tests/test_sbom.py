@@ -25,6 +25,7 @@ from spdx_tools.spdx.validation.document_validator import validate_full_spdx_doc
 
 from pynix._impl._sbom_cyclonedx import document
 from pynix._impl._sbom_model import (
+    Aggregate,
     License,
     Record,
     Source,
@@ -122,6 +123,23 @@ def test_an_edge_to_a_merged_output_goes_to_the_output_that_stays() -> None:
     listed = inventory(records, _APP, {_APP: (lib_bin,), _LIB: (), lib_bin: ()}, buildtime=False)
     assert [record.path for record in listed.components if record.name == "lib"] == [_LIB]
     assert listed.dependencies[_APP] == frozenset({_LIB})
+
+
+def test_an_edge_through_a_path_with_no_version_leaves_the_dependencies_incomplete() -> None:
+    etc = "/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-etc"
+    lib_bin = "/nix/store/ffffffffffffffffffffffffffffffff-lib-2.0-bin"
+    records = _records() | _walk({"path": lib_bin, "pname": "lib", "version": "2.0", "outputName": "bin"})
+    runtime = {_APP: (etc, lib_bin), etc: (_LIB,), _LIB: (_LIB,), lib_bin: ()}
+    listed = inventory(records, _APP, runtime, buildtime=False)
+    # A merged output is still listed: `lib`'s edges are complete.
+    assert listed.completeness == {_APP: Aggregate.INCOMPLETE, _LIB: Aggregate.COMPLETE}
+
+
+def test_the_build_edges_of_the_walk_are_of_unknown_completeness() -> None:
+    listed = inventory(_records(), _APP, {_APP: (_LIB,), _LIB: ()}, buildtime=True)
+    assert set(listed.completeness.values()) == {Aggregate.UNKNOWN}
+    composed = _objects(document(listed, serial_number="urn:uuid:x", tool_version="0", patches={})["compositions"])
+    assert [(entry["aggregate"], len(_strings(entry["dependencies"]))) for entry in composed] == [("unknown", 3)]
 
 
 def test_every_dependency_names_an_object_of_the_document() -> None:

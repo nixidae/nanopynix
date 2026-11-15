@@ -66,6 +66,16 @@ class Origin(StrEnum):
     NAME = "name"
 
 
+class Aggregate(StrEnum):
+    """How many of a component's dependencies an SBOM lists: CycloneDX's ``aggregateType``."""
+
+    COMPLETE = "complete"
+    #: It refers to a path that is no component, such as one with no version.
+    INCOMPLETE = "incomplete"
+    #: Its edges come from the attributes of its value, not from the store or a ``.drv``.
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True, slots=True)
 class Record:
     """One output of a derivation, with what Nix knows about its package."""
@@ -127,6 +137,8 @@ class Inventory:
     dependencies: dict[str, frozenset[str]] = field(default_factory=dict[str, frozenset[str]])
     #: The listed path that stands for each path of a listed package; a path with no version has none.
     aliases: dict[str, str] = field(default_factory=dict[str, str])
+    #: How complete the edges of each listed path are; a path absent here is not specified.
+    completeness: dict[str, Aggregate] = field(default_factory=dict[str, Aggregate])
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,7 +313,24 @@ def inventory(
         components=tuple(kept.values()),
         dependencies=_edges(graph, alias),
         aliases=alias,
+        completeness=_completeness(graph, alias, walked=buildtime),
     )
+
+
+def _completeness(graph: Mapping[str, set[str]], alias: Mapping[str, str], *, walked: bool) -> dict[str, Aggregate]:
+    """How complete the edges of each listed path are.
+
+    A store path's references are exact, and so are the inputs of a ``.drv``.
+    The build edges of the walk follow attributes, and miss what only a
+    string's context names. An edge to a path that is no component is lost.
+    """
+    if walked:
+        return dict.fromkeys(sorted(set(alias.values())), Aggregate.UNKNOWN)
+    result = dict.fromkeys(sorted(set(alias.values())), Aggregate.COMPLETE)
+    for path, references in graph.items():
+        if (start := alias.get(path)) is not None and any(ref != path and ref not in alias for ref in references):
+            result[start] = Aggregate.INCOMPLETE
+    return result
 
 
 def _edges(graph: Mapping[str, set[str]], alias: Mapping[str, str]) -> dict[str, frozenset[str]]:

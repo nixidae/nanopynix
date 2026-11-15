@@ -12,7 +12,17 @@ from collections.abc import Iterable, Mapping
 from pathlib import PurePosixPath
 
 from pynix._evaluate import JsonValue
-from pynix._impl._sbom_model import Build, Inventory, License, Maintainer, Origin, Record, cve_ids, sri_digest
+from pynix._impl._sbom_model import (
+    Aggregate,
+    Build,
+    Inventory,
+    License,
+    Maintainer,
+    Origin,
+    Record,
+    cve_ids,
+    sri_digest,
+)
 
 SPEC_VERSION = "1.7"
 
@@ -266,6 +276,32 @@ def formulation(
     return [{"bom-ref": f"formula:{target}", "workflows": [workflow]}]
 
 
+def compositions(inventory: Inventory, refs: Mapping[str, str] | None = None) -> list[JsonValue]:
+    """How complete the ``dependsOn`` of each component is: one composition for each aggregate.
+
+    A claim about one component's own edges, not about the edges below it.
+    *refs* gives each listed path its ``bom-ref``.
+    """
+    listed = {record.path: record.ref for record in (inventory.target, *inventory.components)}
+    names = {**listed, **refs} if refs is not None else listed
+    grouped: dict[Aggregate, set[str]] = {}
+    for path, aggregate in inventory.completeness.items():
+        if path in names:
+            grouped.setdefault(aggregate, set()).add(names[path])
+    result: list[JsonValue] = []
+    for aggregate in Aggregate:
+        if aggregate in grouped:
+            members: list[JsonValue] = [*sorted(grouped[aggregate])]
+            result.append(
+                {
+                    "bom-ref": f"composition:{aggregate}:{inventory.target.ref}",
+                    "aggregate": aggregate.value,
+                    "dependencies": members,
+                }
+            )
+    return result
+
+
 def document(
     inventory: Inventory,
     *,
@@ -303,6 +339,8 @@ def document(
         ],
         "dependencies": dependencies,
     }
+    if composed := compositions(inventory):
+        result["compositions"] = composed
     listed = {record.path: record for record in (inventory.target, *inventory.components)}
     if stated := vulnerabilities(listed.values(), patches):
         result["vulnerabilities"] = stated

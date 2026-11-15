@@ -28,6 +28,7 @@ from huggorm.errors import NixError
 from pynix._evaluate import JsonValue
 from pynix._impl import _sbom_cyclonedx, _sbom_spdx
 from pynix._impl._sbom_model import (
+    Aggregate as Aggregate,
     Build as Build,
     Inventory as Inventory,
     License as License,
@@ -440,6 +441,14 @@ def cyclonedx_formulation(bom: Bom, refs: Mapping[str, str] | None = None) -> li
     its components its own way; by default each record's own.
     """
     return _sbom_cyclonedx.formulation(bom.inventory, bom.builds, refs)
+
+
+def cyclonedx_compositions(bom: Bom, refs: Mapping[str, str] | None = None) -> list[JsonValue]:
+    """How complete each component's ``dependsOn`` is, as CycloneDX ``compositions``.
+
+    *refs* gives the ``bom-ref`` of each listed path, as for :func:`cyclonedx_formulation`.
+    """
+    return _sbom_cyclonedx.compositions(bom.inventory, refs)
 
 
 def cyclonedx_vulnerabilities(bom: Bom) -> list[JsonValue]:

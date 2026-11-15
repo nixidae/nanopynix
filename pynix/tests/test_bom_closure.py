@@ -22,6 +22,7 @@ from pynix.bom import (
     context_derivations,
     context_roots,
     cyclonedx,
+    cyclonedx_compositions,
     cyclonedx_formulation,
 )
 
@@ -242,6 +243,36 @@ async def test_each_drv_of_the_build_closure_is_a_formulation_task(shared_nix_en
     assert next(t for t in renamed["tasks"] if t["name"] == "pynix-bom-pkg-1.0")["outputs"][0]["resource"] == {
         "ref": "nix:pynix-bom-pkg@1.0"
     }
+
+
+async def test_a_component_that_reads_a_path_with_no_version_has_incomplete_dependencies(
+    shared_nix_environment: NixTestEnvironment,
+) -> None:
+    """`pkg` reads a hook that is no component, so its `dependsOn` lacks it. Builds nothing."""
+    expr = """
+      let
+        sh = { system = "x86_64-linux"; builder = "/bin/sh"; };
+        hook = derivation (sh // { name = "pynix-bom-hook"; });
+        lib = derivation (sh // { name = "pynix-bom-lib-2.0"; });
+        pkg = derivation (sh // { name = "pynix-bom-pkg-1.0"; inherit hook lib; });
+        app = derivation (sh // { name = "pynix-bom-app-1.0"; inherit pkg; });
+      in builtins.toJSON { command = "${app}"; }
+    """
+    async with _util.huggorm_build_session(shared_nix_environment.store_uri) as opened:
+        _session, _store, eval_store, state = opened
+        manifest = await state.eval_expr(expr)
+        await state.force(manifest)
+        roots = await context_derivations(eval_store, manifest)
+        bom = await build_bom(eval_store, roots, name="cluster")
+
+    text = json.dumps(cyclonedx(bom))
+    assert JsonStrictValidator(SchemaVersion.V1_7).validate_str(text) is None
+    by_name = {record.name: record for record in bom.inventory.components}
+    app, pkg, lib = by_name["pynix-bom-app"], by_name["pynix-bom-pkg"], by_name["pynix-bom-lib"]
+    composed = {entry["aggregate"]: entry["dependencies"] for entry in json.loads(text)["compositions"]}
+    assert composed == {"complete": sorted([app.ref, lib.ref, "cluster"]), "incomplete": [pkg.ref]}
+    renamed = json.loads(json.dumps(cyclonedx_compositions(bom, {pkg.path: "nix:pynix-bom-pkg@1.0"})))
+    assert {entry["aggregate"]: entry["dependencies"] for entry in renamed}["incomplete"] == ["nix:pynix-bom-pkg@1.0"]
 
 
 async def test_the_walk_reads_past_patches_that_name_no_file(shared_nix_environment: NixTestEnvironment) -> None:
