@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
 from anyio import Path as AnyioPath
@@ -149,14 +149,18 @@ async def record_of_path(store: AsyncStore, drv_store: AsyncStore, path: str) ->
     A path with no deriver, or one *drv_store* cannot read, keeps only the
     name and version its path spells.
     """
-    named = from_store_path(path)
     deriver = (await store.query_path_info(await store.parse_store_path(path))).deriver()
     if deriver is None:
-        return named
+        return from_store_path(path)
     try:
         derivation = await drv_store.read_derivation(deriver)
     except NixError:
-        return named
+        return from_store_path(path)
+    return await _record_of_derivation(drv_store, derivation, path)
+
+
+async def _record_of_derivation(drv_store: AsyncStore, derivation: AsyncDerivation, path: str) -> Record:
+    named = from_store_path(path)
     env = await _attrs(derivation)
     output_name = next((name for name in sorted(env) if env[name] == path), None)
     return Record(
@@ -171,27 +175,127 @@ async def record_of_path(store: AsyncStore, drv_store: AsyncStore, path: str) ->
     )
 
 
-async def context_roots(store: AsyncStore, value: AsyncValue) -> tuple[str, ...]:
-    """The store paths the string context of *value* names, forced all the way down.
+async def context_derivations(store: AsyncStore, value: AsyncValue) -> dict[str, str | None]:
+    """The store paths the string context of *value* names, each with the ``.drv`` that builds it.
 
-    A plain path names itself. A built output names the path its ``.drv``
-    in *store* gives it, and a floating content-addressed one, which has no
-    path yet, is left out. A ``.drv`` with its whole closure
-    (``addDrvOutputDependencies``) names the ``.drv``.
+    Forced all the way down. A plain path names itself, built by nothing.
+    A built output names the path its ``.drv`` in *store* gives it, and a
+    floating content-addressed one, which has no path yet, is left out. A
+    ``.drv`` with its whole closure (``addDrvOutputDependencies``) names the
+    ``.drv``, built by nothing.
     """
     # Each element names its paths by base name, with no store directory.
     store_dir = await store.store_dir()
-    roots: set[str] = set()
+    roots: dict[str, str | None] = {}
     for element in await value.string_context():
         if element.startswith("!"):
             output, drv = element[1:].split("!", 1)
-            env = await (await store.read_derivation(await store.parse_store_path(f"{store_dir}/{drv}"))).env()
+            drv = f"{store_dir}/{drv}"
+            env = await (await store.read_derivation(await store.parse_store_path(drv))).env()
             path = env.get(output, "")
             if path.startswith(store_dir + "/"):
-                roots.add(path)
+                roots[path] = drv
         else:
-            roots.add(f"{store_dir}/{element.removeprefix('=')}")
-    return tuple(sorted(roots))
+            roots.setdefault(f"{store_dir}/{element.removeprefix('=')}", None)
+    return dict(sorted(roots.items()))
+
+
+async def context_roots(store: AsyncStore, value: AsyncValue) -> tuple[str, ...]:
+    """The store paths the string context of *value* names: :func:`context_derivations` without the ``.drv``."""
+    return tuple(await context_derivations(store, value))
+
+
+@dataclass(frozen=True, slots=True)
+class _BuildGraph:
+    #: Each output and input source of the build closure, and what its build reads.
+    reads: dict[str, tuple[str, ...]]
+    #: The ``.drv`` of each output in *reads*; an input source has none.
+    derivations: dict[str, AsyncDerivation]
+
+
+async def _read(drv_store: AsyncStore, parsed: dict[str, AsyncDerivation], drv: str) -> AsyncDerivation:
+    if drv not in parsed:
+        parsed[drv] = await drv_store.read_derivation(await drv_store.parse_store_path(drv))
+    return parsed[drv]
+
+
+async def _output_path(drv_store: AsyncStore, parsed: dict[str, AsyncDerivation], drv: str, output: str) -> str | None:
+    path = (await (await _read(drv_store, parsed, drv)).env()).get(output, "")
+    # A floating content-addressed output has a placeholder, no path yet.
+    return path if path.startswith(await drv_store.store_dir() + "/") else None
+
+
+async def _build_graph(drv_store: AsyncStore, roots: Mapping[str, str | None]) -> _BuildGraph:
+    """The build closure of *roots* from the ``.drv`` files in *drv_store*. Reads, builds nothing.
+
+    An output's build reads the outputs it names of each input derivation, and
+    each input source. Every output of one ``.drv`` reads the same.
+    """
+    store_dir = await drv_store.store_dir()
+    parsed: dict[str, AsyncDerivation] = {}
+    reads: dict[str, tuple[str, ...]] = {}
+    derivations: dict[str, AsyncDerivation] = {}
+    done: set[str] = set()
+    pending = [drv for drv in roots.values() if drv is not None]
+    for path, drv in roots.items():
+        if drv is None:
+            reads.setdefault(path, ())
+    while pending:
+        drv = pending.pop()
+        if drv in done:
+            continue
+        done.add(drv)
+        derivation = await _read(drv_store, parsed, drv)
+        needed: set[str] = set()
+        for base, node in (await derivation.input_drvs()).items():
+            child = f"{store_dir}/{base}"
+            pending.append(child)
+            # A wire value: its accessors answer at once.
+            for output in node.outputs():
+                if (found := await _output_path(drv_store, parsed, child, output)) is not None:
+                    needed.add(found)
+        sources = [await drv_store.print_store_path(src) for src in await derivation.input_srcs()]
+        for src in sources:
+            reads.setdefault(src, ())
+        built = tuple(sorted(needed.union(sources)))
+        for output in sorted(await derivation.outputs()):
+            if (path := await _output_path(drv_store, parsed, drv, output)) is not None:
+                reads[path] = built
+                derivations[path] = derivation
+    return _BuildGraph(dict(sorted(reads.items())), derivations)
+
+
+async def build_bom(
+    drv_store: AsyncStore,
+    roots: Mapping[str, str | None],
+    *,
+    name: str,
+    version: str | None = None,
+    state: AsyncEvalState | None = None,
+) -> Bom:
+    """The SBOM of what builds *roots*: every output and source their ``.drv`` files read, recursively.
+
+    A separate document from :func:`closure_bom`'s: a Nix build runs ahead
+    of time in a sandbox, so what it reads is not what a deployment runs.
+    *roots* maps each path to the ``.drv`` that builds it, or None for a
+    source (:func:`context_derivations`). Builds nothing, and needs no path
+    of the closure to be valid. *state*, when it recorded its derivations,
+    gives each output the value it coerced to it; any other output's
+    record comes from its ``.drv``, and a source's from its name.
+    """
+    graph = await _build_graph(drv_store, roots)
+    records = await recorded_records(state, graph.reads) if state is not None else {}
+    for path in graph.reads:
+        if path not in records:
+            derivation = graph.derivations.get(path)
+            records[path] = (
+                await _record_of_derivation(drv_store, derivation, path) if derivation else from_store_path(path)
+            )
+    records[name] = Record(path=name, name=name, version=version)
+    wanted = tuple(sorted(roots))
+    # The build edges stand where `closure_bom` puts references.
+    listed = inventory(records, name, {**graph.reads, name: wanted}, buildtime=False, always=frozenset(wanted))
+    return Bom(listed, await _patch_texts(listed, (await StoreLayout.of(drv_store)).to_disk), buildtime=True)
 
 
 async def recorded_records(state: AsyncEvalState, paths: Iterable[str]) -> dict[str, Record]:

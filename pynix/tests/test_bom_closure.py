@@ -13,7 +13,7 @@ from cyclonedx.validation.json import JsonStrictValidator
 from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, with_nixpkgs
 
 from pynix import _util
-from pynix.bom import Origin, closure_bom, context_roots, cyclonedx
+from pynix.bom import Origin, build_bom, closure_bom, context_derivations, context_roots, cyclonedx
 
 PAYLOAD = "pynix-bom-closure-source\n"
 SRI = "sha256-" + base64.b64encode(hashlib.sha256(PAYLOAD.encode()).digest()).decode()
@@ -126,6 +126,29 @@ async def test_a_path_named_without_context_still_finds_its_value(
     by_name = {record.name: record for record in bom.inventory.components if record.path != "cluster"}
     assert {record.origin for record in by_name.values()} == {Origin.VALUE}
     assert [license.spdx_id for license in by_name["pynix-bom-lib"].licenses] == ["MIT"]
+
+
+@LINUX_CHROOT_BUILD
+async def test_the_build_closure_is_its_own_document(
+    shared_nix_environment: NixTestEnvironment, packages: Path
+) -> None:
+    """What builds `wrapper`, read from `.drv` files alone: the test builds nothing."""
+    async with _util.huggorm_build_session(shared_nix_environment.store_uri) as opened:
+        _session, _store, eval_store, state = opened
+        await state.set_record_derivations(True)
+        manifest = await state.eval_expr(f'builtins.toJSON {{ command = "${{(import {packages}).wrapper}}/lib"; }}')
+        await state.force(manifest)
+        roots = await context_derivations(eval_store, manifest)
+        bom = await build_bom(eval_store, roots, name="cluster", state=state)
+
+    assert bom.buildtime
+    by_name = {record.name: record for record in bom.inventory.components if record.path != "cluster"}
+    lib, wrapper = by_name["pynix-bom-lib"], by_name["pynix-bom-wrapper"]
+    # The runtime closure is these two; the build closure holds the toolchain too.
+    assert "bash" in by_name
+    assert [license.spdx_id for license in lib.licenses] == ["MIT"]
+    assert lib.path in bom.inventory.dependencies[wrapper.path]
+    assert JsonStrictValidator(SchemaVersion.V1_7).validate_str(json.dumps(cyclonedx(bom))) is None
 
 
 @LINUX_CHROOT_BUILD
