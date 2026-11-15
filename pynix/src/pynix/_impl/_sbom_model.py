@@ -46,6 +46,9 @@ class Source:
     #: The repository a git fetch reads (``gitRepoUrl``), and the revision it checks out.
     repository: str | None = None
     rev: str | None = None
+    #: Package URLs the fetch declares (``src.meta.identifiers``): the upstream release, such as
+    #: ``pkg:pypi`` from fetchPypi. Empty for a record read from a ``.drv``, which has no ``meta``.
+    purls: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,7 +214,13 @@ def _source(value: object) -> Source | None:
     urls, repository = _strings(fields.get("urls")), _string(fields.get("repository"))
     if not urls and not repository:
         return None
-    return Source(urls=urls, hash=_string(fields.get("hash")), repository=repository, rev=_string(fields.get("rev")))
+    return Source(
+        urls=urls,
+        hash=_string(fields.get("hash")),
+        repository=repository,
+        rev=_string(fields.get("rev")),
+        purls=_strings(fields.get("purls")),
+    )
 
 
 def _maintainers(value: object) -> tuple[Maintainer, ...]:

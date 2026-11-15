@@ -11,6 +11,8 @@ import shlex
 from collections.abc import Iterable, Mapping
 from pathlib import PurePosixPath
 
+from packageurl import PackageURL
+
 from pynix._evaluate import JsonValue
 from pynix._impl._sbom_embedded import Package
 from pynix._impl._sbom_model import (
@@ -89,6 +91,38 @@ def _evidence(record: Record) -> JsonValue | None:
         ]
         identity.append({"field": "purl", "methods": purls})
     return {"identity": identity} if identity else None
+
+
+def _ancestor(purl: str) -> dict[str, JsonValue] | None:
+    try:
+        parsed = PackageURL.from_string(purl)
+    except ValueError:
+        return None
+    result: dict[str, JsonValue] = {"type": "library"}
+    if parsed.namespace:
+        result["group"] = parsed.namespace
+    result["name"] = parsed.name
+    if parsed.version:
+        result["version"] = parsed.version
+    result["purl"] = purl
+    return result
+
+
+def _ancestors(record: Record) -> list[JsonValue]:
+    """The upstream releases the source of *record* declares, as the components it derives from."""
+    if record.source is None:
+        return []
+    found = (_ancestor(purl) for purl in record.source.purls if purl not in record.purls)
+    return [entry for entry in found if entry is not None]
+
+
+def _pedigree(record: Record, patches: Mapping[str, str]) -> dict[str, JsonValue]:
+    pedigree: dict[str, JsonValue] = {}
+    if ancestors := _ancestors(record):
+        pedigree["ancestors"] = ancestors
+    if applied := _patches(record, patches):
+        pedigree["patches"] = applied
+    return pedigree
 
 
 def _nvd(cve: str) -> dict[str, JsonValue]:
@@ -234,8 +268,8 @@ def component(
         result["evidence"] = evidence
     if references := _external_references(record):
         result["externalReferences"] = references
-    if applied := _patches(record, patches):
-        result["pedigree"] = {"patches": applied}
+    if pedigree := _pedigree(record, patches):
+        result["pedigree"] = pedigree
     if properties := _properties(record):
         result["properties"] = properties
     inside: list[JsonValue] = [_embedded_component(package, own) for package in embedded]

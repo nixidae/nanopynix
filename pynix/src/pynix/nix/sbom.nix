@@ -157,13 +157,29 @@ let
     github = stringOrNull (p.github or null);
   };
 
+  metaOf = d: shallow { } (_: if isAttrs (d.meta or null) then d.meta else { });
+  identifiersOf = m: shallow { } (_: if isAttrs (m.identifiers or null) then m.identifiers else { });
+  # `v1` is the stable interface; the top level mirrors it.
+  v1Of =
+    identifiers: shallow { } (_: if isAttrs (identifiers.v1 or null) then identifiers.v1 else { });
+
+  purls =
+    m:
+    guard [ ] (
+      _:
+      let
+        identifiers = identifiersOf m;
+        v1 = v1Of identifiers;
+      in
+      strings (v1.purls or identifiers.purls or v1.purl or identifiers.purl or null)
+    );
+
   meta =
     d:
     let
-      m = shallow { } (_: if isAttrs (d.meta or null) then d.meta else { });
-      identifiers = shallow { } (_: if isAttrs (m.identifiers or null) then m.identifiers else { });
-      # `v1` is the stable interface; the top level mirrors it.
-      v1 = shallow { } (_: if isAttrs (identifiers.v1 or null) then identifiers.v1 else { });
+      m = metaOf d;
+      identifiers = identifiersOf m;
+      v1 = v1Of identifiers;
     in
     {
       license = licenses m;
@@ -201,9 +217,7 @@ let
         else
           null
       );
-      purls = guard [ ] (
-        _: strings (v1.purls or identifiers.purls or v1.purl or identifiers.purl or null)
-      );
+      purls = purls m;
     };
 
   src =
@@ -222,6 +236,9 @@ let
           repository = stringOrNull (s.gitRepoUrl or null);
           hash = stringOrNull (s.outputHash or null);
           rev = stringOrNull (s.rev or null);
+          # fetchPypi declares `pkg:pypi`, fetchFromGitHub `pkg:github`: the
+          # upstream release, which the package itself does not name.
+          purls = purls (metaOf s);
         }
       else
         null

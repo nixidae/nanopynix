@@ -18,6 +18,8 @@ dependencies = [
   # one rather than a module of it.
   "libpynix",
   "myst-parser",
+  # The name and version of an upstream release, from the purl its fetch declares (`pynix sbom`).
+  "packageurl-python",
   "prompt-toolkit",
   "pydantic",
   # ELF sections, for the packages a Go or Rust binary names (`pynix sbom`).

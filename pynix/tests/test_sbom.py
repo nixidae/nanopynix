@@ -23,7 +23,7 @@ from huggorm.testing.environment import NixTestEnvironment, with_nixpkgs
 from spdx_tools.spdx.parser.json.json_parser import parse_from_file
 from spdx_tools.spdx.validation.document_validator import validate_full_spdx_document
 
-from pynix._impl._sbom_cyclonedx import document
+from pynix._impl._sbom_cyclonedx import component, document
 from pynix._impl._sbom_model import (
     Aggregate,
     License,
@@ -181,6 +181,32 @@ def test_spdx_downloads_only_from_a_scheme_it_knows() -> None:
     assert package(Record(path="/nix/store/a-x", name="x", source=only_mirror))["downloadLocation"] == "NOASSERTION"
 
 
+def test_the_purls_a_source_declares_are_the_ancestors_of_its_package() -> None:
+    source = Source(
+        urls=(),
+        hash=None,
+        repository="https://github.com/psf/requests",
+        purls=("pkg:github/psf/requests@v2.34.2", "pkg:pypi/requests@2.34.2", "not a purl"),
+    )
+    record = Record(
+        path="/nix/store/a-requests-2.34.2", name="requests", purls=("pkg:pypi/requests@2.34.2",), source=source
+    )
+    assert _objects([component(record, {})["pedigree"]]) == [
+        {
+            "ancestors": [
+                {
+                    "type": "library",
+                    "group": "psf",
+                    "name": "requests",
+                    "version": "v2.34.2",
+                    "purl": "pkg:github/psf/requests@v2.34.2",
+                }
+            ]
+        }
+    ]
+    assert "pedigree" not in component(Record(path="/nix/store/a-x", name="x", source=Source(urls=(), hash=None)), {})
+
+
 def test_spdx_downloads_a_git_fetch_from_its_repository() -> None:
     git = Source(urls=(), hash=None, repository="https://example.org/x.git", rev="abc")
     assert package(Record(path="/nix/store/a-x", name="x", source=git))["downloadLocation"] == (
@@ -234,6 +260,8 @@ rec {
     passthru.src = {
       urls = [ "https://example.org/lib-2.0.tar.gz" ];
       outputHash = "sha256-DV9gFUOC/uELEUocNOeF2LH0kgc64tOm97FHaHs2aqA=";
+      # fetchPypi's shape. The second is the package's own purl, so no ancestor.
+      meta.identifiers.v1.purls = [ "pkg:pypi/pynix-sbom-lib@2.0" "pkg:github/example/lib@2.0" ];
     };
     # The second names a CVE and a file no host has.
     passthru.patches = [ ./fix.patch "/nonexistent/CVE-2023-9999.diff" ./cve-2024-0001.patch ];
@@ -384,6 +412,9 @@ def test_cyclonedx_lists_the_runtime_closure(
     assert properties["nix:maintainer"] == ["Ada <ada@example.org> (github:ada)"]
     nvd = {"name": "NVD", "url": "https://nvd.nist.gov/vuln/detail/CVE-2023-9999"}
     assert lib["pedigree"] == {
+        "ancestors": [
+            {"type": "library", "name": "pynix-sbom-lib", "version": "2.0", "purl": "pkg:pypi/pynix-sbom-lib@2.0"}
+        ],
         "patches": [
             {"type": "unofficial", "diff": {"text": {"contentType": "text/plain", "content": "--- a\n+++ b\n"}}},
             {"type": "unofficial", "resolves": [{"type": "security", "id": "CVE-2023-9999", "source": nvd}]},
@@ -398,7 +429,7 @@ def test_cyclonedx_lists_the_runtime_closure(
                     }
                 ],
             },
-        ]
+        ],
     }
     states = {v["id"]: (v["analysis"]["state"], v["affects"]) for v in bom["vulnerabilities"]}
     assert states == {
