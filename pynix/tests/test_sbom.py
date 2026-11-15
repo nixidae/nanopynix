@@ -176,7 +176,8 @@ rec {
       urls = [ "https://example.org/lib-2.0.tar.gz" ];
       outputHash = "sha256-DV9gFUOC/uELEUocNOeF2LH0kgc64tOm97FHaHs2aqA=";
     };
-    passthru.patches = [ ./fix.patch ];
+    # The second names a CVE and a file no host has.
+    passthru.patches = [ ./fix.patch "/nonexistent/CVE-2023-9999.diff" ./cve-2024-0001.patch ];
     meta.license = [ lib.licenses.mit lib.licenses.asl20 ];
     meta.homepage = [ "https://example.org/lib" "https://mirror.example.org/lib" ];
     meta.changelog = "https://example.org/lib/NEWS";
@@ -199,6 +200,9 @@ rec {
     in
     d // { out = d; };
   broken = raw "pynix-sbom-broken" "4.0" (throw "this meta throws");
+  insecure = raw "pynix-sbom-insecure" "7.0" {
+    knownVulnerabilities = [ "CVE-2022-1111: a peer reads memory" "An unnamed flaw" ];
+  };
   deep = raw "pynix-sbom-deep" "5.0" {
     license = [ lib.licenses.mit (throw "this license throws") ];
     homepage = [ ];
@@ -212,7 +216,7 @@ rec {
   app = runCommand "pynix-sbom-app-1.0" {
     pname = "pynix-sbom-app";
     version = "1.0";
-    nativeBuildInputs = [ cc broken deep compound ];
+    nativeBuildInputs = [ cc broken deep compound insecure ];
     buildInputs = [ libfoo ];
     meta.license = lib.licenses.gpl3Plus;
     meta.description = "The target";
@@ -243,6 +247,7 @@ def _sbom(store_uri: str, nix_file: Path, *args: str, env: dict[str, str]) -> su
 @pytest.fixture
 def packages(tmp_path: Path, nixpkgs_path: str) -> Path:
     (tmp_path / "fix.patch").write_text("--- a\n+++ b\n", encoding="utf-8")
+    (tmp_path / "cve-2024-0001.patch").write_text("--- c\n+++ d\n", encoding="utf-8")
     path = tmp_path / "packages.nix"
     path.write_text(with_nixpkgs(_PACKAGES, nixpkgs_path), encoding="utf-8")
     return path
@@ -314,10 +319,28 @@ def test_cyclonedx_lists_the_runtime_closure(
     assert properties["nix:mainProgram"] == ["foo"]
     assert properties["nix:longDescription"] == ["A library that the app links."]
     assert properties["nix:maintainer"] == ["Ada <ada@example.org> (github:ada)"]
+    nvd = {"name": "NVD", "url": "https://nvd.nist.gov/vuln/detail/CVE-2023-9999"}
     assert lib["pedigree"] == {
         "patches": [
-            {"type": "unofficial", "diff": {"text": {"contentType": "text/plain", "content": "--- a\n+++ b\n"}}}
+            {"type": "unofficial", "diff": {"text": {"contentType": "text/plain", "content": "--- a\n+++ b\n"}}},
+            {"type": "unofficial", "resolves": [{"type": "security", "id": "CVE-2023-9999", "source": nvd}]},
+            {
+                "type": "unofficial",
+                "diff": {"text": {"contentType": "text/plain", "content": "--- c\n+++ d\n"}},
+                "resolves": [
+                    {
+                        "type": "security",
+                        "id": "CVE-2024-0001",
+                        "source": {"name": "NVD", "url": "https://nvd.nist.gov/vuln/detail/CVE-2024-0001"},
+                    }
+                ],
+            },
         ]
+    }
+    states = {v["id"]: (v["analysis"]["state"], v["affects"]) for v in bom["vulnerabilities"]}
+    assert states == {
+        "CVE-2023-9999": ("resolved", [{"ref": lib["bom-ref"]}]),
+        "CVE-2024-0001": ("resolved_with_pedigree", [{"ref": lib["bom-ref"]}]),
     }
     assert set(_components(bom)) == {"pynix-sbom-lib"}
     app_ref = bom["metadata"]["component"]["bom-ref"]
@@ -330,8 +353,20 @@ def test_cyclonedx_buildtime_adds_build_inputs_and_survives_a_throwing_meta(
     result = _sbom(shared_nix_environment.store_uri, packages, "--buildtime", env=child_env)
     assert result.returncode == 0, result.stderr
     assert JsonStrictValidator(SchemaVersion.V1_7).validate_str(result.stdout) is None
-    components = _components(json.loads(result.stdout))
+    bom = json.loads(result.stdout)
+    components = _components(bom)
     assert {"pynix-sbom-lib", "pynix-sbom-cc", "pynix-sbom-broken", "pynix-sbom-deep"} <= set(components)
+    insecure = [{"ref": components["pynix-sbom-insecure"]["bom-ref"]}]
+    affected = [v for v in bom["vulnerabilities"] if v["analysis"]["state"] == "exploitable"]
+    assert affected == [
+        {"description": "An unnamed flaw", "analysis": {"state": "exploitable"}, "affects": insecure},
+        {
+            "id": "CVE-2022-1111",
+            "source": {"name": "NVD", "url": "https://nvd.nist.gov/vuln/detail/CVE-2022-1111"},
+            "analysis": {"state": "exploitable", "detail": "CVE-2022-1111: a peer reads memory"},
+            "affects": insecure,
+        },
+    ]
     assert "licenses" not in components["pynix-sbom-broken"]
     assert "licenses" not in components["pynix-sbom-deep"]
     assert components["pynix-sbom-deep"]["description"] == "Its meta reaches the walk"

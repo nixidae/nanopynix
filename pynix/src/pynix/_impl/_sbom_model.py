@@ -281,6 +281,19 @@ def inventory(
     )
 
 
+_CVE = re.compile(r"CVE-\d{4}-\d{4,}", re.IGNORECASE)
+
+
+def cve_ids(text: str) -> tuple[str, ...]:
+    """The CVE identifiers *text* names, upper case, sorted, each once.
+
+    nixpkgs names a security patch after the CVE it fixes
+    (``fetchpatch { name = "CVE-2024-1234.patch"; }``), and writes the
+    CVE into each ``meta.knownVulnerabilities`` entry it can.
+    """
+    return tuple(sorted({found.upper() for found in _CVE.findall(text)}))
+
+
 def serial_uuid(seed: str) -> uuid.UUID:
     """A UUID that the same SBOM always gets: SHA-256 of *seed*, as bombon derives it."""
     return uuid.UUID(bytes=hashlib.sha256(seed.encode()).digest()[:16], version=4)

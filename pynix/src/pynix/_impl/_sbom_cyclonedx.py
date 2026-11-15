@@ -7,10 +7,11 @@ field for field. bombon writes 1.5 and converts; this module writes 1.7, so
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from pathlib import PurePosixPath
 
 from pynix._evaluate import JsonValue
-from pynix._impl._sbom_model import Inventory, License, Maintainer, Origin, Record, sri_digest
+from pynix._impl._sbom_model import Inventory, License, Maintainer, Origin, Record, cve_ids, sri_digest
 
 SPEC_VERSION = "1.7"
 
@@ -70,6 +71,62 @@ def _evidence(record: Record) -> JsonValue | None:
         ]
         identity.append({"field": "purl", "methods": purls})
     return {"identity": identity} if identity else None
+
+
+def _nvd(cve: str) -> dict[str, JsonValue]:
+    return {"name": "NVD", "url": f"https://nvd.nist.gov/vuln/detail/{cve}"}
+
+
+def _patches(record: Record, texts: Mapping[str, str]) -> list[JsonValue]:
+    """Each patch with its text, or with a CVE in its name; a patch with neither says nothing."""
+    result: list[JsonValue] = []
+    for path in record.patches:
+        text, cves = texts.get(path), cve_ids(PurePosixPath(path).name)
+        if text is None and not cves:
+            continue
+        entry: dict[str, JsonValue] = {"type": "unofficial"}
+        if text is not None:
+            entry["diff"] = {"text": {"contentType": "text/plain", "content": text}}
+        if cves:
+            entry["resolves"] = [{"type": "security", "id": cve, "source": _nvd(cve)} for cve in cves]
+        result.append(entry)
+    return result
+
+
+def _vulnerabilities(records: Iterable[Record], texts: Mapping[str, str]) -> list[JsonValue]:
+    """What Nix itself states about vulnerabilities, as VEX.
+
+    A CVE that a patch's name gives is resolved, with pedigree when the
+    patch text is in the document. ``meta.knownVulnerabilities`` marks a
+    package affected: one vulnerability for each CVE an entry names, and
+    one with no identifier for an entry that names none.
+    """
+    # (id, description, state, detail) -> the components it affects
+    found: dict[tuple[str, str, str, str], set[str]] = {}
+    for record in records:
+        for path in record.patches:
+            name = PurePosixPath(path).name
+            state = "resolved_with_pedigree" if path in texts else "resolved"
+            for cve in cve_ids(name):
+                found.setdefault((cve, "", state, f"the Nix build applies {name}"), set()).add(record.ref)
+        for entry in record.known_vulnerabilities:
+            for key in [(cve, "", "exploitable", entry) for cve in cve_ids(entry)] or [("", entry, "exploitable", "")]:
+                found.setdefault(key, set()).add(record.ref)
+    result: list[JsonValue] = []
+    for (cve, description, state, detail), refs in sorted(found.items()):
+        vulnerability: dict[str, JsonValue] = {}
+        if cve:
+            vulnerability["id"] = cve
+            vulnerability["source"] = _nvd(cve)
+        if description:
+            vulnerability["description"] = description
+        analysis: dict[str, JsonValue] = {"state": state}
+        if detail:
+            analysis["detail"] = detail
+        vulnerability["analysis"] = analysis
+        vulnerability["affects"] = [{"ref": ref} for ref in sorted(refs)]
+        result.append(vulnerability)
+    return result
 
 
 def _maintainer(person: Maintainer) -> str:
@@ -133,12 +190,8 @@ def component(record: Record, patches: Mapping[str, str]) -> dict[str, JsonValue
         result["evidence"] = evidence
     if references := _external_references(record):
         result["externalReferences"] = references
-    texts = [patches[path] for path in record.patches if path in patches]
-    if texts:
-        diffs: list[JsonValue] = [
-            {"type": "unofficial", "diff": {"text": {"contentType": "text/plain", "content": text}}} for text in texts
-        ]
-        result["pedigree"] = {"patches": diffs}
+    if applied := _patches(record, patches):
+        result["pedigree"] = {"patches": applied}
     if properties := _properties(record):
         result["properties"] = properties
     return result
@@ -165,7 +218,7 @@ def document(
         "licenses": [{"license": {"id": "Apache-2.0"}}],
         "externalReferences": [{"type": "website", "url": "https://github.com/nixidae/nanopynix"}],
     }
-    return {
+    result: dict[str, JsonValue] = {
         "bomFormat": "CycloneDX",
         "specVersion": SPEC_VERSION,
         "serialNumber": serial_number,
@@ -180,3 +233,7 @@ def document(
         ],
         "dependencies": dependencies,
     }
+    listed = {record.path: record for record in (inventory.target, *inventory.components)}
+    if vulnerabilities := _vulnerabilities(listed.values(), patches):
+        result["vulnerabilities"] = vulnerabilities
+    return result
