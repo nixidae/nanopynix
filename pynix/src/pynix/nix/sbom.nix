@@ -102,7 +102,12 @@ let
   spdxExpression =
     l:
     let
-      bracket = x: if x.licenseType == "compound" || x.licenseType == "exception" then "(${spdxExpression x})" else spdxExpression x;
+      bracket =
+        x:
+        if x.licenseType == "compound" || x.licenseType == "exception" then
+          "(${spdxExpression x})"
+        else
+          spdxExpression x;
     in
     if l.licenseType == "simple" then
       l.spdxId or "LicenseRef-nixos-${l.shortName}"
@@ -122,7 +127,14 @@ let
       let
         l = m.license or null;
       in
-      if isAttrs l && builtins.elem (l.licenseType or null) [ "compound" "exception" "plus" ] then
+      if
+        isAttrs l
+        && builtins.elem (l.licenseType or null) [
+          "compound"
+          "exception"
+          "plus"
+        ]
+      then
         spdxExpression l
       else
         null
@@ -130,7 +142,14 @@ let
 
   stringOrNull = v: if isString v then v else null;
   boolOrNull = v: if builtins.isBool v then v else null;
-  strings = v: if isList v then filter isString v else if isString v then [ v ] else [ ];
+  strings =
+    v:
+    if isList v then
+      filter isString v
+    else if isString v then
+      [ v ]
+    else
+      [ ];
 
   maintainer = p: {
     name = stringOrNull (p.name or null);
@@ -169,7 +188,9 @@ let
         in
         if isList given then filter isString (map (c: c.cpe or null) given) else [ ]
       );
-      purls = guard [ ] (_: strings (v1.purls or identifiers.purls or v1.purl or identifiers.purl or null));
+      purls = guard [ ] (
+        _: strings (v1.purls or identifiers.purls or v1.purl or identifiers.purl or null)
+      );
     };
 
   src =
