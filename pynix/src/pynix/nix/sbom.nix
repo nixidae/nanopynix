@@ -117,7 +117,11 @@ let
       description = guard null (_: stringOrNull (m.description or null));
       cpe = guard null (_: stringOrNull (identifiers.cpe or null));
       possibleCpes = guard [ ] (
-        _: filter isString (map (c: c.cpe or null) (identifiers.possibleCPEs or [ ]))
+        _:
+        let
+          given = identifiers.possibleCPEs or [ ];
+        in
+        if isList given then filter isString (map (c: c.cpe or null) given) else [ ]
       );
     };
 
@@ -128,7 +132,7 @@ let
       let
         s = d.src or null;
       in
-      if isAttrs s && s ? urls then
+      if isAttrs s && isList (s.urls or null) then
         {
           urls = filter isString s.urls;
           hash = stringOrNull (s.outputHash or null);
@@ -137,14 +141,18 @@ let
         null
     );
 
+  # Only what names a file: `tryEval` catches no type error, and a package
+  # may hold an attribute set of patches (gnulib's `passthru.patches`).
   patches =
     d:
     guard [ ] (
       _:
       let
         flatten = x: if isList x then concatMap flatten x else [ x ];
+        names = x: isString x || builtins.isPath x || (isAttrs x && x ? outPath);
+        given = d.patches or [ ];
       in
-      map toString (flatten (d.patches or [ ]))
+      if isList given then map toString (filter names (flatten given)) else [ ]
     );
 
   record =

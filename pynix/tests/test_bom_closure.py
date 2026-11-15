@@ -13,6 +13,8 @@ from cyclonedx.validation.json import JsonStrictValidator
 from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, with_nixpkgs
 
 from pynix import _util
+from pynix._impl._sbom_model import parse_walk
+from pynix._nix_helpers import helper
 from pynix.bom import Origin, build_bom, closure_bom, context_derivations, context_roots, cyclonedx
 
 PAYLOAD = "pynix-bom-closure-source\n"
@@ -149,6 +151,20 @@ async def test_the_build_closure_is_its_own_document(
     assert [license.spdx_id for license in lib.licenses] == ["MIT"]
     assert lib.path in bom.inventory.dependencies[wrapper.path]
     assert JsonStrictValidator(SchemaVersion.V1_7).validate_str(json.dumps(cyclonedx(bom))) is None
+
+
+async def test_the_walk_reads_past_patches_that_name_no_file(shared_nix_environment: NixTestEnvironment) -> None:
+    """gnulib's `passthru.patches` is an attribute set; `tryEval` would not catch `toString` of it."""
+    async with _util.huggorm_build_session(shared_nix_environment.store_uri) as opened:
+        _session, _store, _eval_store, state = opened
+        odd = await state.eval_expr(
+            '[ (derivation { name = "odd-1.0"; system = "x86_64-linux"; builder = "/bin/sh"; }'
+            ' // { patches = { fix = "/nix/store/x-fix.patch"; }; src = { urls = "https://a"; }; }) ]'
+        )
+        walk = await (await helper(state, "sbom")).get("values")
+        await state.force(walk)
+        (record,) = parse_walk(await (await walk(odd)).string_value()).values()
+    assert (record.name, record.patches, record.source) == ("odd-1.0", (), None)
 
 
 @LINUX_CHROOT_BUILD
