@@ -12,6 +12,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import PurePosixPath
 
 from pynix._evaluate import JsonValue
+from pynix._impl._sbom_embedded import Package
 from pynix._impl._sbom_model import (
     Aggregate,
     Build,
@@ -176,15 +177,41 @@ def _properties(record: Record) -> list[JsonValue]:
     return [{"name": name, "value": value} for name, value in pairs]
 
 
-def component(record: Record, patches: Mapping[str, str]) -> dict[str, JsonValue]:
-    """The CycloneDX component of *record*.
+def embedded_ref(parent: str, purl: str) -> str:
+    """The ``bom-ref`` of the package *purl* inside the component *parent*: one package in two components is two."""
+    return f"{parent}#{purl}"
+
+
+def _embedded_component(package: Package, parent: str) -> dict[str, JsonValue]:
+    result: dict[str, JsonValue] = {
+        "type": "application" if package.root else "library",
+        "bom-ref": embedded_ref(parent, package.purl),
+        "name": package.name,
+    }
+    if package.version:
+        result["version"] = package.version
+    result["scope"] = "required"
+    result["purl"] = package.purl
+    if package.files:
+        result["evidence"] = {"occurrences": [{"location": file} for file in package.files]}
+    if package.properties:
+        result["properties"] = [{"name": name, "value": value} for name, value in package.properties]
+    return result
+
+
+def component(
+    record: Record, patches: Mapping[str, str], *, ref: str | None = None, embedded: Iterable[Package] = ()
+) -> dict[str, JsonValue]:
+    """The CycloneDX component of *record*, with the packages its binaries name (*embedded*) inside it.
 
     *patches* holds the text of each patch file that could be read. A patch
-    that is not there is left out, as bombon leaves it out.
+    that is not there is left out, as bombon leaves it out. *ref* replaces
+    the record's own ``bom-ref``.
     """
+    own = ref or record.ref
     result: dict[str, JsonValue] = {
         "type": "application",
-        "bom-ref": record.ref,
+        "bom-ref": own,
         "name": record.name,
         "version": record.version or "",
         "scope": "required",
@@ -207,6 +234,9 @@ def component(record: Record, patches: Mapping[str, str]) -> dict[str, JsonValue
         result["pedigree"] = {"patches": applied}
     if properties := _properties(record):
         result["properties"] = properties
+    inside: list[JsonValue] = [_embedded_component(package, own) for package in embedded]
+    if inside:
+        result["components"] = inside
     return result
 
 
@@ -256,8 +286,7 @@ def formulation(
     ordered = list(builds)
     if not ordered:
         return []
-    listed = {record.path: record.ref for record in (inventory.target, *inventory.components)}
-    names = {**listed, **refs} if refs is not None else listed
+    names = _names(inventory, refs)
     ref_of = {path: names[kept] for path, kept in inventory.aliases.items() if kept in names}
     task_of = {build.drv_path: _task_ref(build) for build in ordered}
     dependencies: list[JsonValue] = []
@@ -276,29 +305,74 @@ def formulation(
     return [{"bom-ref": f"formula:{target}", "workflows": [workflow]}]
 
 
-def compositions(inventory: Inventory, refs: Mapping[str, str] | None = None) -> list[JsonValue]:
-    """How complete the ``dependsOn`` of each component is: one composition for each aggregate.
+def _names(inventory: Inventory, refs: Mapping[str, str] | None) -> dict[str, str]:
+    listed = {record.path: record.ref for record in (inventory.target, *inventory.components)}
+    return {**listed, **refs} if refs is not None else listed
 
-    A claim about one component's own edges, not about the edges below it.
+
+def _aggregate(package: Package) -> Aggregate:
+    if package.complete is None:
+        return Aggregate.UNKNOWN
+    return Aggregate.COMPLETE if package.complete else Aggregate.INCOMPLETE
+
+
+def embedded_dependencies(inventory: Inventory, refs: Mapping[str, str] | None = None) -> list[JsonValue]:
+    """The edges between the packages inside each component, one entry for each package.
+
     *refs* gives each listed path its ``bom-ref``.
     """
-    listed = {record.path: record.ref for record in (inventory.target, *inventory.components)}
-    names = {**listed, **refs} if refs is not None else listed
-    grouped: dict[Aggregate, set[str]] = {}
+    names = _names(inventory, refs)
+    result: list[JsonValue] = []
+    for path, packages in inventory.embedded.items():
+        if path not in names:
+            continue
+        parent, present = names[path], {package.purl for package in packages}
+        for package in packages:
+            depends_on: list[JsonValue] = [
+                embedded_ref(parent, purl) for purl in package.dependencies if purl in present
+            ]
+            result.append({"ref": embedded_ref(parent, package.purl), "dependsOn": depends_on})
+    return result
+
+
+def _claims(inventory: Inventory, names: Mapping[str, str]) -> dict[Aggregate, dict[str, set[str]]]:
+    """The refs each aggregate claims, by the kind of claim: ``assemblies`` or ``dependencies``."""
+    grouped: dict[Aggregate, dict[str, set[str]]] = {}
+
+    def claim(aggregate: Aggregate, kind: str, ref: str) -> None:
+        grouped.setdefault(aggregate, {}).setdefault(kind, set()).add(ref)
+
     for path, aggregate in inventory.completeness.items():
         if path in names:
-            grouped.setdefault(aggregate, set()).add(names[path])
+            claim(aggregate, "dependencies", names[path])
+    for path, packages in inventory.embedded.items():
+        if path in names:
+            claim(Aggregate.INCOMPLETE, "assemblies", names[path])
+            for package in packages:
+                claim(_aggregate(package), "dependencies", embedded_ref(names[path], package.purl))
+    return grouped
+
+
+def compositions(inventory: Inventory, refs: Mapping[str, str] | None = None) -> list[JsonValue]:
+    """How complete the ``dependsOn`` of each component is, and the parts of each one with packages inside.
+
+    One composition for each aggregate. A claim about one component's own
+    edges, not about the edges below it. A component with packages inside
+    holds more than they name: C code, or Rust's standard library.
+    *refs* gives each listed path its ``bom-ref``.
+    """
+    grouped = _claims(inventory, _names(inventory, refs))
     result: list[JsonValue] = []
     for aggregate in Aggregate:
         if aggregate in grouped:
-            members: list[JsonValue] = [*sorted(grouped[aggregate])]
-            result.append(
-                {
-                    "bom-ref": f"composition:{aggregate}:{inventory.target.ref}",
-                    "aggregate": aggregate.value,
-                    "dependencies": members,
-                }
-            )
+            entry: dict[str, JsonValue] = {
+                "bom-ref": f"composition:{aggregate}:{inventory.target.ref}",
+                "aggregate": aggregate.value,
+            }
+            for kind in ("assemblies", "dependencies"):
+                if kind in grouped[aggregate]:
+                    entry[kind] = [*sorted(grouped[aggregate][kind])]
+            result.append(entry)
     return result
 
 
@@ -316,6 +390,7 @@ def document(
     for path in sorted(inventory.dependencies, key=refs.__getitem__):
         depends_on: list[JsonValue] = [refs[ref] for ref in sorted(inventory.dependencies[path], key=refs.__getitem__)]
         dependencies.append({"ref": refs[path], "dependsOn": depends_on})
+    dependencies.extend(embedded_dependencies(inventory))
     tool: dict[str, JsonValue] = {
         "type": "application",
         "name": "pynix",
@@ -331,11 +406,15 @@ def document(
         "version": 1,
         "metadata": {
             "tools": {"components": [tool]},
-            "component": component(inventory.target, patches),
+            "component": component(
+                inventory.target, patches, embedded=inventory.embedded.get(inventory.target.path, ())
+            ),
         },
         # A `bom-ref` names one object, and the target is `metadata.component`.
         "components": [
-            component(record, patches) for record in inventory.components if record.path != inventory.target.path
+            component(record, patches, embedded=inventory.embedded.get(record.path, ()))
+            for record in inventory.components
+            if record.path != inventory.target.path
         ],
         "dependencies": dependencies,
     }

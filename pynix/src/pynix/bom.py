@@ -20,13 +20,16 @@ import importlib.metadata
 import json
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
+from pathlib import Path
 
+import anyio
 from anyio import Path as AnyioPath
 from huggorm import AsyncDerivation, AsyncEvalState, AsyncStore, AsyncValue, DerivationOutputCAFixed
 from huggorm.errors import NixError
 
 from pynix._evaluate import JsonValue
-from pynix._impl import _sbom_cyclonedx, _sbom_spdx
+from pynix._impl import _sbom_cyclonedx, _sbom_embedded, _sbom_spdx
+from pynix._impl._sbom_embedded import Ecosystem as Ecosystem, Package as Package
 from pynix._impl._sbom_model import (
     Aggregate as Aggregate,
     Build as Build,
@@ -40,6 +43,7 @@ from pynix._impl._sbom_model import (
     inventory,
     parse_walk,
     serial_uuid,
+    with_embedded,
 )
 from pynix._impl.env import output_paths
 from pynix._nix_helpers import helper
@@ -95,6 +99,24 @@ async def with_store_facts(store: AsyncStore, records: Mapping[str, Record], pat
     return result
 
 
+async def embedded_packages(store: AsyncStore, paths: Iterable[str]) -> dict[str, tuple[Package, ...]]:
+    """The packages that the binaries of each of *paths* name inside themselves: Go modules, Rust crates.
+
+    A path this host cannot read names none.
+    """
+    to_disk = (await StoreLayout.of(store)).to_disk
+    found: dict[str, tuple[Package, ...]] = {}
+
+    async def read(path: str) -> None:
+        if packages := await anyio.to_thread.run_sync(_sbom_embedded.scan, Path(to_disk(path)), path):
+            found[path] = packages
+
+    async with anyio.create_task_group() as group:
+        for path in sorted(set(paths)):
+            group.start_soon(read, path)
+    return dict(sorted(found.items()))
+
+
 async def _patch_texts(listed: Inventory, to_disk: Callable[[str], str]) -> dict[str, str]:
     texts: dict[str, str] = {}
     for record in (listed.target, *listed.components):
@@ -121,7 +143,9 @@ async def inventory_of(state: AsyncEvalState, store: AsyncStore, value: AsyncVal
     roots = await output_paths(state, value)
     runtime = await runtime_closure(store, roots)
     records = await with_store_facts(store, records, runtime)
-    listed = inventory(records, target, runtime, buildtime=buildtime)
+    listed = with_embedded(
+        inventory(records, target, runtime, buildtime=buildtime), await embedded_packages(store, runtime)
+    )
     return Bom(listed, await _patch_texts(listed, (await StoreLayout.of(store)).to_disk), buildtime)
 
 
@@ -411,6 +435,7 @@ async def closure_bom(  # noqa: PLR0913 -- keyword-only, one per source of what 
     records[name] = target
     # A root is what the caller deploys: listed though it has no version.
     listed = inventory(records, name, {**runtime, name: tuple(wanted)}, buildtime=False, always=frozenset(wanted))
+    listed = with_embedded(listed, await embedded_packages(store, runtime))
     return Bom(listed, await _patch_texts(listed, (await StoreLayout.of(store)).to_disk), buildtime=False)
 
 
@@ -429,9 +454,17 @@ def cyclonedx(bom: Bom) -> dict[str, JsonValue]:
     )
 
 
-def cyclonedx_component(bom: Bom, record: Record) -> dict[str, JsonValue]:
-    """The CycloneDX component of one *record* of *bom*, for a caller that writes its own document."""
-    return _sbom_cyclonedx.component(record, bom.patches)
+def cyclonedx_component(bom: Bom, record: Record, ref: str | None = None) -> dict[str, JsonValue]:
+    """The CycloneDX component of one *record* of *bom*, for a caller that writes its own document.
+
+    *ref* is its ``bom-ref``, by default the record's own; the packages its binaries name sit inside it.
+    """
+    return _sbom_cyclonedx.component(record, bom.patches, ref=ref, embedded=bom.inventory.embedded.get(record.path, ()))
+
+
+def cyclonedx_embedded_dependencies(bom: Bom, refs: Mapping[str, str] | None = None) -> list[JsonValue]:
+    """The ``dependencies`` entries of the packages inside *bom*'s components; *refs* as for :func:`cyclonedx_formulation`."""
+    return _sbom_cyclonedx.embedded_dependencies(bom.inventory, refs)
 
 
 def cyclonedx_formulation(bom: Bom, refs: Mapping[str, str] | None = None) -> list[JsonValue]:
@@ -444,7 +477,7 @@ def cyclonedx_formulation(bom: Bom, refs: Mapping[str, str] | None = None) -> li
 
 
 def cyclonedx_compositions(bom: Bom, refs: Mapping[str, str] | None = None) -> list[JsonValue]:
-    """How complete each component's ``dependsOn`` is, as CycloneDX ``compositions``.
+    """How complete each component's ``dependsOn`` is, and its parts, as CycloneDX ``compositions``.
 
     *refs* gives the ``bom-ref`` of each listed path, as for :func:`cyclonedx_formulation`.
     """

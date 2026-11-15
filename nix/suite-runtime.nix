@@ -27,6 +27,8 @@
   coreutils,
   gdb,
   gitMinimal,
+  go-md2man,
+  rust-audit-info,
   nix-cli,
   tofuCoreSchemaTool,
   storeExecTools,
@@ -81,6 +83,13 @@
   # it present. The released `pynix` app supplies it through its wrapper; these
   # two supply it here.
   tofuCoreSchemaTool
+
+  # A Go binary and a Rust one, for `test_sbom_embedded`, which reads the
+  # packages each names inside itself. `rust-audit-info` is cargo-auditable's
+  # own reader, so the test also runs it as the oracle. Both are nixpkgs
+  # builds: nixpkgs turns cargo-auditable on, and a test store cannot fetch.
+  go-md2man
+  rust-audit-info
 ]
 # `nanopynix.store_exec_prefix` resolves this off PATH. Every Nix session in
 # the suite runs against a *relocated* store unless

@@ -20,6 +20,8 @@ dependencies = [
   "myst-parser",
   "prompt-toolkit",
   "pydantic",
+  # ELF sections, for the packages a Go or Rust binary names (`pynix sbom`).
+  "pyelftools",
   "rapidfuzz",
   "rich",
   "structlog",

@@ -13,11 +13,13 @@ import json
 import re
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import cast
 from urllib.parse import quote
+
+from pynix._impl._sbom_embedded import Package, merge
 
 #: Outputs that hold documentation. bombon leaves them out of every SBOM.
 _DOC_OUTPUTS = frozenset({"doc", "man"})
@@ -139,6 +141,8 @@ class Inventory:
     aliases: dict[str, str] = field(default_factory=dict[str, str])
     #: How complete the edges of each listed path are; a path absent here is not specified.
     completeness: dict[str, Aggregate] = field(default_factory=dict[str, Aggregate])
+    #: The packages the binaries of each listed path name inside themselves (:func:`with_embedded`).
+    embedded: dict[str, tuple[Package, ...]] = field(default_factory=dict[str, tuple[Package, ...]])
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,6 +319,18 @@ def inventory(
         aliases=alias,
         completeness=_completeness(graph, alias, walked=buildtime),
     )
+
+
+def with_embedded(listed: Inventory, found: Mapping[str, tuple[Package, ...]]) -> Inventory:
+    """*listed*, with the packages *found* in each path under the listed path that stands for it.
+
+    A path with no component drops its packages, as it drops its own record.
+    """
+    grouped: dict[str, list[Package]] = {}
+    for path, packages in found.items():
+        if (kept := listed.aliases.get(path)) is not None and packages:
+            grouped.setdefault(kept, []).extend(packages)
+    return replace(listed, embedded={path: merge(packages) for path, packages in sorted(grouped.items())})
 
 
 def _completeness(graph: Mapping[str, set[str]], alias: Mapping[str, str], *, walked: bool) -> dict[str, Aggregate]:
