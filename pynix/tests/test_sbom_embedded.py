@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import platform
 import shutil
 import subprocess
 import zlib
@@ -81,6 +82,11 @@ def test_a_go_binary_names_its_modules_and_its_standard_library() -> None:
     assert set(main.dependencies) == {p.purl for p in found if not p.root}
     # Go states no edges between modules, nor which ones the main module imports directly.
     assert {p.complete for p in found} == {None}
+    # nixpkgs builds it for this machine.
+    goarch = {"x86_64": "amd64", "aarch64": "arm64"}[platform.machine()]
+    for p in found:
+        assert ("go:goos", "linux") in p.properties
+        assert ("go:goarch", goarch) in p.properties
 
 
 def test_a_c_binary_names_nothing() -> None:
@@ -107,6 +113,21 @@ def test_a_replace_line_names_what_was_compiled_in() -> None:
     assert by_name["example.org/local"].version is None
     assert by_name["example.org/app"].version is None
     assert by_name["stdlib"].version == "v1.26.8"
+
+
+def test_each_go_module_names_the_platform_it_was_built_for() -> None:
+    lines = (
+        "mod\texample.org/app\tv1.0.0\t\n"
+        "dep\texample.org/lib\tv1.0.0\th1:abc=\n"
+        "build\tGOARCH=ppc64le\n"
+        "build\tGOOS=windows\n"
+        "build\tGOAMD64=v1\n"
+    )
+    found = parse_go(_go_section("go1.26.8", lines))
+    assert found is not None
+    platforms = {p.name: {(k, v) for k, v in p.properties if k in ("go:goos", "go:goarch")} for p in found}
+    expected = {("go:goos", "windows"), ("go:goarch", "ppc64le")}
+    assert platforms == {"stdlib": expected, "example.org/lib": expected, "example.org/app": expected}
 
 
 def test_go_build_info_without_its_sentinels_names_no_module() -> None:

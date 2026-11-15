@@ -43,6 +43,8 @@ _GO_SENTINEL = 16
 #: cargo-auditable's own advice: no legitimate audit data is larger.
 _AUDIT_LIMIT = 8 << 20
 _GO_RELEASE = re.compile(r"go(\d+\.\d+(?:\.\d+)?(?:(?:rc|beta)\d+)?)$")
+#: The ``build`` settings govulncheck matches a vulnerability's platforms against, as properties.
+_GO_PLATFORM = {"GOOS": "go:goos", "GOARCH": "go:goarch"}
 
 
 @runtime_checkable
@@ -141,6 +143,10 @@ def parse_go(section: bytes) -> tuple[Package, ...] | None:
     The main module depends on every other one. Go states no edges between
     the others, and does not say which of them the main module imports
     directly, so every module's dependencies are unknown.
+
+    Each module carries the ``GOOS`` and ``GOARCH`` it was compiled for
+    (``go:goos``, ``go:goarch``): a Go vulnerability can name the platforms
+    it affects.
     """
     found = _go_strings(section)
     if found is None:
@@ -148,10 +154,14 @@ def parse_go(section: bytes) -> tuple[Package, ...] | None:
     toolchain, lines = found
     main: Package | None = None
     deps: list[Package] = []
+    platform: list[tuple[str, str]] = []
     for line in lines.splitlines():
         kind, _, rest = line.partition("\t")
         fields = rest.split("\t")
-        if kind == "mod":
+        setting, _, value = rest.partition("=")
+        if kind == "build" and setting in _GO_PLATFORM and value:
+            platform.append((_GO_PLATFORM[setting], value))
+        elif kind == "mod":
             main = _go_module(fields, root=True)
         elif kind == "dep":
             deps.append(_go_module(fields))
@@ -177,7 +187,7 @@ def parse_go(section: bytes) -> tuple[Package, ...] | None:
         listed.append(
             replace(main, dependencies=dependencies, properties=(*main.properties, ("go:toolchain", toolchain)))
         )
-    return tuple(listed) or None
+    return tuple(replace(p, properties=(*p.properties, *platform)) for p in listed) or None
 
 
 def parse_cargo(section: bytes) -> tuple[Package, ...] | None:
