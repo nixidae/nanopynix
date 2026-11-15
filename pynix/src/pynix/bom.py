@@ -258,6 +258,22 @@ async def _output_path(drv_store: AsyncStore, parsed: dict[str, AsyncDerivation]
     return path if path.startswith(await drv_store.store_dir() + "/") else None
 
 
+async def _inputs(
+    drv_store: AsyncStore, parsed: dict[str, AsyncDerivation], derivation: AsyncDerivation, store_dir: str
+) -> tuple[list[str], set[str]]:
+    """The input ``.drv`` files of *derivation*, and the output paths it reads of them."""
+    children: list[str] = []
+    needed: set[str] = set()
+    for base, node in (await derivation.input_drvs()).items():
+        child = f"{store_dir}/{base}"
+        children.append(child)
+        # A wire value: its accessors answer at once.
+        for output in node.outputs():
+            if (found := await _output_path(drv_store, parsed, child, output)) is not None:
+                needed.add(found)
+    return children, needed
+
+
 async def _build_graph(drv_store: AsyncStore, roots: Mapping[str, str | None]) -> _BuildGraph:
     """The build closure of *roots* from the ``.drv`` files in *drv_store*. Reads, builds nothing.
 
@@ -280,16 +296,8 @@ async def _build_graph(drv_store: AsyncStore, roots: Mapping[str, str | None]) -
             continue
         done.add(drv)
         derivation = await _read(drv_store, parsed, drv)
-        needed: set[str] = set()
-        children: list[str] = []
-        for base, node in (await derivation.input_drvs()).items():
-            child = f"{store_dir}/{base}"
-            pending.append(child)
-            children.append(child)
-            # A wire value: its accessors answer at once.
-            for output in node.outputs():
-                if (found := await _output_path(drv_store, parsed, child, output)) is not None:
-                    needed.add(found)
+        children, needed = await _inputs(drv_store, parsed, derivation, store_dir)
+        pending.extend(children)
         sources = [await drv_store.print_store_path(src) for src in await derivation.input_srcs()]
         for src in sources:
             reads.setdefault(src, ())
@@ -373,7 +381,7 @@ async def recorded_records(state: AsyncEvalState, paths: Iterable[str]) -> dict[
     return parse_walk(await (await walk(values)).string_value())
 
 
-async def closure_bom(
+async def closure_bom(  # noqa: PLR0913 -- keyword-only, one per source of what the SBOM knows
     store: AsyncStore,
     roots: Iterable[str],
     *,

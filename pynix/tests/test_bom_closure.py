@@ -111,7 +111,7 @@ async def test_a_recorded_value_gives_its_path_the_meta(
     lib = by_name["pynix-bom-lib"]
     assert root == by_name["pynix-bom-wrapper"].path
     assert {record.origin for record in by_name.values()} == {Origin.VALUE}
-    assert [license.spdx_id for license in lib.licenses] == ["MIT"]
+    assert [entry.spdx_id for entry in lib.licenses] == ["MIT"]
     assert lib.source is not None
     assert lib.source.urls == ("https://example.org/pynix-bom-lib-2.0.tar.gz",)
     assert JsonStrictValidator(SchemaVersion.V1_7).validate_str(json.dumps(cyclonedx(bom))) is None
@@ -135,7 +135,7 @@ async def test_a_path_named_without_context_still_finds_its_value(
 
     by_name = {record.name: record for record in bom.inventory.components if record.path != "cluster"}
     assert {record.origin for record in by_name.values()} == {Origin.VALUE}
-    assert [license.spdx_id for license in by_name["pynix-bom-lib"].licenses] == ["MIT"]
+    assert [entry.spdx_id for entry in by_name["pynix-bom-lib"].licenses] == ["MIT"]
 
 
 @LINUX_CHROOT_BUILD
@@ -156,7 +156,7 @@ async def test_the_build_closure_is_its_own_document(
     lib, wrapper = by_name["pynix-bom-lib"], by_name["pynix-bom-wrapper"]
     # The runtime closure is these two; the build closure holds the toolchain too.
     assert "bash" in by_name
-    assert [license.spdx_id for license in lib.licenses] == ["MIT"]
+    assert [entry.spdx_id for entry in lib.licenses] == ["MIT"]
     assert lib.path in bom.inventory.dependencies[wrapper.path]
     assert JsonStrictValidator(SchemaVersion.V1_7).validate_str(json.dumps(cyclonedx(bom))) is None
 

@@ -12,6 +12,7 @@ import hashlib
 import json
 import re
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import PurePosixPath
@@ -295,7 +296,16 @@ def inventory(
     if buildtime:
         for record in records.values():
             graph.setdefault(record.path, set()).update(record.build_references)
+    return Inventory(
+        target=target_record,
+        components=tuple(kept.values()),
+        dependencies=_edges(graph, alias),
+        aliases=alias,
+    )
 
+
+def _edges(graph: Mapping[str, set[str]], alias: Mapping[str, str]) -> dict[str, frozenset[str]]:
+    """The edges of *graph* between listed paths, each path standing for its *alias*, through unlisted paths."""
     # The listed paths each unlisted path reaches through unlisted paths alone.
     through: dict[str, frozenset[str]] = {}
 
@@ -320,12 +330,7 @@ def inventory(
         for ref in references:
             ends = {alias[ref]} if ref in alias else reached(ref)
             edges[start].update(ends - {start})
-    return Inventory(
-        target=target_record,
-        components=tuple(kept.values()),
-        dependencies={path: frozenset(refs) for path, refs in edges.items()},
-        aliases=alias,
-    )
+    return {path: frozenset(refs) for path, refs in edges.items()}
 
 
 _CVE = re.compile(r"CVE-\d{4}-\d{4,}", re.IGNORECASE)
