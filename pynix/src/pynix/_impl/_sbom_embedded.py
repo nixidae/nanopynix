@@ -1,4 +1,4 @@
-"""The packages a store path names inside itself: Go build info, cargo-auditable data and Python metadata.
+"""The packages a store path names inside itself: Go build info, cargo-auditable data, Python and npm metadata.
 
 A Go binary holds the modules it was built from, in its ``.go.buildinfo``
 section (``debug/buildinfo``). nixpkgs builds Rust with cargo-auditable,
@@ -6,12 +6,15 @@ which writes the crates and the edges between them, as zlib-compressed JSON,
 to a ``.dep-v0`` section. An installed Python distribution has a
 ``METADATA`` file in its ``.dist-info`` directory (``PKG-INFO`` for the
 older ``.egg-info``), and a package that vendors others has theirs too.
-All of them name what is in the artifact, from the artifact itself: no lock
-file, no build and no network.
+npm installs each package at ``node_modules/<name>`` (``node_modules/@scope/<name>``)
+with its ``package.json``; a ``package.json`` anywhere else is a
+project's own, or a file inside a package. All of them name what is in
+the artifact, from the artifact itself: no lock file, no build and no
+network.
 
-A Python distribution's name is not proof that the code came from PyPI:
-a package built from a Git checkout, or one never published, names itself
-the same way.
+A Python distribution's or an npm package's name is not proof that the
+code came from PyPI or the npm registry: a package built from a Git
+checkout, or one never published, names itself the same way.
 """
 
 from __future__ import annotations
@@ -65,6 +68,7 @@ class Ecosystem(StrEnum):
     GOLANG = "golang"
     CARGO = "cargo"
     PYPI = "pypi"
+    NPM = "npm"
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +90,12 @@ class Package:
     @property
     def purl(self) -> str:
         # The purl spec's PyPI rule, as packageurl-python applies it: PEP 503 also folds ".", the spec does not.
-        own = self.name.lower().replace("_", "-") if self.ecosystem is Ecosystem.PYPI else self.name
+        if self.ecosystem is Ecosystem.PYPI:
+            own = self.name.lower().replace("_", "-")
+        elif self.ecosystem is Ecosystem.NPM:
+            own = self.name.lower()
+        else:
+            own = self.name
         name = "/".join(quote(part, safe="") for part in own.split("/"))
         return (
             f"pkg:{self.ecosystem}/{name}@{quote(self.version, safe='')}"
@@ -257,6 +266,28 @@ def parse_python(metadata: bytes) -> Package | None:
     return Package(Ecosystem.PYPI, name, version or None) if name else None
 
 
+def parse_npm(manifest: bytes) -> Package | None:
+    """The package an installed ``package.json`` describes; ``None`` without a name, or for a file that is no JSON object."""
+    try:
+        data = json.loads(manifest)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    name, version = data.get("name"), data.get("version")
+    if not isinstance(name, str) or not name:
+        return None
+    return Package(Ecosystem.NPM, name, version if isinstance(version, str) and version else None)
+
+
+def _is_npm_manifest(path: Path) -> bool:
+    """Whether *path* is the ``package.json`` of a package npm installed: ``node_modules/<name>`` or ``node_modules/@scope/<name>``."""
+    if path.name != "package.json":
+        return False
+    above = path.parent.parent
+    return above.name == "node_modules" or (above.name.startswith("@") and above.parent.name == "node_modules")
+
+
 def _is_python_metadata(path: Path) -> bool:
     """Whether *path* is the core metadata of an installed distribution, in any of the layouts pip and setuptools write."""
     parent = path.parent.name
@@ -286,9 +317,12 @@ def _regular_files(root: Path) -> Iterator[tuple[Path, int]]:
 
 
 def _read(path: Path, mode: int) -> tuple[Package, ...] | None:
-    """The packages the file *path* names: an executable's compiled-in ones, or a Python distribution's own."""
+    """The packages the file *path* names: an executable's compiled-in ones, or a Python distribution's or npm package's own."""
     if _is_python_metadata(path):
         package = parse_python(path.read_bytes())
+        return (package,) if package else None
+    if _is_npm_manifest(path):
+        package = parse_npm(path.read_bytes())
         return (package,) if package else None
     if not mode & 0o111:
         return None

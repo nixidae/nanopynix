@@ -227,6 +227,38 @@ def test_a_scan_finds_each_python_distribution_once_and_follows_no_link(tmp_path
     assert {(p.complete, p.root, p.dependencies) for p in found} == {(None, False, ())}
 
 
+def test_a_scan_finds_each_installed_npm_package_and_no_other_manifest(tmp_path: Path) -> None:
+    store_path = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-nodejs-24.0.0"
+    top = tmp_path / "lib" / "node_modules"
+
+    def install(directory: Path, manifest: object) -> None:
+        directory.mkdir(parents=True)
+        (directory / "package.json").write_text(json.dumps(manifest))
+
+    install(top / "npm", {"name": "npm", "version": "11.0.0", "dependencies": {"semver": "^7"}})
+    install(top / "npm" / "node_modules" / "semver", {"name": "semver", "version": "7.7.2"})
+    install(top / "npm" / "node_modules" / "@npmcli" / "Config", {"name": "@npmcli/Config", "version": "10.0.0"})
+    # A package's own files and the project root are no installed package.
+    install(top / "npm" / "node_modules" / "semver" / "lib", {"name": "inner", "version": "1.0.0"})
+    install(tmp_path / "app", {"name": "app", "version": "1.0.0"})
+    install(top / "nameless", {"version": "1.0.0"})
+    install(top / "array", [{"name": "x"}])
+    (top / "broken").mkdir()
+    (top / "broken" / "package.json").write_text("{")
+    install(top / "private", {"name": "private"})
+    found = scan(tmp_path, store_path)
+    assert {(p.purl, p.files) for p in found} == {
+        ("pkg:npm/npm@11.0.0", (f"{store_path}/lib/node_modules/npm/package.json",)),
+        ("pkg:npm/semver@7.7.2", (f"{store_path}/lib/node_modules/npm/node_modules/semver/package.json",)),
+        (
+            "pkg:npm/%40npmcli/config@10.0.0",
+            (f"{store_path}/lib/node_modules/npm/node_modules/@npmcli/Config/package.json",),
+        ),
+        ("pkg:npm/private", (f"{store_path}/lib/node_modules/private/package.json",)),
+    }
+    assert {(p.ecosystem, p.complete, p.root, p.dependencies) for p in found} == {(Ecosystem.NPM, None, False, ())}
+
+
 def test_a_pypi_purl_folds_case_and_underscores_but_not_dots() -> None:
     assert Package(Ecosystem.PYPI, "ruamel.yaml_Clib", "0.2").purl == "pkg:pypi/ruamel.yaml-clib@0.2"
     assert Package(Ecosystem.GOLANG, "example.org/Some_Module", "v1").purl == "pkg:golang/example.org/Some_Module@v1"
