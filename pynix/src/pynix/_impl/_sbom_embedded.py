@@ -1,4 +1,4 @@
-"""The packages a store path names inside itself: Go build info, cargo-auditable data, Python and npm metadata.
+"""The packages a store path names inside itself: Go build info, cargo-auditable data, Python, npm and Composer metadata.
 
 A Go binary holds the modules it was built from, in its ``.go.buildinfo``
 section (``debug/buildinfo``). nixpkgs builds Rust with cargo-auditable,
@@ -8,9 +8,11 @@ to a ``.dep-v0`` section. An installed Python distribution has a
 older ``.egg-info``), and a package that vendors others has theirs too.
 npm installs each package at ``node_modules/<name>`` (``node_modules/@scope/<name>``)
 with its ``package.json``; a ``package.json`` anywhere else is a
-project's own, or a file inside a package. All of them name what is in
-the artifact, from the artifact itself: no lock file, no build and no
-network.
+project's own, or a file inside a package. Composer lists every package
+it installed into a vendor directory in ``vendor/composer/installed.json``
+(the directory name is a project setting: Nextcloud uses ``3rdparty``).
+All of them name what is in the artifact, from the artifact itself: no
+lock file, no build and no network.
 
 A Python distribution's or an npm package's name is not proof that the
 code came from PyPI or the npm registry: a package built from a Git
@@ -69,6 +71,7 @@ class Ecosystem(StrEnum):
     CARGO = "cargo"
     PYPI = "pypi"
     NPM = "npm"
+    COMPOSER = "composer"
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,7 +95,7 @@ class Package:
         # The purl spec's PyPI rule, as packageurl-python applies it: PEP 503 also folds ".", the spec does not.
         if self.ecosystem is Ecosystem.PYPI:
             own = self.name.lower().replace("_", "-")
-        elif self.ecosystem is Ecosystem.NPM:
+        elif self.ecosystem in (Ecosystem.NPM, Ecosystem.COMPOSER):
             own = self.name.lower()
         else:
             own = self.name
@@ -280,6 +283,64 @@ def parse_npm(manifest: bytes) -> Package | None:
     return Package(Ecosystem.NPM, name, version if isinstance(version, str) and version else None)
 
 
+def parse_composer(installed: bytes) -> tuple[Package, ...] | None:
+    """The packages a Composer ``installed.json`` lists; ``None`` for a file that is no such list.
+
+    An edge goes to the package of that name in the same file, or to the
+    one that replaces or provides it. A requirement with no ``/`` in its
+    name (``php``, ``ext-json``) is the platform, not a package. A package
+    is complete when every other requirement resolves in the file.
+    """
+    try:
+        data: object = json.loads(installed)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    # Composer 2 writes {"packages": [...]}; Composer 1 wrote the list alone.
+    raw = cast("dict[str, object]", data).get("packages") if isinstance(data, dict) else data
+    if not isinstance(raw, list):
+        return None
+    entries = [
+        cast("dict[str, object]", e)
+        for e in cast("list[object]", raw)
+        if isinstance(e, dict) and isinstance(e.get("name"), str) and e.get("name")
+    ]
+    shells = {
+        str(e["name"]).lower(): Package(
+            Ecosystem.COMPOSER,
+            str(e["name"]),
+            str(e["version"]) if isinstance(e.get("version"), str) and e.get("version") else None,
+        )
+        for e in entries
+    }
+    targets = dict(shells)
+    for entry in entries:
+        for field in ("replace", "provide"):
+            links = entry.get(field)
+            for name in cast("dict[str, object]", links) if isinstance(links, dict) else ():
+                targets.setdefault(name.lower(), shells[str(entry["name"]).lower()])
+    result: list[Package] = []
+    for entry in entries:
+        shell = shells[str(entry["name"]).lower()]
+        require = entry.get("require")
+        wanted = [
+            n.lower() for n in (cast("dict[str, object]", require) if isinstance(require, dict) else ()) if "/" in n
+        ]
+        found = [targets[n].purl for n in wanted if n in targets and targets[n] is not shell]
+        result.append(
+            replace(
+                shell,
+                dependencies=tuple(sorted(set(found))),
+                complete=all(n in targets for n in wanted),
+            )
+        )
+    return tuple(result) or None
+
+
+def _is_composer_manifest(path: Path) -> bool:
+    """Whether *path* is the list of packages Composer installed into a vendor directory."""
+    return path.name == "installed.json" and path.parent.name == "composer"
+
+
 def _is_npm_manifest(path: Path) -> bool:
     """Whether *path* is the ``package.json`` of a package npm installed: ``node_modules/<name>`` or ``node_modules/@scope/<name>``."""
     if path.name != "package.json":
@@ -317,13 +378,15 @@ def _regular_files(root: Path) -> Iterator[tuple[Path, int]]:
 
 
 def _read(path: Path, mode: int) -> tuple[Package, ...] | None:
-    """The packages the file *path* names: an executable's compiled-in ones, or a Python distribution's or npm package's own."""
+    """The packages the file *path* names: an executable's compiled-in ones, a Python distribution's or npm package's own, or Composer's list."""
     if _is_python_metadata(path):
         package = parse_python(path.read_bytes())
         return (package,) if package else None
     if _is_npm_manifest(path):
         package = parse_npm(path.read_bytes())
         return (package,) if package else None
+    if _is_composer_manifest(path):
+        return parse_composer(path.read_bytes())
     if not mode & 0o111:
         return None
     with path.open("rb") as stream:

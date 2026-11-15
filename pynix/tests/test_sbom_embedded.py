@@ -259,6 +259,52 @@ def test_a_scan_finds_each_installed_npm_package_and_no_other_manifest(tmp_path:
     assert {(p.ecosystem, p.complete, p.root, p.dependencies) for p in found} == {(Ecosystem.NPM, None, False, ())}
 
 
+def test_a_scan_reads_each_composer_vendor_directory_and_its_edges(tmp_path: Path) -> None:
+    store_path = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-nextcloud-34.0.0"
+    installed = {
+        "packages": [
+            {"name": "Guzzle/Psr7", "version": "2.7.0", "require": {"php": "^7.2", "psr/http-message": "^1"}},
+            {"name": "psr/http-message", "version": "1.1", "require": {}},
+            {"name": "symfony/polyfill-mbstring", "version": "v1.31.0", "require": {"ext-mbstring": "*"}},
+            {
+                "name": "nextcloud/lib",
+                "version": "dev-master",
+                "require": {"symfony/polyfill-php80": "^1", "missing/package": "^1", "guzzle/psr7": "^2"},
+            },
+            {"name": "mine/shim", "version": "1.0.0", "replace": {"symfony/polyfill-php80": "*"}},
+            {"version": "1.0.0"},
+        ],
+        "dev": False,
+        "dev-package-names": [],
+    }
+    for directory in (tmp_path / "3rdparty" / "composer", tmp_path / "apps" / "x" / "vendor" / "composer"):
+        directory.mkdir(parents=True)
+    (tmp_path / "3rdparty" / "composer" / "installed.json").write_text(json.dumps(installed))
+    # Composer 1's list alone, in an app's own vendor directory.
+    (tmp_path / "apps" / "x" / "vendor" / "composer" / "installed.json").write_text(
+        json.dumps([{"name": "psr/http-message", "version": "1.1"}])
+    )
+    # An installed.json outside a composer directory is no Composer list.
+    (tmp_path / "apps" / "x" / "installed.json").write_text(json.dumps(installed))
+    (tmp_path / "3rdparty" / "composer" / "broken").mkdir()
+    (tmp_path / "3rdparty" / "composer" / "broken" / "installed.json").write_text("{")
+    found = {p.purl: p for p in scan(tmp_path, store_path)}
+    assert {purl: (p.dependencies, p.complete) for purl, p in found.items()} == {
+        "pkg:composer/guzzle/psr7@2.7.0": (("pkg:composer/psr/http-message@1.1",), True),
+        "pkg:composer/psr/http-message@1.1": ((), True),
+        "pkg:composer/symfony/polyfill-mbstring@v1.31.0": ((), True),
+        "pkg:composer/nextcloud/lib@dev-master": (
+            ("pkg:composer/guzzle/psr7@2.7.0", "pkg:composer/mine/shim@1.0.0"),
+            False,
+        ),
+        "pkg:composer/mine/shim@1.0.0": ((), True),
+    }
+    assert found["pkg:composer/psr/http-message@1.1"].files == (
+        f"{store_path}/3rdparty/composer/installed.json",
+        f"{store_path}/apps/x/vendor/composer/installed.json",
+    )
+
+
 def test_a_pypi_purl_folds_case_and_underscores_but_not_dots() -> None:
     assert Package(Ecosystem.PYPI, "ruamel.yaml_Clib", "0.2").purl == "pkg:pypi/ruamel.yaml-clib@0.2"
     assert Package(Ecosystem.GOLANG, "example.org/Some_Module", "v1").purl == "pkg:golang/example.org/Some_Module@v1"
