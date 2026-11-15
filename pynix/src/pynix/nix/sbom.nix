@@ -179,10 +179,13 @@ let
       let
         s = d.src or null;
       in
-      # fetchurl and fetchzip name `urls`; fetchgit names one `url` and a `rev`.
-      if isAttrs s && (isList (s.urls or null) || isString (s.url or null)) then
+      # fetchurl and fetchzip name archive `urls`. fetchgit, fetchFromGitHub
+      # and fetchFromGitLab name the repository in `gitRepoUrl`, beside an
+      # archive URL or none.
+      if isAttrs s && (isList (s.urls or null) || isString (s.gitRepoUrl or null)) then
         {
-          urls = if isList (s.urls or null) then filter isString s.urls else [ s.url ];
+          urls = if isList (s.urls or null) then filter isString s.urls else [ ];
+          repository = stringOrNull (s.gitRepoUrl or null);
           hash = stringOrNull (s.outputHash or null);
           rev = stringOrNull (s.rev or null);
         }

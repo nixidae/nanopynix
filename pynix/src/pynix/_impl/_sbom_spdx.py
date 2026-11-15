@@ -26,8 +26,14 @@ def spdx_id(record: Record) -> str:
 
 
 def _download_location(record: Record) -> str:
-    urls = record.source.urls if record.source else ()
-    return next((url for url in urls if url.startswith(_DOWNLOAD_SCHEMES)), _NOASSERTION)
+    source = record.source
+    if source is None:
+        return _NOASSERTION
+    found = next((url for url in source.urls if url.startswith(_DOWNLOAD_SCHEMES)), None)
+    if found is None and source.repository and source.repository.startswith(_DOWNLOAD_SCHEMES):
+        # SPDX's VCS form: `git+<url>@<revision>`.
+        found = f"git+{source.repository}" + (f"@{source.rev}" if source.rev else "")
+    return found or _NOASSERTION
 
 
 def _declared_license(record: Record) -> str:

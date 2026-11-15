@@ -37,9 +37,11 @@ class License:
 class Source:
     """Where the source of a package comes from, and its hash in SRI form."""
 
+    #: Archive URLs.
     urls: tuple[str, ...]
     hash: str | None
-    #: The revision a VCS fetch checks out (fetchgit's ``rev``).
+    #: The repository a git fetch reads (``gitRepoUrl``), and the revision it checks out.
+    repository: str | None = None
     rev: str | None = None
 
 
@@ -160,8 +162,10 @@ def _bool(value: object) -> bool | None:
 
 def _source(value: object) -> Source | None:
     fields = _object(value)
-    urls = _strings(fields.get("urls"))
-    return Source(urls=urls, hash=_string(fields.get("hash")), rev=_string(fields.get("rev"))) if urls else None
+    urls, repository = _strings(fields.get("urls")), _string(fields.get("repository"))
+    if not urls and not repository:
+        return None
+    return Source(urls=urls, hash=_string(fields.get("hash")), repository=repository, rev=_string(fields.get("rev")))
 
 
 def _maintainers(value: object) -> tuple[Maintainer, ...]:

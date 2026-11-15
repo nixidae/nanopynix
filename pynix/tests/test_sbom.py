@@ -28,6 +28,7 @@ from pynix._impl._sbom_model import (
     License,
     Record,
     Source,
+    cve_ids,
     from_store_path,
     inventory,
     parse_walk,
@@ -153,6 +154,37 @@ def test_spdx_downloads_only_from_a_scheme_it_knows() -> None:
     assert package(Record(path="/nix/store/a-x", name="x", source=only_mirror))["downloadLocation"] == "NOASSERTION"
 
 
+def test_spdx_downloads_a_git_fetch_from_its_repository() -> None:
+    git = Source(urls=(), hash=None, repository="https://example.org/x.git", rev="abc")
+    assert package(Record(path="/nix/store/a-x", name="x", source=git))["downloadLocation"] == (
+        "git+https://example.org/x.git@abc"
+    )
+
+
+def test_spdx_declares_a_compound_license_unless_it_names_no_spdx_id() -> None:
+    expression = "MIT AND (Apache-2.0 WITH LLVM-exception)"
+    assert package(Record(path="/nix/store/a-x", name="x", license_expression=expression))["licenseDeclared"] == (
+        expression
+    )
+    local = "MIT OR LicenseRef-nixos-foo"
+    assert package(Record(path="/nix/store/a-x", name="x", license_expression=local))["licenseDeclared"] == (
+        "NOASSERTION"
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "ids"),
+    [
+        ("CVE-2024-1234.patch", ("CVE-2024-1234",)),
+        ("cve-2021-44228_and_CVE-2021-45046.diff", ("CVE-2021-44228", "CVE-2021-45046")),
+        ("fix-build.patch", ()),
+        ("CVE-24-1.patch", ()),
+    ],
+)
+def test_cve_ids_come_from_a_name(text: str, ids: tuple[str, ...]) -> None:
+    assert cve_ids(text) == ids
+
+
 def test_the_creation_time_follows_source_date_epoch() -> None:
     now = datetime(2026, 10, 23, 12, 0, 0, tzinfo=UTC)
     assert created_at({"SOURCE_DATE_EPOCH": "0"}, now) == "1970-01-01T00:00:00Z"
@@ -212,6 +244,8 @@ rec {
     pname = "pynix-sbom-compound";
     version = "6.0";
     meta.license = with lib.licenses; AND [ mit (WITH asl20 llvm-exception) ];
+    # fetchgit's shape: a repository and a revision, no archive.
+    passthru.src = { gitRepoUrl = "https://example.org/compound.git"; rev = "abc123"; };
   } "mkdir $out";
   app = runCommand "pynix-sbom-app-1.0" {
     pname = "pynix-sbom-app";
@@ -371,6 +405,9 @@ def test_cyclonedx_buildtime_adds_build_inputs_and_survives_a_throwing_meta(
     assert "licenses" not in components["pynix-sbom-deep"]
     assert components["pynix-sbom-deep"]["description"] == "Its meta reaches the walk"
     assert components["pynix-sbom-compound"]["licenses"] == [{"expression": "MIT AND (Apache-2.0 WITH LLVM-exception)"}]
+    assert components["pynix-sbom-compound"]["externalReferences"] == [
+        {"type": "vcs", "url": "https://example.org/compound.git", "comment": "revision abc123"}
+    ]
     assert all(not str(c["bom-ref"]).endswith("-man") for c in components.values())
 
 

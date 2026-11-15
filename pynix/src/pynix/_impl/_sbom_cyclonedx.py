@@ -36,19 +36,21 @@ def _licenses(record: Record) -> list[JsonValue]:
 
 def _external_references(record: Record) -> list[JsonValue]:
     references: list[JsonValue] = []
-    if record.source is not None:
-        hashes = _hashes(record.source.hash)
-        for url in record.source.urls:
-            # A fetch with a revision checks out a repository; any other fetches an archive.
-            reference: dict[str, JsonValue] = {
-                "type": "vcs" if record.source.rev else "source-distribution",
-                "url": url,
-            }
-            if record.source.rev:
-                reference["comment"] = f"revision {record.source.rev}"
+    if (source := record.source) is not None:
+        # The fetch's hash is of what it fetched: the archive, or the checkout when there is none.
+        hashes = _hashes(source.hash)
+        for url in source.urls:
+            reference: dict[str, JsonValue] = {"type": "source-distribution", "url": url}
             if hashes:
                 reference["hashes"] = hashes
             references.append(reference)
+        if source.repository:
+            vcs: dict[str, JsonValue] = {"type": "vcs", "url": source.repository}
+            if source.rev:
+                vcs["comment"] = f"revision {source.rev}"
+            if hashes and not source.urls:
+                vcs["hashes"] = hashes
+            references.append(vcs)
     references.extend({"type": "website", "url": url} for url in record.homepages)
     references.extend({"type": "release-notes", "url": url} for url in record.changelogs)
     if record.download_page:
@@ -93,7 +95,7 @@ def _patches(record: Record, texts: Mapping[str, str]) -> list[JsonValue]:
     return result
 
 
-def _vulnerabilities(records: Iterable[Record], texts: Mapping[str, str]) -> list[JsonValue]:
+def vulnerabilities(records: Iterable[Record], texts: Mapping[str, str]) -> list[JsonValue]:
     """What Nix itself states about vulnerabilities, as VEX.
 
     A CVE that a patch's name gives is resolved, with pedigree when the
@@ -234,6 +236,6 @@ def document(
         "dependencies": dependencies,
     }
     listed = {record.path: record for record in (inventory.target, *inventory.components)}
-    if vulnerabilities := _vulnerabilities(listed.values(), patches):
-        result["vulnerabilities"] = vulnerabilities
+    if stated := vulnerabilities(listed.values(), patches):
+        result["vulnerabilities"] = stated
     return result

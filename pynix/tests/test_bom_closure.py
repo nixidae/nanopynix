@@ -153,6 +153,34 @@ async def test_the_build_closure_is_its_own_document(
     assert JsonStrictValidator(SchemaVersion.V1_7).validate_str(json.dumps(cyclonedx(bom))) is None
 
 
+async def test_a_git_fetch_in_a_drv_names_its_repository(shared_nix_environment: NixTestEnvironment) -> None:
+    """fetchgit writes `url` and `rev` into its `.drv`; the build-time record keeps both, and the `.drv` path."""
+    expr = """
+      let
+        src = derivation {
+          name = "pynix-bom-git-src"; system = "x86_64-linux"; builder = "/bin/sh";
+          url = "https://example.org/git.git"; rev = "abc123";
+          outputHashMode = "recursive"; outputHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        };
+        pkg = derivation {
+          name = "pynix-bom-git-1.0"; version = "1.0"; system = "x86_64-linux"; builder = "/bin/sh"; inherit src;
+        };
+      in builtins.toJSON { command = "${pkg}"; }
+    """
+    async with _util.huggorm_build_session(shared_nix_environment.store_uri) as opened:
+        _session, _store, eval_store, state = opened
+        manifest = await state.eval_expr(expr)
+        await state.force(manifest)
+        roots = await context_derivations(eval_store, manifest)
+        bom = await build_bom(eval_store, roots, name="cluster")
+
+    (pkg,) = [record for record in bom.inventory.components if record.name == "pynix-bom-git"]
+    assert pkg.source is not None
+    assert (pkg.source.urls, pkg.source.repository, pkg.source.rev) == ((), "https://example.org/git.git", "abc123")
+    assert pkg.drv_path is not None
+    assert pkg.drv_path == roots[pkg.path]
+
+
 async def test_the_walk_reads_past_patches_that_name_no_file(shared_nix_environment: NixTestEnvironment) -> None:
     """gnulib's `passthru.patches` is an attribute set; `tryEval` would not catch `toString` of it."""
     async with _util.huggorm_build_session(shared_nix_environment.store_uri) as opened:

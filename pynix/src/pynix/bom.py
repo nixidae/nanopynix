@@ -161,9 +161,13 @@ async def _source(drv_store: AsyncStore, derivation: AsyncDerivation, src: str |
             continue
         fetch = await drv_store.read_derivation(await drv_store.parse_store_path(f"{store_dir}/{input_drv}"))
         env = await _attrs(fetch)
+        hash_ = _sri(env.get("outputHash"))
+        if "rev" in env and "urls" not in env and env.get("url"):
+            # fetchgit: `url` names the repository, and `rev` what it checks out.
+            return Source(urls=(), hash=hash_, repository=env["url"], rev=env["rev"])
         urls = tuple((env.get("urls") or env.get("url") or "").split())
         if urls:
-            return Source(urls=urls, hash=_sri(env.get("outputHash")))
+            return Source(urls=urls, hash=hash_)
     return None
 
 
@@ -391,6 +395,12 @@ def cyclonedx(bom: Bom) -> dict[str, JsonValue]:
 def cyclonedx_component(bom: Bom, record: Record) -> dict[str, JsonValue]:
     """The CycloneDX component of one *record* of *bom*, for a caller that writes its own document."""
     return _sbom_cyclonedx.component(record, bom.patches)
+
+
+def cyclonedx_vulnerabilities(bom: Bom) -> list[JsonValue]:
+    """The vulnerabilities Nix states for *bom* (CVE patches, ``meta.knownVulnerabilities``), for a caller that writes its own document."""
+    listed = (bom.inventory.target, *bom.inventory.components)
+    return _sbom_cyclonedx.vulnerabilities({record.path: record for record in listed}.values(), bom.patches)
 
 
 def spdx(bom: Bom, *, created: str) -> dict[str, JsonValue]:
