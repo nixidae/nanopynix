@@ -18,6 +18,7 @@ from pynix._nix_options import (
 )
 from pynix._settings import (
     ConfiguredCommand,
+    darwin_builder_snapshot_option,
     eval_store_option,
     linux_builder_guest_option,
     print_build_logs_option,
@@ -119,14 +120,26 @@ class Build(ConfiguredCommand):
 
     linux_builder_guest: str | None = linux_builder_guest_option()
 
+    darwin_builder: bool = opt(
+        False,
+        help=(
+            "Build in a macOS VM that this command starts from a snapshot on QEMU and "
+            "Hypervisor.framework, and stops when it exits. The snapshot loads in a fraction of a "
+            "second, and every build starts from the same guest. The VM substitutes or receives "
+            "every input. Apple silicon only."
+        ),
+    )
+
+    darwin_builder_snapshot: str | None = darwin_builder_snapshot_option()
+
     copy_back: bool = opt(
         True,
         # `argparse.BooleanOptionalAction` writes `--copy-back` and
         # `--no-copy-back` from this one declaration.
         negatable=True,
         help=(
-            "Copy the outputs of a --namespaced or --linux-builder build into the host store when the "
-            "build succeeds. Without it the outputs are gone when the worker or the VM exits."
+            "Copy the outputs of a --namespaced, --linux-builder or --darwin-builder build into the host "
+            "store when the build succeeds. Without it the outputs are gone when the worker or the VM exits."
         ),
     )
 

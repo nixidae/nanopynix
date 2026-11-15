@@ -10,7 +10,7 @@ from __future__ import annotations
 import difflib
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -45,6 +45,7 @@ from pynix import _evaluate
 from pynix._build_log import CAUSE_LEVEL, BuildLog
 from pynix._build_monitor import BuildPlan, MonitorState
 from pynix._impl.copy import StoreEnds, closure_of, copy_verified
+from pynix._impl.darwin_builder import DarwinBuilderError, darwin_builder, requested_snapshot
 from pynix._impl.linux_builder import LinuxBuilderError, linux_builder, requested_guest
 from pynix._util import (
     build_derivations,
@@ -152,6 +153,8 @@ class BuildSession:
     build_store: AsyncStore
     evaluation_store: AsyncStore
     state: AsyncEvalState
+    #: Called with the evaluation store and the derivations, before they build.
+    before_build: Callable[[AsyncStore, Sequence[str]], Awaitable[None]] | None = None
 
 
 async def _evaluate_build_target(target: EvaluationTarget, state: AsyncEvalState) -> list[tuple[str, AsyncValue]]:
@@ -260,6 +263,8 @@ async def _build_all(
     drv_paths = list(dict.fromkeys(drv_path for _, drv_path in named))
     if monitor is not None:
         monitor.plan = await _plan_or_none(build, drv_paths)
+    if build.before_build is not None:
+        await build.before_build(build.evaluation_store, drv_paths)
     outputs = await build_derivations(build.build_store, drv_paths, eval_store=build.evaluation_store, mode=mode)
     return [BuiltTarget(attr, drv_path, outputs[drv_path]) for attr, drv_path in named]
 
@@ -335,7 +340,12 @@ class _StoreUris:
 
 
 async def _build_on_huggorm(
-    command: Build, targets: Sequence[EvaluationTarget], settings: dict[str, str], uris: _StoreUris
+    command: Build,
+    targets: Sequence[EvaluationTarget],
+    settings: dict[str, str],
+    uris: _StoreUris,
+    *,
+    before_build: Callable[[AsyncStore, Sequence[str]], Awaitable[None]] | None = None,
 ) -> tuple[list[BuiltTarget], int, dict[str, Any] | None]:
     monitor = MonitorState(started=time.monotonic(), print_build_logs=command.print_build_logs) if command.nom else None
     async with huggorm_build_session(
@@ -350,7 +360,7 @@ async def _build_on_huggorm(
         logger.info("pynix build evaluating target")
         built, updates = await _build_target(
             targets,
-            BuildSession(session, build_store, eval_store, state),
+            BuildSession(session, build_store, eval_store, state, before_build),
             update_fod=command.update_fod,
             dry_run=command.dry_run,
             mode=_build_mode(command),
@@ -455,9 +465,11 @@ async def run_build(command: Build) -> None:
 
     namespaced = _resolve_namespaced(command)
     guest = _resolve_linux_builder(command, namespaced=namespaced)
-    _refuse_an_out_link_with_nothing_to_link(command, elsewhere=namespaced or guest is not None)
+    snapshot = _resolve_darwin_builder(command, namespaced=namespaced, linux=guest is not None)
+    elsewhere = namespaced or guest is not None or snapshot is not None
+    _refuse_an_out_link_with_nothing_to_link(command, elsewhere=elsewhere)
     if command.dry_run and not command.update_fod:
-        _refuse_a_dry_run_elsewhere(command, elsewhere=namespaced or guest is not None)
+        _refuse_a_dry_run_elsewhere(command, elsewhere=elsewhere)
 
     settings = configured_nix_settings(
         substituters=command.substituters,
@@ -471,22 +483,17 @@ async def run_build(command: Build) -> None:
         if command.dry_run and not command.update_fod:
             print_json(await _dry_run(command, targets, settings))
             return
-        if namespaced:
-            built, updates, copied = await _build_namespaced(command, targets, settings)
-        elif guest is not None:
-            built, updates, copied = await _build_on_linux_builder(command, targets, settings, guest)
-        else:
-            built, updates, copied = await _build_on_huggorm(
-                command, targets, settings, _StoreUris(command.store, command.eval_store)
-            )
+        built, updates, copied = await _build_where_asked(
+            command, targets, settings, namespaced=namespaced, guest=guest, snapshot=snapshot
+        )
     except BuildTargetError as exc:
         report_and_exit(exc)
-    except LinuxBuilderError as exc:
+    except (LinuxBuilderError, DarwinBuilderError) as exc:
         error_exit(str(exc))
 
     if command.out_link is not None and built:
         # The store the outputs are in now: a namespaced or VM build copied them to the host's.
-        linked = _HOST_STORE_URI if namespaced or guest is not None else command.store
+        linked = _HOST_STORE_URI if elsewhere else command.store
         async with huggorm_store_session(linked) as (_session, store):
             await create_out_links(store, command.out_link, [target.outputs for target in built])
 
@@ -558,6 +565,24 @@ def _targets(command: Build) -> list[EvaluationTarget]:
     return targets
 
 
+async def _build_where_asked(  # noqa: PLR0913 -- the resolved choice of each builder flag
+    command: Build,
+    targets: Sequence[EvaluationTarget],
+    settings: dict[str, str],
+    *,
+    namespaced: bool,
+    guest: str | None,
+    snapshot: str | None,
+) -> tuple[list[BuiltTarget], int, dict[str, Any] | None]:
+    if namespaced:
+        return await _build_namespaced(command, targets, settings)
+    if guest is not None:
+        return await _build_on_linux_builder(command, targets, settings, guest)
+    if snapshot is not None:
+        return await _build_on_darwin_builder(command, targets, settings, snapshot)
+    return await _build_on_huggorm(command, targets, settings, _StoreUris(command.store, command.eval_store))
+
+
 async def _build_namespaced(
     command: Build, targets: Sequence[EvaluationTarget], settings: dict[str, str]
 ) -> tuple[list[BuiltTarget], int, dict[str, Any] | None]:
@@ -626,6 +651,34 @@ async def _build_on_linux_builder(
             _HOST_STORE_URI if command.copy_back else None,
         )
         return await _build_on_huggorm(command, targets, settings, uris)
+
+
+async def _build_on_darwin_builder(
+    command: Build, targets: Sequence[EvaluationTarget], settings: dict[str, str], snapshot: str
+) -> tuple[list[BuiltTarget], int, dict[str, Any] | None]:
+    """Build in a macOS VM, evaluating against the host store.
+
+    Nix copies the derivations to the guest; the guest substitutes their
+    inputs, or builds them. A snapshot over the host store instead registers
+    the closure the host has (``DarwinBuilder.register``), and the guest reads
+    those paths over virtiofs.
+    """
+    async with darwin_builder(snapshot) as vm:
+        uris = _StoreUris(
+            vm.store,
+            command.eval_store or _HOST_STORE_URI,
+            _HOST_STORE_URI if command.copy_back else None,
+        )
+        return await _build_on_huggorm(command, targets, settings, uris, before_build=vm.register)
+
+
+def _resolve_darwin_builder(command: Build, *, namespaced: bool, linux: bool) -> str | None:
+    """The snapshot of a --darwin-builder build, or None for any other build."""
+    if not command.darwin_builder:
+        return None
+    if namespaced or linux:
+        error_exit("--darwin-builder, --linux-builder and --namespaced each build in a store of their own")
+    return requested_snapshot(snapshot=command.darwin_builder_snapshot, store_named="store" in command.explicit_options)
 
 
 def _resolve_linux_builder(command: Build, *, namespaced: bool) -> str | None:

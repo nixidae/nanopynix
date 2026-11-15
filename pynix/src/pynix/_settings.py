@@ -211,6 +211,15 @@ def print_build_logs_option() -> bool:
 
 
 @no_runtime_type_check  # see option
+def darwin_builder_snapshot_option() -> str | None:
+    value: str | None = option(
+        "The directory of the --darwin-builder snapshot: a booted macOS guest that "
+        "`darwin_builder.py save` wrote, with snapshot.json naming QEMU and its arguments."
+    )
+    return value
+
+
+@no_runtime_type_check  # see option
 def linux_builder_guest_option() -> str | None:
     value: str | None = option(
         "The manifest of the --linux-builder guest: the store path that "

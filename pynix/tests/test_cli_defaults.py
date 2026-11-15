@@ -109,6 +109,7 @@ def test_the_file_beats_the_built_in_default(tmp_path: Path, monkeypatch: pytest
         "verbosity": "notice",
         "print_build_logs": True,
         "linux_builder_guest": None,
+        "darwin_builder_snapshot": None,
     }
     assert nix_settings() == {"substituters": "https://file.example/", "max-jobs": "8"}
 

@@ -28,6 +28,7 @@ from pynix._impl import (
     build as build,
     config as config,
     copy as copy,
+    darwin_builder as darwin_builder,
     derivation as derivation,
     develop as develop,
     edit as edit,
