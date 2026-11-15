@@ -22,12 +22,13 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 
 from anyio import Path as AnyioPath
-from huggorm import AsyncDerivation, AsyncEvalState, AsyncStore, AsyncValue
+from huggorm import AsyncDerivation, AsyncEvalState, AsyncStore, AsyncValue, DerivationOutputCAFixed
 from huggorm.errors import NixError
 
 from pynix._evaluate import JsonValue
 from pynix._impl import _sbom_cyclonedx, _sbom_spdx
 from pynix._impl._sbom_model import (
+    Build as Build,
     Inventory as Inventory,
     License as License,
     Maintainer as Maintainer,
@@ -51,6 +52,8 @@ class Bom:
     inventory: Inventory
     patches: dict[str, str]
     buildtime: bool
+    #: Each ``.drv`` of the build closure, from :func:`build_bom`; empty for any other SBOM.
+    builds: tuple[Build, ...] = ()
 
 
 async def runtime_closure(store: AsyncStore, roots: Iterable[str]) -> dict[str, tuple[str, ...]]:
@@ -240,6 +243,7 @@ class _BuildGraph:
     reads: dict[str, tuple[str, ...]]
     #: The ``.drv`` path and file of each output in *reads*; an input source has none.
     derivations: dict[str, tuple[str, AsyncDerivation]]
+    builds: tuple[Build, ...]
 
 
 async def _read(drv_store: AsyncStore, parsed: dict[str, AsyncDerivation], drv: str) -> AsyncDerivation:
@@ -264,6 +268,7 @@ async def _build_graph(drv_store: AsyncStore, roots: Mapping[str, str | None]) -
     parsed: dict[str, AsyncDerivation] = {}
     reads: dict[str, tuple[str, ...]] = {}
     derivations: dict[str, tuple[str, AsyncDerivation]] = {}
+    builds: list[Build] = []
     done: set[str] = set()
     pending = [drv for drv in roots.values() if drv is not None]
     for path, drv in roots.items():
@@ -276,9 +281,11 @@ async def _build_graph(drv_store: AsyncStore, roots: Mapping[str, str | None]) -
         done.add(drv)
         derivation = await _read(drv_store, parsed, drv)
         needed: set[str] = set()
+        children: list[str] = []
         for base, node in (await derivation.input_drvs()).items():
             child = f"{store_dir}/{base}"
             pending.append(child)
+            children.append(child)
             # A wire value: its accessors answer at once.
             for output in node.outputs():
                 if (found := await _output_path(drv_store, parsed, child, output)) is not None:
@@ -287,11 +294,29 @@ async def _build_graph(drv_store: AsyncStore, roots: Mapping[str, str | None]) -
         for src in sources:
             reads.setdefault(src, ())
         built = tuple(sorted(needed.union(sources)))
-        for output in sorted(await derivation.outputs()):
+        outputs = await derivation.outputs()
+        written: list[str] = []
+        for output in sorted(outputs):
             if (out := await _output_path(drv_store, parsed, drv, output)) is not None:
                 reads[out] = built
                 derivations[out] = (drv, derivation)
-    return _BuildGraph(dict(sorted(reads.items())), derivations)
+                written.append(out)
+        fixed = any(isinstance(output, DerivationOutputCAFixed) for output in outputs.values())
+        builds.append(
+            Build(
+                drv_path=drv,
+                name=await derivation.name(),
+                system=await derivation.system(),
+                builder=await derivation.builder(),
+                args=tuple(await derivation.args()),
+                outputs=tuple(written),
+                reads=built,
+                input_drvs=tuple(sorted(children)),
+                fixed_output=fixed,
+                rev=(await _attrs(derivation)).get("rev") if fixed else None,
+            )
+        )
+    return _BuildGraph(dict(sorted(reads.items())), derivations, tuple(sorted(builds, key=lambda b: b.drv_path)))
 
 
 async def build_bom(
@@ -310,7 +335,8 @@ async def build_bom(
     source (:func:`context_derivations`). Builds nothing, and needs no path
     of the closure to be valid. *state*, when it recorded its derivations,
     gives each output the value it coerced to it; any other output's
-    record comes from its ``.drv``, and a source's from its name.
+    record comes from its ``.drv``, and a source's from its name. Each
+    ``.drv`` is a :class:`Build`, which CycloneDX writes as ``formulation``.
     """
     graph = await _build_graph(drv_store, roots)
     records = await recorded_records(state, graph.reads) if state is not None else {}
@@ -324,7 +350,8 @@ async def build_bom(
     wanted = tuple(sorted(roots))
     # The build edges stand where `closure_bom` puts references.
     listed = inventory(records, name, {**graph.reads, name: wanted}, buildtime=False, always=frozenset(wanted))
-    return Bom(listed, await _patch_texts(listed, (await StoreLayout.of(drv_store)).to_disk), buildtime=True)
+    texts = await _patch_texts(listed, (await StoreLayout.of(drv_store)).to_disk)
+    return Bom(listed, texts, buildtime=True, builds=graph.builds)
 
 
 async def recorded_records(state: AsyncEvalState, paths: Iterable[str]) -> dict[str, Record]:
@@ -389,12 +416,22 @@ def cyclonedx(bom: Bom) -> dict[str, JsonValue]:
         serial_number=_serial(bom, "cyclonedx"),
         tool_version=importlib.metadata.version("pynix"),
         patches=bom.patches,
+        builds=bom.builds,
     )
 
 
 def cyclonedx_component(bom: Bom, record: Record) -> dict[str, JsonValue]:
     """The CycloneDX component of one *record* of *bom*, for a caller that writes its own document."""
     return _sbom_cyclonedx.component(record, bom.patches)
+
+
+def cyclonedx_formulation(bom: Bom, refs: Mapping[str, str] | None = None) -> list[JsonValue]:
+    """How *bom*'s components were built, as CycloneDX ``formulation``; empty when *bom* holds no builds.
+
+    *refs* gives the ``bom-ref`` of each listed path, for a caller that names
+    its components its own way; by default each record's own.
+    """
+    return _sbom_cyclonedx.formulation(bom.inventory, bom.builds, refs)
 
 
 def cyclonedx_vulnerabilities(bom: Bom) -> list[JsonValue]:

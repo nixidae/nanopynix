@@ -124,6 +124,28 @@ class Inventory:
     target: Record
     components: tuple[Record, ...]
     dependencies: dict[str, frozenset[str]] = field(default_factory=dict[str, frozenset[str]])
+    #: The listed path that stands for each path of a listed package; a path with no version has none.
+    aliases: dict[str, str] = field(default_factory=dict[str, str])
+
+
+@dataclass(frozen=True, slots=True)
+class Build:
+    """One ``.drv`` of a build closure: what it runs, what it reads and what it writes."""
+
+    drv_path: str
+    name: str
+    system: str
+    builder: str
+    args: tuple[str, ...]
+    #: The output paths; a floating content-addressed output has none yet.
+    outputs: tuple[str, ...]
+    #: The outputs of input derivations and the sources the build reads.
+    reads: tuple[str, ...]
+    input_drvs: tuple[str, ...]
+    #: A fixed-output derivation: a fetch, whose output hash is known before it runs.
+    fixed_output: bool = False
+    #: The revision a fixed-output git fetch checks out.
+    rev: str | None = None
 
 
 def _object(value: object) -> dict[str, object]:
@@ -302,6 +324,7 @@ def inventory(
         target=target_record,
         components=tuple(kept.values()),
         dependencies={path: frozenset(refs) for path, refs in edges.items()},
+        aliases=alias,
     )
 
 

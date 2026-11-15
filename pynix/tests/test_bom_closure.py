@@ -15,7 +15,15 @@ from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, 
 from pynix import _util
 from pynix._impl._sbom_model import parse_walk
 from pynix._nix_helpers import helper
-from pynix.bom import Origin, build_bom, closure_bom, context_derivations, context_roots, cyclonedx
+from pynix.bom import (
+    Origin,
+    build_bom,
+    closure_bom,
+    context_derivations,
+    context_roots,
+    cyclonedx,
+    cyclonedx_formulation,
+)
 
 PAYLOAD = "pynix-bom-closure-source\n"
 SRI = "sha256-" + base64.b64encode(hashlib.sha256(PAYLOAD.encode()).digest()).decode()
@@ -179,6 +187,61 @@ async def test_a_git_fetch_in_a_drv_names_its_repository(shared_nix_environment:
     assert (pkg.source.urls, pkg.source.repository, pkg.source.rev) == ((), "https://example.org/git.git", "abc123")
     assert pkg.drv_path is not None
     assert pkg.drv_path == roots[pkg.path]
+
+
+async def test_each_drv_of_the_build_closure_is_a_formulation_task(shared_nix_environment: NixTestEnvironment) -> None:
+    """A hook with no version is a task with no component; a git fetch is a clone; two outputs are one component.
+
+    Builds nothing.
+    """
+    expr = """
+      let
+        sh = { system = "x86_64-linux"; builder = "/bin/sh"; };
+        hook = derivation (sh // { name = "pynix-bom-hook"; });
+        src = derivation (sh // {
+          name = "pynix-bom-src-1.0"; url = "https://example.org/git.git"; rev = "abc123";
+          outputHashMode = "recursive"; outputHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        });
+        pkg = derivation (sh // {
+          name = "pynix-bom-pkg-1.0"; version = "1.0"; args = [ "-c" "echo it's built" ]; outputs = [ "out" "dev" ];
+          inherit src hook;
+        });
+        app = derivation (sh // { name = "pynix-bom-app-1.0"; headers = pkg.dev; });
+      in builtins.toJSON { command = "${app}"; }
+    """
+    async with _util.huggorm_build_session(shared_nix_environment.store_uri) as opened:
+        _session, _store, eval_store, state = opened
+        manifest = await state.eval_expr(expr)
+        await state.force(manifest)
+        roots = await context_derivations(eval_store, manifest)
+        bom = await build_bom(eval_store, roots, name="cluster")
+
+    text = json.dumps(cyclonedx(bom))
+    assert JsonStrictValidator(SchemaVersion.V1_7).validate_str(text) is None
+    doc = json.loads(text)
+    by_name = {record.name: record for record in bom.inventory.components}
+    app, pkg, src = by_name["pynix-bom-app"], by_name["pynix-bom-pkg"], by_name["pynix-bom-src"]
+    (workflow,) = doc["formulation"][0]["workflows"]
+    tasks = {task["name"]: task for task in workflow["tasks"]}
+    assert set(tasks) == {"pynix-bom-hook", "pynix-bom-src-1.0", "pynix-bom-pkg-1.0", "pynix-bom-app-1.0"}
+    built = tasks["pynix-bom-pkg-1.0"]
+    assert built["uid"] == pkg.drv_path
+    # `app` reads `pkg.dev`, and `dev` is part of the `pkg` component.
+    assert tasks["pynix-bom-app-1.0"]["inputs"] == [{"resource": {"ref": pkg.ref}}]
+    assert tasks["pynix-bom-app-1.0"]["outputs"] == [{"type": "artifact", "resource": {"ref": app.ref}}]
+    assert built["steps"][0]["commands"] == [{"executed": "/bin/sh -c 'echo it'\"'\"'s built'"}]
+    assert built["inputs"] == [{"resource": {"ref": src.ref}}]
+    assert built["outputs"] == [{"type": "artifact", "resource": {"ref": pkg.ref}}]
+    assert (tasks["pynix-bom-src-1.0"]["taskTypes"], built["taskTypes"]) == (["clone"], ["build"])
+    assert "outputs" not in tasks["pynix-bom-hook"]
+    depends = {entry["ref"]: entry["dependsOn"] for entry in workflow["taskDependencies"]}
+    assert sorted(depends[built["bom-ref"]]) == sorted(
+        [tasks["pynix-bom-hook"]["bom-ref"], tasks["pynix-bom-src-1.0"]["bom-ref"]]
+    )
+    (renamed,) = json.loads(json.dumps(cyclonedx_formulation(bom, {pkg.path: "nix:pynix-bom-pkg@1.0"})))[0]["workflows"]
+    assert next(t for t in renamed["tasks"] if t["name"] == "pynix-bom-pkg-1.0")["outputs"][0]["resource"] == {
+        "ref": "nix:pynix-bom-pkg@1.0"
+    }
 
 
 async def test_the_walk_reads_past_patches_that_name_no_file(shared_nix_environment: NixTestEnvironment) -> None:

@@ -7,11 +7,12 @@ field for field. bombon writes 1.5 and converts; this module writes 1.7, so
 
 from __future__ import annotations
 
+import shlex
 from collections.abc import Iterable, Mapping
 from pathlib import PurePosixPath
 
 from pynix._evaluate import JsonValue
-from pynix._impl._sbom_model import Inventory, License, Maintainer, Origin, Record, cve_ids, sri_digest
+from pynix._impl._sbom_model import Build, Inventory, License, Maintainer, Origin, Record, cve_ids, sri_digest
 
 SPEC_VERSION = "1.7"
 
@@ -199,12 +200,79 @@ def component(record: Record, patches: Mapping[str, str]) -> dict[str, JsonValue
     return result
 
 
+def _task_ref(build: Build) -> str:
+    # The store hash alone: `uid` and `name` hold the rest. With the full base
+    # name, sg1's task graph is 13.6 MB of a 46 MB document. `task:` keeps it
+    # apart from a component, as a `.drv` can itself be a root.
+    return f"task:{PurePosixPath(build.drv_path).name.partition('-')[0]}"
+
+
+def _task_types(build: Build) -> list[JsonValue]:
+    if not build.fixed_output:
+        return ["build"]
+    return ["clone"] if build.rev else ["copy"]
+
+
+def _task(build: Build, ref_of: Mapping[str, str]) -> dict[str, JsonValue]:
+    inputs = sorted({ref_of[path] for path in build.reads if path in ref_of})
+    outputs = sorted({ref_of[path] for path in build.outputs if path in ref_of})
+    properties: list[JsonValue] = [{"name": "nix:system", "value": build.system}]
+    if build.rev:
+        properties.append({"name": "nix:rev", "value": build.rev})
+    task: dict[str, JsonValue] = {
+        "bom-ref": _task_ref(build),
+        "uid": build.drv_path,
+        "name": build.name,
+        "taskTypes": _task_types(build),
+        "steps": [{"name": "builder", "commands": [{"executed": shlex.join([build.builder, *build.args])}]}],
+    }
+    if inputs:
+        task["inputs"] = [{"resource": {"ref": ref}} for ref in inputs]
+    if outputs:
+        task["outputs"] = [{"type": "artifact", "resource": {"ref": ref}} for ref in outputs]
+    task["properties"] = properties
+    return task
+
+
+def formulation(
+    inventory: Inventory, builds: Iterable[Build], refs: Mapping[str, str] | None = None
+) -> list[JsonValue]:
+    """How the components of *inventory* were built: one workflow, with one task for each ``.drv``.
+
+    A task reads and writes components; a path with no component is left
+    out of its inputs and outputs, and the task stays, so the task graph is
+    the whole ``.drv`` graph. *refs* gives each listed path its ``bom-ref``.
+    """
+    ordered = list(builds)
+    if not ordered:
+        return []
+    listed = {record.path: record.ref for record in (inventory.target, *inventory.components)}
+    names = {**listed, **refs} if refs is not None else listed
+    ref_of = {path: names[kept] for path, kept in inventory.aliases.items() if kept in names}
+    task_of = {build.drv_path: _task_ref(build) for build in ordered}
+    dependencies: list[JsonValue] = []
+    for build in ordered:
+        depends_on: list[JsonValue] = [task_of[drv] for drv in build.input_drvs if drv in task_of]
+        dependencies.append({"ref": task_of[build.drv_path], "dependsOn": depends_on})
+    target = inventory.target.ref
+    workflow: dict[str, JsonValue] = {
+        "bom-ref": f"workflow:{target}",
+        "uid": target,
+        "name": f"nix build of {inventory.target.name}",
+        "taskTypes": ["build"],
+        "tasks": [_task(build, ref_of) for build in ordered],
+        "taskDependencies": dependencies,
+    }
+    return [{"bom-ref": f"formula:{target}", "workflows": [workflow]}]
+
+
 def document(
     inventory: Inventory,
     *,
     serial_number: str,
     tool_version: str,
     patches: Mapping[str, str],
+    builds: Iterable[Build] = (),
 ) -> dict[str, JsonValue]:
     """The CycloneDX document of *inventory*."""
     refs = {record.path: record.ref for record in (inventory.target, *inventory.components)}
@@ -238,4 +306,6 @@ def document(
     listed = {record.path: record for record in (inventory.target, *inventory.components)}
     if stated := vulnerabilities(listed.values(), patches):
         result["vulnerabilities"] = stated
+    if formulas := formulation(inventory, builds):
+        result["formulation"] = formulas
     return result
