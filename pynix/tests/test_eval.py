@@ -104,12 +104,54 @@ async def test_eval_refuses_json_with_raw(capsys: pytest.CaptureFixture[str]) ->
     assert "--json and --raw contradict each other" in capsys.readouterr().err
 
 
-async def test_eval_attr_without_file_or_flake_errors(capsys: pytest.CaptureFixture[str]) -> None:
-    cmd = parse(["eval", "--expr", "1", "--attr", "x"])
+async def test_eval_attr_without_a_source_errors(capsys: pytest.CaptureFixture[str]) -> None:
+    """An expression on standard input takes no ``--attr``; ``--file -`` does."""
+    cmd = parse(["eval", "--attr", "x"])
     with pytest.raises(SystemExit):
         await cmd.run()
     captured = capsys.readouterr()
     assert "--attr requires --file or --flake" in captured.err
+
+
+async def test_eval_attr_selects_from_expr(
+    shared_nix_environment: NixTestEnvironment,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``nix eval --expr '{ a.b = 2; }' a.b`` prints 2."""
+    cmd = parse(["eval", "--expr", "{ a.b = 2; }", "--attr", "a.b", *shared_nix_environment.pynix_store_args()])
+    await cmd.run()
+    assert _parse_json_output(capsys.readouterr().out) == 2
+
+
+async def test_eval_arg_calls_expr_before_attr_selects(
+    shared_nix_environment: NixTestEnvironment,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``nix eval --expr '{ x }: { a = x; }' --arg x 1 a`` prints 1."""
+    cmd = parse(
+        [
+            "eval",
+            "--expr",
+            "{ x }: { a = x; }",
+            "--arg",
+            "x",
+            "1",
+            "--attr",
+            "a",
+            *shared_nix_environment.pynix_store_args(),
+        ],
+    )
+    await cmd.run()
+    assert _parse_json_output(capsys.readouterr().out) == 1
+
+
+async def test_eval_raw_with_expr_attr(
+    shared_nix_environment: NixTestEnvironment,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cmd = parse(["eval", "--raw", "--expr", '{ a = "x"; }', "--attr", "a", *shared_nix_environment.pynix_store_args()])
+    await cmd.run()
+    assert capsys.readouterr().out == "x"
 
 
 async def test_eval_expr_combined_with_file_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -119,7 +161,7 @@ async def test_eval_expr_combined_with_file_errors(tmp_path: Path, capsys: pytes
     with pytest.raises(SystemExit):
         await cmd.run()
     captured = capsys.readouterr()
-    assert "expression argument cannot be combined with --file or --flake" in captured.err
+    assert "--expr cannot be combined with --file or --flake" in captured.err
 
 
 async def test_eval_reads_expression_from_stdin(

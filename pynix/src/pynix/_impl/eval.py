@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 
 import structlog
 
 from pynix._evaluate import base_attr_search, call, evaluate_target
-from pynix._script import base_argument
 from pynix._util import error_exit, huggorm_eval_session, print_json, read_only_mode, report_and_exit
 from pynix.eval import Eval
 from pynix.target import EvaluationTarget, EvaluationTargetError
@@ -25,33 +25,26 @@ async def run_eval(command: Eval) -> None:
     """The body of :meth:`pynix.eval.Eval.run`."""
     if command.json and command.raw:
         error_exit("--json and --raw contradict each other")
-    target = EvaluationTarget.from_command(command)
+    target = replace(EvaluationTarget.from_command(command), expr=command.expr)
     try:
         target.validate()
     except EvaluationTargetError as exc:
         report_and_exit(exc)
-    if target.file is not None or target.flake is not None:
-        if command.expr is not None:
-            error_exit("expression argument cannot be combined with --file or --flake")
-        expr = None
-    elif command.expr is not None:
-        expr = command.expr
-        logger.info("reading expression from argument")
-    else:
-        expr = sys.stdin.read()
+    stdin_expr: str | None = None
+    if target.file is None and target.flake is None and target.expr is None:
+        stdin_expr = sys.stdin.read()
         logger.info("reading expression from stdin")
 
-    # `--expr` is pure unless `--impure`, as Nix has it (`installables.cc:457`
-    # turns `pure-eval` off for a file only). An expression on standard input
-    # is `nix eval --file -`, so it is a file, and impure.
-    pure = not command.impure if command.expr is not None else target.pure(impure=command.impure)
+    # An expression on standard input is `nix eval --file -`, so it is a file,
+    # and impure (`installables.cc:457`).
+    pure = target.pure(impure=command.impure) if stdin_expr is None else False
     async with huggorm_eval_session(command.store, pure=pure) as (_session, _store, state):
         with read_only_mode(command.read_only):
             try:
                 root = (
                     await evaluate_target(target, state, auto_call_file=True, attr_search=base_attr_search())
-                    if expr is None
-                    else await state.eval_expr(expr, base_argument() if command.expr is not None else None)
+                    if stdin_expr is None
+                    else await state.eval_expr(stdin_expr, None)
                 )
             except EvaluationTargetError as exc:
                 report_and_exit(exc)
