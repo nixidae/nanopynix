@@ -409,11 +409,9 @@ async def run_print_dev_env(command: PrintDevEnv) -> None:
 async def run_develop(command: Develop) -> None:
     """The body of :meth:`pynix.develop.Develop.run`."""
     words = command.words
-    # Only an interactive shell needs one. develop.cc:688 appends its
-    # `SHELL=` line after the `exec` of a command, where nothing runs it, so
-    # resolving a shell for a command would cost a nixpkgs evaluation and
-    # change nothing.
-    environment, shell = await build_dev_env(command, resolve_shell=not words)
+    # A command needs it too: the shell runs the rc file (develop.cc:713).
+    # The bash on PATH is 3.2 on macOS, and it refuses stdenv's `;&`.
+    environment, shell = await build_dev_env(command, resolve_shell=True)
 
     # mkdtemp rather than TemporaryDirectory: execvp replaces this process,
     # so nothing of ours ever cleans up. The script removes the directory

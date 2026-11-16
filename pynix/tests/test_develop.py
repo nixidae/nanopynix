@@ -27,6 +27,7 @@ from huggorm.testing.environment import LINUX_CHROOT_BUILD, NixTestEnvironment, 
 
 from pynix import parse
 from pynix._dev_env import BuildEnvironment, make_rc_script, quote
+from pynix._impl import develop as develop_impl
 from pynix._impl.develop import (
     BashPrompt,
     InteractiveShell,
@@ -511,6 +512,27 @@ def test_develop_reports_the_exit_status_of_its_command(
         nix_file, shared_nix_environment.store_uri, ["bash", "-c", "exit 42"], nixpkgs_path, env=child_env
     )
     assert result.returncode == 42, result.stderr
+
+
+async def test_a_command_runs_under_the_interactive_shell(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``develop.cc:713`` runs the rc file with the shell it chose, a command too.
+
+    The bash on PATH is 3.2 on macOS, and it refuses stdenv's ``;&``.
+    """
+    shell = InteractiveShell(path="/nix/store/x-bash-interactive/bin/bash", from_nixpkgs=True, exec_prefix=[])
+    asked: list[bool] = []
+    ran: list[InteractiveShell | None] = []
+
+    async def fake_build(_command: object, *, resolve_shell: bool = False) -> tuple[BuildEnvironment, object]:
+        asked.append(resolve_shell)
+        return _environment(), shell if resolve_shell else None
+
+    monkeypatch.setattr(develop_impl, "build_dev_env", fake_build)
+    monkeypatch.setattr(develop_impl, "_exec_bash", lambda _rc, **kw: ran.append(kw.get("shell")))
+    monkeypatch.chdir(tmp_path)
+    await develop_impl.run_develop(cast("Develop", parse(["develop", "--file", "x.nix", "--", "true"])))
+    assert asked == [True]
+    assert ran == [shell]
 
 
 # --- the composition, without a store --------------------------------------
