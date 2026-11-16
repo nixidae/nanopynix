@@ -284,10 +284,32 @@ def from_store_path(path: str) -> Record:
     Nix's ``DrvName``: the name ends at the first dash that a non-letter
     follows, and the rest is the version.
     """
-    _, _, rest = PurePosixPath(path).name.partition("-")
-    parts = _VERSION_DASH.split(rest, maxsplit=1)
-    version = parts[1] if len(parts) == 2 else None  # noqa: PLR2004 -- a name and a version
-    return Record(path=path, name=parts[0], version=version, origin=Origin.NAME)
+    name, version = _drv_name(PurePosixPath(path).name.partition("-")[2])
+    return Record(path=path, name=name, version=version, origin=Origin.NAME)
+
+
+def _drv_name(full: str) -> tuple[str, str | None]:
+    parts = _VERSION_DASH.split(full, maxsplit=1)
+    return parts[0], parts[1] if len(parts) == 2 else None  # noqa: PLR2004 -- a name and a version
+
+
+def from_deriver_name(path: str, deriver: str) -> Record:
+    """A record from the names of a store path and its ``.drv``, for a ``.drv`` no store can read.
+
+    A ``.drv`` is named for the package and every output but ``out``
+    appends ``-<output>`` to it, so the path's own name alone puts the
+    output in the version: ``libgit2-1.9.7-lib``.
+    """
+    drv_name = PurePosixPath(deriver).name.partition("-")[2].removesuffix(".drv")
+    path_name = PurePosixPath(path).name.partition("-")[2]
+    if path_name == drv_name:
+        output_name = "out"
+    elif path_name.startswith(f"{drv_name}-"):
+        output_name = path_name.removeprefix(f"{drv_name}-")
+    else:
+        return from_store_path(path)
+    name, version = _drv_name(drv_name)
+    return Record(path=path, name=name, version=version, output_name=output_name, origin=Origin.NAME)
 
 
 def _listed(record: Record) -> bool:

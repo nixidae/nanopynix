@@ -30,6 +30,7 @@ from pynix._impl._sbom_model import (
     Record,
     Source,
     cve_ids,
+    from_deriver_name,
     from_store_path,
     inventory,
     parse_walk,
@@ -53,6 +54,47 @@ from pynix._impl.sbom import created_at
 def test_a_bare_store_path_names_itself_as_nix_does(path: str, name: str, version: str | None) -> None:
     record = from_store_path(path)
     assert (record.name, record.version) == (name, version)
+
+
+@pytest.mark.parametrize(
+    ("path", "deriver", "name", "version", "output"),
+    [
+        (
+            "/nix/store/r04g2avwnxqafway7jq0m8c26pqqfrw5-libgit2-1.9.7-lib",
+            "/nix/store/x5cdkpd8lwyacdcgwyzs1awkl5j3i16v-libgit2-1.9.7.drv",
+            "libgit2",
+            "1.9.7",
+            "lib",
+        ),
+        (
+            "/nix/store/r04g2avwnxqafway7jq0m8c26pqqfrw5-libgit2-1.9.7",
+            "/nix/store/x5cdkpd8lwyacdcgwyzs1awkl5j3i16v-libgit2-1.9.7.drv",
+            "libgit2",
+            "1.9.7",
+            "out",
+        ),
+        (
+            "/nix/store/lcxn67gbjdcr6bjf1rcs03ywa7gcslr2-system-units",
+            "/nix/store/x5cdkpd8lwyacdcgwyzs1awkl5j3i16v-system-units.drv",
+            "system-units",
+            None,
+            "out",
+        ),
+        # A name the deriver does not start: the path's own name decides.
+        (
+            "/nix/store/r04g2avwnxqafway7jq0m8c26pqqfrw5-renamed-2.0",
+            "/nix/store/x5cdkpd8lwyacdcgwyzs1awkl5j3i16v-libgit2-1.9.7.drv",
+            "renamed",
+            "2.0",
+            None,
+        ),
+    ],
+)
+def test_an_unreadable_deriver_still_names_the_output(
+    path: str, deriver: str, name: str, version: str | None, output: str | None
+) -> None:
+    record = from_deriver_name(path, deriver)
+    assert (record.name, record.version, record.output_name) == (name, version, output)
 
 
 def test_an_sri_hash_becomes_hex() -> None:

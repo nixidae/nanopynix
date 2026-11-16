@@ -40,6 +40,7 @@ from pynix._impl._sbom_model import (
     Origin as Origin,
     Record as Record,
     Source as Source,
+    from_deriver_name,
     from_store_path,
     inventory,
     parse_walk,
@@ -203,8 +204,9 @@ async def _source(drv_store: AsyncStore, derivation: AsyncDerivation, src: str |
 async def record_of_path(store: AsyncStore, drv_store: AsyncStore, path: str) -> Record:
     """The record of one store path, from its deriver in *drv_store*.
 
-    A path with no deriver, or one *drv_store* cannot read, keeps only the
-    name and version its path spells.
+    A path with no deriver keeps only the name and version its path
+    spells. One whose deriver *drv_store* cannot read takes them from the
+    deriver's name, which holds no output name.
     """
     deriver = (await store.query_path_info(await store.parse_store_path(path))).deriver()
     if deriver is None:
@@ -212,7 +214,7 @@ async def record_of_path(store: AsyncStore, drv_store: AsyncStore, path: str) ->
     try:
         derivation = await drv_store.read_derivation(deriver)
     except NixError:
-        return from_store_path(path)
+        return from_deriver_name(path, await store.print_store_path(deriver))
     return await _record_of_derivation(drv_store, derivation, await store.print_store_path(deriver), path)
 
 
