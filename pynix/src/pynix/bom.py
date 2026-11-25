@@ -170,37 +170,42 @@ async def embedded_packages(
     return {path: packages for path, packages in sorted({**known, **scanned}.items()) if packages}
 
 
-async def _store_file(store: AsyncStore, path: str) -> bytes | None:
-    """The bytes of the file at *path*, in a store path *store* holds; None for anything else."""
-    store_dir = await store.store_dir()
-    inside = path.removeprefix(store_dir.rstrip("/") + "/")
-    name, _, rest = inside.partition("/")
+async def _store_files(store: AsyncStore, root: str, files: Mapping[str, str]) -> dict[str, bytes]:
+    """The bytes of each regular file in *files* (a path, by where it sits inside the store path *root*).
+
+    One accessor for the store path: on a remote store it fetches the NAR
+    once. Patches often sit inside a large source, such as nixpkgs.
+    """
     try:
-        accessor = await store.get_fs_accessor(await store.parse_store_path(f"{store_dir.rstrip('/')}/{name}"))
+        accessor = await store.get_fs_accessor(await store.parse_store_path(root))
     except NixError:
-        return None
+        return {}
     if accessor is None:
-        return None
-    file = "/" + rest
-    stat = await anyio.to_thread.run_sync(accessor.maybe_lstat, file)
-    if stat is None or stat.type() != FileType.REGULAR:
-        return None
-    return await anyio.to_thread.run_sync(accessor.read_file, file)
+        return {}
+    found: dict[str, bytes] = {}
+    for path, inside in files.items():
+        stat = await anyio.to_thread.run_sync(accessor.maybe_lstat, inside)
+        if stat is not None and stat.type() == FileType.REGULAR:
+            found[path] = await anyio.to_thread.run_sync(accessor.read_file, inside)
+    return found
 
 
 async def _patch_texts(store: AsyncStore, listed: Inventory) -> dict[str, str]:
     """The text of each patch, from this host's disk or else through *store*."""
     to_disk = (await StoreLayout.of(store)).to_disk
+    store_dir = (await store.store_dir()).rstrip("/")
     texts: dict[str, str] = {}
-    for record in (listed.target, *listed.components):
-        for patch in record.patches:
-            if patch in texts:
-                continue
-            path = AnyioPath(to_disk(patch))
-            if await path.is_file():
-                texts[patch] = await path.read_text(errors="replace")
-            elif (data := await _store_file(store, patch)) is not None:
-                texts[patch] = data.decode(errors="replace")
+    elsewhere: dict[str, dict[str, str]] = {}
+    for patch in sorted({p for record in (listed.target, *listed.components) for p in record.patches}):
+        path = AnyioPath(to_disk(patch))
+        if await path.is_file():
+            texts[patch] = await path.read_text(errors="replace")
+            continue
+        name, _, rest = patch.removeprefix(store_dir + "/").partition("/")
+        elsewhere.setdefault(f"{store_dir}/{name}", {})[patch] = "/" + rest
+    for root, files in elsewhere.items():
+        for patch, data in (await _store_files(store, root, files)).items():
+            texts[patch] = data.decode(errors="replace")
     return texts
 
 

@@ -11,11 +11,12 @@ import shutil
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from huggorm import AsyncStore
+from huggorm import AsyncStore, SourceAccessor, StorePath
 from test_sbom_embedded import _program
 
 from pynix._impl._sbom_embedded import Package, scan
-from pynix.bom import embedded_packages, package_json, package_of_json
+from pynix._impl._sbom_model import Inventory, Record
+from pynix.bom import _patch_texts, embedded_packages, package_json, package_of_json
 
 DUMMY = "dummy://?read-only=false"
 
@@ -83,6 +84,29 @@ async def test_a_path_no_store_holds_is_not_kept(tmp_path: Path) -> None:
     missing = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-gone"
     assert await embedded_packages(AsyncStore(DUMMY), [missing], cache=cache) == {}
     assert cache.kept == {}
+
+
+class Counting(AsyncStore):
+    """A store that counts the accessors it opens: on a remote store each one fetches a NAR."""
+
+    opened = 0
+
+    async def get_fs_accessor(self, path: StorePath, require_valid_path: bool = True) -> SourceAccessor | None:
+        self.opened += 1
+        return await super().get_fs_accessor(path, require_valid_path)
+
+
+async def test_patches_inside_one_store_path_fetch_it_once(tmp_path: Path) -> None:
+    store = Counting(DUMMY)
+    source = tmp_path / "source"
+    (source / "pkgs").mkdir(parents=True)
+    (source / "pkgs" / "a.patch").write_text("--- a\n")
+    (source / "pkgs" / "b.patch").write_text("--- b\n")
+    root = await store.print_store_path(await store.add_path_to_store("source", str(source)))
+    patches = (f"{root}/pkgs/a.patch", f"{root}/pkgs/b.patch", f"{root}/pkgs/gone.patch")
+    listed = Inventory(target=Record(path="env", name="env", patches=patches), components=())
+    assert await _patch_texts(store, listed) == {patches[0]: "--- a\n", patches[1]: "--- b\n"}
+    assert store.opened == 1
 
 
 def test_a_package_survives_its_json(tmp_path: Path) -> None:
