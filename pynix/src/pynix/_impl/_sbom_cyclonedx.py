@@ -230,6 +230,13 @@ def _embedded_component(package: Package, parent: str) -> dict[str, JsonValue]:
         result["version"] = package.version
     result["scope"] = "required"
     result["purl"] = package.purl
+    if (declared := package.licenses) is not None:
+        acknowledged: list[JsonValue] = (
+            [{"expression": declared.expression, "acknowledgement": "declared"}]
+            if declared.expression
+            else [{"license": {"name": name, "acknowledgement": "declared"}} for name in declared.names]
+        )
+        result["licenses"] = acknowledged
     if package.files:
         result["evidence"] = {"occurrences": [{"location": file} for file in package.files]}
     if package.properties:

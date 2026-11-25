@@ -16,11 +16,23 @@ import zlib
 from pathlib import Path
 from typing import cast
 
+import pytest
 from cyclonedx.schema import SchemaVersion
 from cyclonedx.validation.json import JsonStrictValidator
 
 from pynix._impl._sbom_cyclonedx import document
-from pynix._impl._sbom_embedded import Ecosystem, Package, parse_cargo, parse_go, read_binary, scan
+from pynix._impl._sbom_embedded import (
+    DeclaredLicenses,
+    Ecosystem,
+    Package,
+    parse_cargo,
+    parse_composer,
+    parse_go,
+    parse_npm,
+    parse_python,
+    read_binary,
+    scan,
+)
 from pynix._impl._sbom_model import inventory, parse_walk, with_embedded
 
 #: ``cmd/go/internal/modload``'s ``infoStart`` and ``infoEnd``.
@@ -352,3 +364,88 @@ def test_the_document_nests_each_package_in_the_component_that_holds_it() -> Non
     }
     assert claims[("incomplete", "assemblies")] == {lib["bom-ref"]}
     assert refs <= claims[("complete", "dependencies")]
+
+
+_LONG_TEXT = "Permission is hereby granted, free of charge, to any person obtaining a copy" * 3
+
+
+@pytest.mark.parametrize(
+    ("headers", "declared"),
+    [
+        ("License-Expression: MIT OR Apache-2.0\nLicense: ignored", DeclaredLicenses(expression="MIT OR Apache-2.0")),
+        ("License: BSD", DeclaredLicenses(names=("BSD",))),
+        ("License: UNKNOWN", None),
+        (
+            f"License: {_LONG_TEXT}\nClassifier: License :: OSI Approved :: MIT License\nClassifier: License :: OSI Approved",
+            DeclaredLicenses(names=("MIT License",)),
+        ),
+        ("Classifier: Programming Language :: Python", None),
+    ],
+)
+def test_a_python_distribution_declares_its_license(headers: str, declared: DeclaredLicenses | None) -> None:
+    package = parse_python(f"Metadata-Version: 2.4\nName: demo\nVersion: 1\n{headers}\n".encode())
+    assert package is not None
+    assert package.licenses == declared
+
+
+@pytest.mark.parametrize(
+    ("fields", "declared"),
+    [
+        ({"license": "(MIT OR Apache-2.0)"}, DeclaredLicenses(expression="(MIT OR Apache-2.0)")),
+        ({"license": "UNLICENSED"}, DeclaredLicenses(names=("UNLICENSED",))),
+        ({"license": "SEE LICENSE IN LICENSE.md"}, DeclaredLicenses(names=("SEE LICENSE IN LICENSE.md",))),
+        ({"license": {"type": "MIT"}}, DeclaredLicenses(names=("MIT",))),
+        ({"licenses": [{"type": "MIT"}, {"type": "GPL-2.0"}]}, DeclaredLicenses(names=("MIT", "GPL-2.0"))),
+        ({}, None),
+    ],
+)
+def test_an_npm_package_declares_its_license(fields: dict[str, object], declared: DeclaredLicenses | None) -> None:
+    package = parse_npm(json.dumps({"name": "demo", "version": "1.0.0", **fields}).encode())
+    assert package is not None
+    assert package.licenses == declared
+
+
+def test_a_composer_package_declares_any_of_its_licenses() -> None:
+    installed = {
+        "packages": [
+            {"name": "a/one", "version": "1.0.0", "license": ["MIT"]},
+            {"name": "a/two", "version": "1.0.0", "license": ["LGPL-2.1-only", "GPL-3.0-or-later"]},
+            {"name": "a/own", "version": "1.0.0", "license": ["proprietary"]},
+            {"name": "a/none", "version": "1.0.0"},
+        ]
+    }
+    found = parse_composer(json.dumps(installed).encode())
+    assert found is not None
+    assert {p.name: p.licenses for p in found} == {
+        "a/one": DeclaredLicenses(expression="MIT"),
+        "a/two": DeclaredLicenses(expression="(LGPL-2.1-only OR GPL-3.0-or-later)"),
+        "a/own": DeclaredLicenses(names=("proprietary",)),
+        "a/none": None,
+    }
+
+
+def test_a_declared_license_is_a_valid_cyclonedx_license() -> None:
+    records = parse_walk(json.dumps([{"path": _APP, "pname": "app", "version": "1.0", "outputName": "out"}]))
+    listed = inventory(records, _APP, {_APP: ()}, buildtime=False)
+    packages = (
+        Package(Ecosystem.NPM, "a", "1", licenses=DeclaredLicenses(expression="MIT OR Apache-2.0")),
+        Package(Ecosystem.PYPI, "b", "1", licenses=DeclaredLicenses(names=("BSD", "Zope Public License"))),
+        Package(Ecosystem.GOLANG, "c", "v1"),
+    )
+    bom = document(
+        with_embedded(listed, {_APP: packages}),
+        serial_number="urn:uuid:" + "0" * 8 + "-0000-4000-8000-" + "0" * 12,
+        tool_version="0",
+        patches={},
+    )
+    assert JsonStrictValidator(SchemaVersion.V1_7).validate_str(json.dumps(bom)) is None
+    app = cast("dict[str, object]", cast("dict[str, object]", bom["metadata"])["component"])
+    inside = {str(c["name"]): c.get("licenses") for c in cast("list[dict[str, object]]", app["components"])}
+    assert inside == {
+        "a": [{"expression": "MIT OR Apache-2.0", "acknowledgement": "declared"}],
+        "b": [
+            {"license": {"name": "BSD", "acknowledgement": "declared"}},
+            {"license": {"name": "Zope Public License", "acknowledgement": "declared"}},
+        ],
+        "c": None,
+    }

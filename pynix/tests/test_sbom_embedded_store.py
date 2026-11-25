@@ -16,7 +16,7 @@ from test_sbom_embedded import _program
 
 from pynix._impl._sbom_embedded import Package, scan
 from pynix._impl._sbom_model import Inventory, Record
-from pynix.bom import _patch_texts, embedded_packages, package_json, package_of_json
+from pynix.bom import SCANNER, _patch_texts, embedded_packages, package_json, package_of_json
 
 DUMMY = "dummy://?read-only=false"
 
@@ -28,10 +28,10 @@ def _tools(root: Path) -> Path:
     (root / "bin" / "link").symlink_to("go-md2man")
     package = root / "lib" / "node_modules" / "semver"
     package.mkdir(parents=True)
-    (package / "package.json").write_text(json.dumps({"name": "semver", "version": "7.7.2"}))
+    (package / "package.json").write_text(json.dumps({"name": "semver", "version": "7.7.2", "license": "ISC"}))
     dist = root / "lib" / "python3.14" / "site-packages" / "demo-1.0.dist-info"
     dist.mkdir(parents=True)
-    (dist / "METADATA").write_text("Metadata-Version: 2.1\nName: demo\nVersion: 1.0\n")
+    (dist / "METADATA").write_text("Metadata-Version: 2.1\nName: demo\nVersion: 1.0\nLicense: BSD\n")
     # A dotted directory: its name is kept whole.
     hidden = root / ".node_modules" / "x"
     hidden.mkdir(parents=True)
@@ -44,10 +44,12 @@ class Memory:
         self.held = dict(held or {})
         self.kept: dict[str, tuple[Package, ...]] = {}
 
-    async def known(self, paths: Sequence[str]) -> Mapping[str, tuple[Package, ...]]:
+    async def known(self, paths: Sequence[str], scanner: str) -> Mapping[str, tuple[Package, ...]]:
+        assert scanner == SCANNER
         return {p: self.held[p] for p in paths if p in self.held}
 
-    async def keep(self, scans: Mapping[str, tuple[Package, ...]]) -> None:
+    async def keep(self, scans: Mapping[str, tuple[Package, ...]], scanner: str) -> None:
+        assert scanner == SCANNER
         self.kept.update(scans)
         self.held.update(scans)
 

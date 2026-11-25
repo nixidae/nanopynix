@@ -29,10 +29,11 @@ import stat
 import zlib
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, replace
+from email.message import Message
 from email.parser import BytesHeaderParser
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
-from typing import Protocol, cast, runtime_checkable
+from typing import Final, Protocol, cast, runtime_checkable
 from urllib.parse import quote
 
 from elftools.common.exceptions import ELFError
@@ -66,6 +67,30 @@ class _Elf(Protocol):
     def get_section_by_name(self, name: str) -> _Section | None: ...
 
 
+#: Bumped when a scan of the same files finds more: a cache keyed by it reads every path again.
+SCANNER: Final = "2"
+#: A free-text license longer than this is the license's text, not its name.
+_LICENSE_NAME_LIMIT: Final = 100
+#: Trove classifiers that group licenses and name none.
+_LICENSE_CLASSIFIER_GROUPS: Final = frozenset({"", "OSI Approved", "DFSG approved"})
+_NPM_NOT_SPDX = re.compile(r"^(UNLICENSED|SEE LICEN[CS]E IN .*)$", re.IGNORECASE)
+#: Composer's own word for no open-source license; not an SPDX identifier.
+_COMPOSER_NOT_SPDX: Final = frozenset({"proprietary"})
+
+
+@dataclass(frozen=True, slots=True)
+class DeclaredLicenses:
+    """A license as a package's metadata states it.
+
+    *expression* when the format defines its field as SPDX (Python's
+    ``License-Expression``, npm's ``license``, Composer's list); *names*
+    when it is free text (Python's ``License``, its classifiers).
+    """
+
+    expression: str | None = None
+    names: tuple[str, ...] = ()
+
+
 class Ecosystem(StrEnum):
     """The package URL type of an embedded package."""
 
@@ -91,6 +116,8 @@ class Package:
     root: bool = False
     files: tuple[str, ...] = ()
     properties: tuple[tuple[str, str], ...] = ()
+    #: The license its own metadata declares. Go and Rust binaries declare none.
+    licenses: DeclaredLicenses | None = None
 
     @property
     def purl(self) -> str:
@@ -264,11 +291,41 @@ def read_binary(stream: io.BufferedIOBase) -> tuple[Package, ...] | None:
     return None
 
 
+def _python_licenses(headers: Message) -> DeclaredLicenses | None:
+    """PEP 639's ``License-Expression``; else the ``License`` line when it is a name, not a text; else the classifiers."""
+    if expression := (headers.get("License-Expression") or "").strip():
+        return DeclaredLicenses(expression=expression)
+    text = (headers.get("License") or "").strip()
+    if text and "\n" not in text and len(text) <= _LICENSE_NAME_LIMIT and text.upper() != "UNKNOWN":
+        return DeclaredLicenses(names=(text,))
+    classified = tuple(
+        name
+        for c in headers.get_all("Classifier") or []
+        if c.startswith("License ::") and (name := c.rsplit("::", 1)[1].strip()) not in _LICENSE_CLASSIFIER_GROUPS
+    )
+    return DeclaredLicenses(names=classified) if classified else None
+
+
 def parse_python(metadata: bytes) -> Package | None:
     """The distribution a core metadata file (``METADATA``, ``PKG-INFO``) describes; ``None`` without a name."""
     headers = BytesHeaderParser().parsebytes(metadata)
     name, version = (headers.get(field, "").strip() for field in ("Name", "Version"))
-    return Package(Ecosystem.PYPI, name, version or None) if name else None
+    return Package(Ecosystem.PYPI, name, version or None, licenses=_python_licenses(headers)) if name else None
+
+
+def _npm_licenses(data: dict[str, object]) -> DeclaredLicenses | None:
+    """npm's ``license``, an SPDX expression; the legacy object and ``licenses`` list are names."""
+    declared = data.get("license")
+    if isinstance(declared, str) and declared.strip():
+        text = declared.strip()
+        return DeclaredLicenses(names=(text,)) if _NPM_NOT_SPDX.match(text) else DeclaredLicenses(expression=text)
+    legacy = [declared] if isinstance(declared, dict) else data.get("licenses")
+    names = tuple(
+        str(cast("dict[str, object]", entry)["type"])
+        for entry in (cast("list[object]", legacy) if isinstance(legacy, list) else [])
+        if isinstance(entry, dict) and isinstance(cast("dict[str, object]", entry).get("type"), str)
+    )
+    return DeclaredLicenses(names=names) if names else None
 
 
 def parse_npm(manifest: bytes) -> Package | None:
@@ -282,7 +339,22 @@ def parse_npm(manifest: bytes) -> Package | None:
     name, version = data.get("name"), data.get("version")
     if not isinstance(name, str) or not name:
         return None
-    return Package(Ecosystem.NPM, name, version if isinstance(version, str) and version else None)
+    return Package(
+        Ecosystem.NPM, name, version if isinstance(version, str) and version else None, licenses=_npm_licenses(data)
+    )
+
+
+def _composer_licenses(entry: dict[str, object]) -> DeclaredLicenses | None:
+    """Composer's ``license``: SPDX identifiers, any one of which applies."""
+    declared = entry.get("license")
+    ids = [
+        i for i in (cast("list[object]", declared) if isinstance(declared, list) else []) if isinstance(i, str) and i
+    ]
+    if not ids:
+        return None
+    if any(i.lower() in _COMPOSER_NOT_SPDX for i in ids):
+        return DeclaredLicenses(names=tuple(ids))
+    return DeclaredLicenses(expression=ids[0] if len(ids) == 1 else "(" + " OR ".join(ids) + ")")
 
 
 def parse_composer(installed: bytes) -> tuple[Package, ...] | None:
@@ -311,6 +383,7 @@ def parse_composer(installed: bytes) -> tuple[Package, ...] | None:
             Ecosystem.COMPOSER,
             str(e["name"]),
             str(e["version"]) if isinstance(e.get("version"), str) and e.get("version") else None,
+            licenses=_composer_licenses(e),
         )
         for e in entries
     }
@@ -349,6 +422,8 @@ def package_json(package: Package) -> dict[str, object]:
         "root": package.root,
         "files": list(package.files),
         "properties": [list(p) for p in package.properties],
+        "license_expression": package.licenses.expression if package.licenses else None,
+        "license_names": list(package.licenses.names) if package.licenses else [],
     }
 
 
@@ -364,7 +439,16 @@ def package_of_json(data: dict[str, object]) -> Package:
         root=bool(data["root"]),
         files=tuple(str(f) for f in cast("list[object]", data["files"])),
         properties=tuple((str(k), str(v)) for k, v in cast("list[list[object]]", data["properties"])),
+        licenses=_declared_of_json(data),
     )
+
+
+def _declared_of_json(data: dict[str, object]) -> DeclaredLicenses | None:
+    expression = data.get("license_expression")
+    names = tuple(str(n) for n in cast("list[object]", data.get("license_names") or []))
+    if expression is None and not names:
+        return None
+    return DeclaredLicenses(expression=str(expression) if expression is not None else None, names=names)
 
 
 class Tree(Protocol):
@@ -528,5 +612,6 @@ def merge(packages: Iterable[Package]) -> tuple[Package, ...]:
             root=seen.root or package.root,
             files=tuple(sorted({*seen.files, *package.files})),
             properties=tuple(sorted({*seen.properties, *package.properties})),
+            licenses=seen.licenses or package.licenses,
         )
     return tuple(by_purl[purl] for purl in sorted(by_purl))

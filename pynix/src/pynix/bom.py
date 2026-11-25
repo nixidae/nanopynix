@@ -32,6 +32,8 @@ from pynix._evaluate import JsonValue
 from pynix._impl import _sbom_cyclonedx, _sbom_embedded, _sbom_spdx
 from pynix._impl._sbom_cpe import CpeDictionary as CpeDictionary, with_generated_cpes
 from pynix._impl._sbom_embedded import (
+    SCANNER as SCANNER,
+    DeclaredLicenses as DeclaredLicenses,
     Ecosystem as Ecosystem,
     Package as Package,
     package_json as package_json,
@@ -110,14 +112,16 @@ async def with_store_facts(store: AsyncStore, records: Mapping[str, Record], pat
 class EmbeddedCache(Protocol):
     """Scans kept between calls. A store path never changes, so neither does its scan.
 
-    An empty tuple is an answer: the path names no package.
+    An empty tuple is an answer: the path names no package. *scanner* is
+    :data:`SCANNER`: a newer scanner finds more in the same files, so a
+    scan by another one is no answer.
     """
 
-    async def known(self, paths: Sequence[str]) -> Mapping[str, tuple[Package, ...]]:
-        """The scans held for any of *paths*."""
+    async def known(self, paths: Sequence[str], scanner: str) -> Mapping[str, tuple[Package, ...]]:
+        """The scans *scanner* made, held for any of *paths*."""
         ...
 
-    async def keep(self, scans: Mapping[str, tuple[Package, ...]]) -> None: ...
+    async def keep(self, scans: Mapping[str, tuple[Package, ...]], scanner: str) -> None: ...
 
 
 #: NARs read at once from a store whose paths are not on this host's disk.
@@ -151,7 +155,7 @@ async def embedded_packages(
     store, its NAR. *cache* answers for the paths it holds and keeps the rest.
     """
     wanted = sorted(set(paths))
-    known = dict(await cache.known(wanted)) if cache is not None else {}
+    known = dict(await cache.known(wanted, SCANNER)) if cache is not None else {}
     to_disk = (await StoreLayout.of(store)).to_disk
     nar_reads = anyio.CapacityLimiter(NAR_READS)
     scanned: dict[str, tuple[Package, ...]] = {}
@@ -166,7 +170,7 @@ async def embedded_packages(
             if path not in known:
                 group.start_soon(read, path)
     if cache is not None and scanned:
-        await cache.keep(scanned)
+        await cache.keep(scanned, SCANNER)
     return {path: packages for path, packages in sorted({**known, **scanned}.items()) if packages}
 
 
