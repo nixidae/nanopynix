@@ -21,6 +21,7 @@ checkout, or one never published, names itself the same way.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -31,11 +32,12 @@ from dataclasses import dataclass, replace
 from email.parser import BytesHeaderParser
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, Protocol, cast, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 from urllib.parse import quote
 
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
+from huggorm import FileType, SourceAccessor
 
 _ELF_MAGIC = b"\x7fELF"
 _GO_MAGIC = b"\xff Go buildinf:"
@@ -247,7 +249,7 @@ def parse_cargo(section: bytes) -> tuple[Package, ...] | None:
     return tuple(result) or None
 
 
-def read_binary(stream: BinaryIO) -> tuple[Package, ...] | None:
+def read_binary(stream: io.BufferedIOBase) -> tuple[Package, ...] | None:
     """The packages an ELF file names inside itself; ``None`` for any other file, or one that names none."""
     try:
         elf = cast("_Elf", ELFFile(stream))
@@ -336,12 +338,108 @@ def parse_composer(installed: bytes) -> tuple[Package, ...] | None:
     return tuple(result) or None
 
 
-def _is_composer_manifest(path: Path) -> bool:
+def package_json(package: Package) -> dict[str, object]:
+    """*package* as JSON, for a cache of scans; :func:`package_of_json` reads it back."""
+    return {
+        "ecosystem": package.ecosystem.value,
+        "name": package.name,
+        "version": package.version,
+        "dependencies": list(package.dependencies),
+        "complete": package.complete,
+        "root": package.root,
+        "files": list(package.files),
+        "properties": [list(p) for p in package.properties],
+    }
+
+
+def package_of_json(data: dict[str, object]) -> Package:
+    """The package :func:`package_json` wrote."""
+    version, complete = data["version"], data["complete"]
+    return Package(
+        Ecosystem(str(data["ecosystem"])),
+        str(data["name"]),
+        str(version) if version is not None else None,
+        dependencies=tuple(str(d) for d in cast("list[object]", data["dependencies"])),
+        complete=bool(complete) if complete is not None else None,
+        root=bool(data["root"]),
+        files=tuple(str(f) for f in cast("list[object]", data["files"])),
+        properties=tuple((str(k), str(v)) for k, v in cast("list[list[object]]", data["properties"])),
+    )
+
+
+class Tree(Protocol):
+    """The files of one store path, named by their store paths."""
+
+    def regular_files(self) -> Iterator[tuple[PurePosixPath, bool]]:
+        """Each regular file, and whether it is executable. A symbolic link is not followed."""
+        ...
+
+    def read(self, path: PurePosixPath) -> bytes: ...
+
+    def open(self, path: PurePosixPath) -> io.BufferedIOBase: ...
+
+
+@dataclass(frozen=True, slots=True)
+class DiskTree:
+    """A store path whose files are at *disk* on this host."""
+
+    disk: Path
+    store_path: str
+
+    def _on_disk(self, path: PurePosixPath) -> Path:
+        relative = path.relative_to(self.store_path)
+        return self.disk / relative if relative.parts else self.disk
+
+    def regular_files(self) -> Iterator[tuple[PurePosixPath, bool]]:
+        for path, mode in _regular_files(self.disk):
+            relative = path.relative_to(self.disk).as_posix() if path != self.disk else ""
+            yield PurePosixPath(self.store_path, relative), bool(mode & 0o111)
+
+    def read(self, path: PurePosixPath) -> bytes:
+        return self._on_disk(path).read_bytes()
+
+    def open(self, path: PurePosixPath) -> io.BufferedIOBase:
+        return self._on_disk(path).open("rb")
+
+
+@dataclass(frozen=True, slots=True)
+class AccessorTree:
+    """A store path read through its store's accessor: on a remote store,
+    the path's NAR, fetched once and held in memory."""
+
+    accessor: SourceAccessor
+    store_path: str
+
+    def _inside(self, path: PurePosixPath) -> str:
+        relative = path.relative_to(self.store_path)
+        return "/" + relative.as_posix() if relative.parts else "/"
+
+    def regular_files(self) -> Iterator[tuple[PurePosixPath, bool]]:
+        pending = [""]
+        while pending:
+            relative = pending.pop()
+            current = "/" + relative
+            entry = self.accessor.lstat(current)
+            if entry.type() == FileType.REGULAR:
+                yield PurePosixPath(self.store_path, relative), entry.is_executable()
+            elif entry.type() == FileType.DIRECTORY:
+                pending.extend(
+                    f"{relative}/{name}".lstrip("/") for name in sorted(self.accessor.read_directory(current))
+                )
+
+    def read(self, path: PurePosixPath) -> bytes:
+        return self.accessor.read_file(self._inside(path))
+
+    def open(self, path: PurePosixPath) -> io.BufferedIOBase:
+        return io.BytesIO(self.read(path))
+
+
+def _is_composer_manifest(path: PurePosixPath) -> bool:
     """Whether *path* is the list of packages Composer installed into a vendor directory."""
     return path.name == "installed.json" and path.parent.name == "composer"
 
 
-def _is_npm_manifest(path: Path) -> bool:
+def _is_npm_manifest(path: PurePosixPath) -> bool:
     """Whether *path* is the ``package.json`` of a package npm installed: ``node_modules/<name>`` or ``node_modules/@scope/<name>``."""
     if path.name != "package.json":
         return False
@@ -349,7 +447,7 @@ def _is_npm_manifest(path: Path) -> bool:
     return above.name == "node_modules" or (above.name.startswith("@") and above.parent.name == "node_modules")
 
 
-def _is_python_metadata(path: Path) -> bool:
+def _is_python_metadata(path: PurePosixPath) -> bool:
     """Whether *path* is the core metadata of an installed distribution, in any of the layouts pip and setuptools write."""
     parent = path.parent.name
     return (
@@ -377,37 +475,41 @@ def _regular_files(root: Path) -> Iterator[tuple[Path, int]]:
             yield path, mode
 
 
-def _read(path: Path, mode: int) -> tuple[Package, ...] | None:
+def _read(tree: Tree, path: PurePosixPath, executable: bool) -> tuple[Package, ...] | None:
     """The packages the file *path* names: an executable's compiled-in ones, a Python distribution's or npm package's own, or Composer's list."""
     if _is_python_metadata(path):
-        package = parse_python(path.read_bytes())
+        package = parse_python(tree.read(path))
         return (package,) if package else None
     if _is_npm_manifest(path):
-        package = parse_npm(path.read_bytes())
+        package = parse_npm(tree.read(path))
         return (package,) if package else None
     if _is_composer_manifest(path):
-        return parse_composer(path.read_bytes())
-    if not mode & 0o111:
+        return parse_composer(tree.read(path))
+    if not executable:
         return None
-    with path.open("rb") as stream:
+    with tree.open(path) as stream:
         if stream.read(len(_ELF_MAGIC)) != _ELF_MAGIC:
             return None
         stream.seek(0)
         return read_binary(stream)
 
 
-def scan(disk: Path, store_path: str) -> tuple[Package, ...]:
-    """The packages the files of the store path *store_path*, at *disk* on this host, name.
+def scan_tree(tree: Tree) -> tuple[Package, ...]:
+    """The packages the files of *tree* name.
 
     Each package carries the store path of the files that hold it. One
     package in two files is one package.
     """
     found: list[Package] = []
-    for path, mode in _regular_files(disk):
-        if packages := _read(path, mode):
-            name = str(PurePosixPath(store_path, path.relative_to(disk).as_posix())) if path != disk else store_path
-            found.extend(replace(p, files=(name,)) for p in packages)
+    for path, executable in tree.regular_files():
+        if packages := _read(tree, path, executable):
+            found.extend(replace(p, files=(str(path),)) for p in packages)
     return merge(found)
+
+
+def scan(disk: Path, store_path: str) -> tuple[Package, ...]:
+    """The packages the files of the store path *store_path*, at *disk* on this host, name."""
+    return scan_tree(DiskTree(disk, store_path))
 
 
 def merge(packages: Iterable[Package]) -> tuple[Package, ...]:

@@ -18,19 +18,25 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Final, Protocol
 
 import anyio
 from anyio import Path as AnyioPath
-from huggorm import AsyncDerivation, AsyncEvalState, AsyncStore, AsyncValue, DerivationOutputCAFixed
-from huggorm.errors import NixError
+from huggorm import AsyncDerivation, AsyncEvalState, AsyncStore, AsyncValue, DerivationOutputCAFixed, FileType
+from huggorm.errors import InvalidPath, NixError
 
 from pynix._evaluate import JsonValue
 from pynix._impl import _sbom_cyclonedx, _sbom_embedded, _sbom_spdx
 from pynix._impl._sbom_cpe import CpeDictionary as CpeDictionary, with_generated_cpes
-from pynix._impl._sbom_embedded import Ecosystem as Ecosystem, Package as Package
+from pynix._impl._sbom_embedded import (
+    Ecosystem as Ecosystem,
+    Package as Package,
+    package_json as package_json,
+    package_of_json as package_of_json,
+)
 from pynix._impl._sbom_model import (
     Aggregate as Aggregate,
     Build as Build,
@@ -101,31 +107,100 @@ async def with_store_facts(store: AsyncStore, records: Mapping[str, Record], pat
     return result
 
 
-async def embedded_packages(store: AsyncStore, paths: Iterable[str]) -> dict[str, tuple[Package, ...]]:
+class EmbeddedCache(Protocol):
+    """Scans kept between calls. A store path never changes, so neither does its scan.
+
+    An empty tuple is an answer: the path names no package.
+    """
+
+    async def known(self, paths: Sequence[str]) -> Mapping[str, tuple[Package, ...]]:
+        """The scans held for any of *paths*."""
+        ...
+
+    async def keep(self, scans: Mapping[str, tuple[Package, ...]]) -> None: ...
+
+
+#: NARs read at once from a store whose paths are not on this host's disk.
+#: Each is held in memory while it is scanned.
+NAR_READS: Final = 4
+
+
+async def _scan(
+    store: AsyncStore, to_disk: Callable[[str], str], nar_reads: anyio.CapacityLimiter, path: str
+) -> tuple[Package, ...] | None:
+    """The scan of *path*, from this host's disk or else through *store*; None when neither holds it."""
+    disk = Path(to_disk(path))
+    if await AnyioPath(disk).exists():
+        return await anyio.to_thread.run_sync(_sbom_embedded.scan, disk, path)
+    async with nar_reads:
+        try:
+            accessor = await store.get_fs_accessor(await store.parse_store_path(path))
+        except InvalidPath:
+            return None
+        if accessor is None:
+            return None
+        return await anyio.to_thread.run_sync(_sbom_embedded.scan_tree, _sbom_embedded.AccessorTree(accessor, path))
+
+
+async def embedded_packages(
+    store: AsyncStore, paths: Iterable[str], *, cache: EmbeddedCache | None = None
+) -> dict[str, tuple[Package, ...]]:
     """The packages that each of *paths* names inside itself: Go modules, Rust crates, Python distributions.
 
-    A path this host cannot read names none.
+    A path not on this host's disk is read through *store*: from a remote
+    store, its NAR. *cache* answers for the paths it holds and keeps the rest.
     """
+    wanted = sorted(set(paths))
+    known = dict(await cache.known(wanted)) if cache is not None else {}
     to_disk = (await StoreLayout.of(store)).to_disk
-    found: dict[str, tuple[Package, ...]] = {}
+    nar_reads = anyio.CapacityLimiter(NAR_READS)
+    scanned: dict[str, tuple[Package, ...]] = {}
 
     async def read(path: str) -> None:
-        if packages := await anyio.to_thread.run_sync(_sbom_embedded.scan, Path(to_disk(path)), path):
-            found[path] = packages
+        packages = await _scan(store, to_disk, nar_reads, path)
+        if packages is not None:
+            scanned[path] = packages
 
     async with anyio.create_task_group() as group:
-        for path in sorted(set(paths)):
-            group.start_soon(read, path)
-    return dict(sorted(found.items()))
+        for path in wanted:
+            if path not in known:
+                group.start_soon(read, path)
+    if cache is not None and scanned:
+        await cache.keep(scanned)
+    return {path: packages for path, packages in sorted({**known, **scanned}.items()) if packages}
 
 
-async def _patch_texts(listed: Inventory, to_disk: Callable[[str], str]) -> dict[str, str]:
+async def _store_file(store: AsyncStore, path: str) -> bytes | None:
+    """The bytes of the file at *path*, in a store path *store* holds; None for anything else."""
+    store_dir = await store.store_dir()
+    inside = path.removeprefix(store_dir.rstrip("/") + "/")
+    name, _, rest = inside.partition("/")
+    try:
+        accessor = await store.get_fs_accessor(await store.parse_store_path(f"{store_dir.rstrip('/')}/{name}"))
+    except NixError:
+        return None
+    if accessor is None:
+        return None
+    file = "/" + rest
+    stat = await anyio.to_thread.run_sync(accessor.maybe_lstat, file)
+    if stat is None or stat.type() != FileType.REGULAR:
+        return None
+    return await anyio.to_thread.run_sync(accessor.read_file, file)
+
+
+async def _patch_texts(store: AsyncStore, listed: Inventory) -> dict[str, str]:
+    """The text of each patch, from this host's disk or else through *store*."""
+    to_disk = (await StoreLayout.of(store)).to_disk
     texts: dict[str, str] = {}
     for record in (listed.target, *listed.components):
         for patch in record.patches:
+            if patch in texts:
+                continue
             path = AnyioPath(to_disk(patch))
-            if patch not in texts and await path.is_file():
+            if await path.is_file():
                 texts[patch] = await path.read_text(errors="replace")
+            elif (data := await _store_file(store, patch)) is not None:
+                texts[patch] = data.decode(errors="replace")
     return texts
 
 
@@ -148,7 +223,7 @@ async def inventory_of(state: AsyncEvalState, store: AsyncStore, value: AsyncVal
     listed = with_embedded(
         inventory(records, target, runtime, buildtime=buildtime), await embedded_packages(store, runtime)
     )
-    return Bom(listed, await _patch_texts(listed, (await StoreLayout.of(store)).to_disk), buildtime)
+    return Bom(listed, await _patch_texts(store, listed), buildtime)
 
 
 def _store_name(path: str) -> str:
@@ -386,7 +461,7 @@ async def build_bom(
     wanted = tuple(sorted(roots))
     # The build edges stand where `closure_bom` puts references.
     listed = inventory(records, name, {**graph.reads, name: wanted}, buildtime=False, always=frozenset(wanted))
-    texts = await _patch_texts(listed, (await StoreLayout.of(drv_store)).to_disk)
+    texts = await _patch_texts(drv_store, listed)
     return Bom(listed, texts, buildtime=True, builds=graph.builds)
 
 
@@ -417,6 +492,7 @@ async def closure_bom(  # noqa: PLR0913 -- keyword-only, one per source of what 
     version: str | None = None,
     drv_store: AsyncStore | None = None,
     state: AsyncEvalState | None = None,
+    embedded_cache: EmbeddedCache | None = None,
 ) -> Bom:
     """The SBOM of the runtime closure of *roots*, valid paths in *store*. Builds nothing.
 
@@ -424,7 +500,8 @@ async def closure_bom(  # noqa: PLR0913 -- keyword-only, one per source of what 
     *state*, when it recorded its derivations, gives each path the value it
     coerced to it. Any other path's record comes from its deriver, which
     *drv_store* holds when *store* does not: the local store after
-    evaluation, for paths that live in a remote one.
+    evaluation, for paths that live in a remote one. *embedded_cache* keeps
+    what each path names inside itself between calls.
     """
     wanted = sorted(set(roots))
     runtime = await runtime_closure(store, wanted)
@@ -438,8 +515,8 @@ async def closure_bom(  # noqa: PLR0913 -- keyword-only, one per source of what 
     records[name] = target
     # A root is what the caller deploys: listed though it has no version.
     listed = inventory(records, name, {**runtime, name: tuple(wanted)}, buildtime=False, always=frozenset(wanted))
-    listed = with_embedded(listed, await embedded_packages(store, runtime))
-    return Bom(listed, await _patch_texts(listed, (await StoreLayout.of(store)).to_disk), buildtime=False)
+    listed = with_embedded(listed, await embedded_packages(store, runtime, cache=embedded_cache))
+    return Bom(listed, await _patch_texts(store, listed), buildtime=False)
 
 
 def _serial(bom: Bom, kind: str) -> str:
