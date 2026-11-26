@@ -1,4 +1,4 @@
-"""The packages a store path names inside itself: Go build info, cargo-auditable data, Python, npm and Composer metadata.
+"""The packages a store path names inside itself: Go build info, cargo-auditable data, Python, npm, Composer and RubyGems metadata.
 
 A Go binary holds the modules it was built from, in its ``.go.buildinfo``
 section (``debug/buildinfo``). nixpkgs builds Rust with cargo-auditable,
@@ -11,6 +11,7 @@ with its ``package.json``; a ``package.json`` anywhere else is a
 project's own, or a file inside a package. Composer lists every package
 it installed into a vendor directory in ``vendor/composer/installed.json``
 (the directory name is a project setting: Nextcloud uses ``3rdparty``).
+RubyGems writes a spec for each gem it installs to ``specifications/``.
 All of them name what is in the artifact, from the artifact itself: no
 lock file, no build and no network.
 
@@ -68,7 +69,7 @@ class _Elf(Protocol):
 
 
 #: Bumped when a scan of the same files finds more: a cache keyed by it reads every path again.
-SCANNER: Final = "2"
+SCANNER: Final = "3"
 #: A free-text license longer than this is the license's text, not its name.
 _LICENSE_NAME_LIMIT: Final = 100
 #: Trove classifiers that group licenses and name none.
@@ -76,6 +77,16 @@ _LICENSE_CLASSIFIER_GROUPS: Final = frozenset({"", "OSI Approved", "DFSG approve
 _NPM_NOT_SPDX = re.compile(r"^(UNLICENSED|SEE LICEN[CS]E IN .*)$", re.IGNORECASE)
 #: Composer's own word for no open-source license; not an SPDX identifier.
 _COMPOSER_NOT_SPDX: Final = frozenset({"proprietary"})
+#: RubyGems' own word for a license it cannot name; not an SPDX identifier.
+_GEM_NOT_SPDX: Final = frozenset({"nonstandard"})
+#: The characters of an SPDX license identifier. Shape only: a gem may still name one SPDX does not list.
+_SPDX_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
+#: A string as ``Gem::Specification#to_ruby`` writes it: ``String#dump``, then ``.freeze``.
+_RUBY_STRING = r'"((?:[^"\\]|\\.)*)"(?:\.freeze)?'
+_GEM_FIELD = re.compile(rf"^\s*s\.(name|version|platform) = {_RUBY_STRING}\s*$", re.MULTILINE)
+_GEM_LICENSES = re.compile(r"^\s*s\.licenses? = \[?(.*?)\]?\s*$", re.MULTILINE)
+_RUBY_ESCAPE = re.compile(r"\\(u\{[0-9A-Fa-f ]+\}|u[0-9A-Fa-f]{4}|x[0-9A-Fa-f]{2}|.)")
+_RUBY_ESCAPES: Final = {"n": "\n", "t": "\t", "r": "\r", "e": "\x1b", "a": "\a", "b": "\b", "f": "\f", "v": "\v"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +110,7 @@ class Ecosystem(StrEnum):
     PYPI = "pypi"
     NPM = "npm"
     COMPOSER = "composer"
+    GEM = "gem"
 
 
 @dataclass(frozen=True, slots=True)
@@ -411,6 +423,55 @@ def parse_composer(installed: bytes) -> tuple[Package, ...] | None:
     return tuple(result) or None
 
 
+def _ruby_unescape(dumped: str) -> str:
+    """The text of a ``String#dump`` literal, quotes removed."""
+
+    def one(match: re.Match[str]) -> str:
+        code = match[1]
+        if code.startswith("u{"):
+            return "".join(chr(int(c, 16)) for c in code[2:-1].split())
+        if code[0] in "ux" and len(code) > 1:
+            return chr(int(code[1:], 16))
+        return _RUBY_ESCAPES.get(code, code)
+
+    return _RUBY_ESCAPE.sub(one, dumped)
+
+
+def _gem_licenses(listed: str) -> DeclaredLicenses | None:
+    """A gemspec's ``licenses``: any one of them applies. SPDX-shaped identifiers form an expression; else names."""
+    ids = tuple(_ruby_unescape(m[1]) for m in re.finditer(_RUBY_STRING, listed))
+    ids = tuple(i for i in ids if i)
+    if not ids:
+        return None
+    if any(i.lower() in _GEM_NOT_SPDX or not _SPDX_ID.fullmatch(i) for i in ids):
+        return DeclaredLicenses(names=ids)
+    return DeclaredLicenses(expression=ids[0] if len(ids) == 1 else "(" + " OR ".join(ids) + ")")
+
+
+def parse_gemspec(spec: bytes) -> Package | None:
+    """The gem an installed gemspec describes; ``None`` without a name.
+
+    RubyGems writes ``specifications/<name>-<version>.gemspec`` on install
+    with ``Gem::Specification#to_ruby``, one ``s.<field> = <literal>`` per
+    line, so the fields read without running Ruby. A platform gem's
+    platform is a property: the package URL's ``platform`` qualifier.
+    """
+    text = spec.decode("utf-8", errors="replace")
+    fields = {m[1]: _ruby_unescape(m[2]) for m in _GEM_FIELD.finditer(text)}
+    name = fields.get("name")
+    if not name:
+        return None
+    platform = fields.get("platform")
+    listed = _GEM_LICENSES.search(text)
+    return Package(
+        Ecosystem.GEM,
+        name,
+        fields.get("version") or None,
+        properties=(("gem:platform", platform),) if platform and platform != "ruby" else (),
+        licenses=_gem_licenses(listed[1]) if listed else None,
+    )
+
+
 def package_json(package: Package) -> dict[str, object]:
     """*package* as JSON, for a cache of scans; :func:`package_of_json` reads it back."""
     return {
@@ -541,6 +602,14 @@ def _is_python_metadata(path: PurePosixPath) -> bool:
     )
 
 
+def _is_gemspec(path: PurePosixPath) -> bool:
+    """Whether *path* is the spec of an installed gem: ``specifications/`` or, for Ruby's default gems, ``specifications/default/``."""
+    if path.suffix != ".gemspec":
+        return False
+    parent = path.parent
+    return parent.name == "specifications" or (parent.name == "default" and parent.parent.name == "specifications")
+
+
 def _regular_files(root: Path) -> Iterator[tuple[Path, int]]:
     """Every regular file under *root*, with its mode; *root* itself when it is one.
 
@@ -560,7 +629,7 @@ def _regular_files(root: Path) -> Iterator[tuple[Path, int]]:
 
 
 def _read(tree: Tree, path: PurePosixPath, executable: bool) -> tuple[Package, ...] | None:
-    """The packages the file *path* names: an executable's compiled-in ones, a Python distribution's or npm package's own, or Composer's list."""
+    """The packages the file *path* names: an executable's compiled-in ones, a Python distribution's, npm package's or gem's own, or Composer's list."""
     if _is_python_metadata(path):
         package = parse_python(tree.read(path))
         return (package,) if package else None
@@ -569,6 +638,9 @@ def _read(tree: Tree, path: PurePosixPath, executable: bool) -> tuple[Package, .
         return (package,) if package else None
     if _is_composer_manifest(path):
         return parse_composer(tree.read(path))
+    if _is_gemspec(path):
+        package = parse_gemspec(tree.read(path))
+        return (package,) if package else None
     if not executable:
         return None
     with tree.open(path) as stream:

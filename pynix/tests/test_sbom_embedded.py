@@ -27,6 +27,7 @@ from pynix._impl._sbom_embedded import (
     Package,
     parse_cargo,
     parse_composer,
+    parse_gemspec,
     parse_go,
     parse_npm,
     parse_python,
@@ -315,6 +316,74 @@ def test_a_scan_reads_each_composer_vendor_directory_and_its_edges(tmp_path: Pat
         f"{store_path}/3rdparty/composer/installed.json",
         f"{store_path}/apps/x/vendor/composer/installed.json",
     )
+
+
+def _gemspec(name: str, version: str, *extra: str) -> str:
+    """A spec as ``Gem::Specification#to_ruby`` writes it on install."""
+    lines = "\n".join(f"  {line}" for line in extra)
+    return f'''# -*- encoding: utf-8 -*-
+# stub: {name} {version} ruby lib
+
+Gem::Specification.new do |s|
+  s.name = "{name}".freeze
+  s.version = "{version}".freeze
+{lines}
+  s.add_runtime_dependency(%q<ffi>.freeze, ["~> 1.9".freeze])
+end
+'''
+
+
+def test_a_scan_finds_each_installed_gem_and_no_other_gemspec(tmp_path: Path) -> None:
+    store_path = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-ruby3.4-nokogiri-1.18.0"
+    gems = tmp_path / "lib" / "ruby" / "gems" / "3.4.0"
+    for directory in (gems / "specifications" / "default", gems / "gems" / "rake-13.0.0"):
+        directory.mkdir(parents=True)
+    (gems / "specifications" / "nokogiri-1.18.0-x86_64-linux-gnu.gemspec").write_text(
+        _gemspec("nokogiri", "1.18.0", 's.platform = "x86_64-linux-gnu".freeze', 's.licenses = ["MIT".freeze]')
+    )
+    (gems / "specifications" / "default" / "json-2.9.1.gemspec").write_text(
+        _gemspec("json", "2.9.1", 's.licenses = ["Ruby".freeze, "BSD-2-Clause".freeze]')
+    )
+    # A gem's own source carries its gemspec too; only RubyGems' installed copy counts.
+    (gems / "gems" / "rake-13.0.0" / "rake.gemspec").write_text(_gemspec("rake", "13.0.0"))
+    (gems / "specifications" / "nameless.gemspec").write_text("Gem::Specification.new do |s|\nend\n")
+    found = {p.purl: p for p in scan(tmp_path, store_path)}
+    assert set(found) == {"pkg:gem/nokogiri@1.18.0", "pkg:gem/json@2.9.1"}
+    nokogiri = found["pkg:gem/nokogiri@1.18.0"]
+    assert nokogiri.properties == (("gem:platform", "x86_64-linux-gnu"),)
+    assert nokogiri.files == (
+        f"{store_path}/lib/ruby/gems/3.4.0/specifications/nokogiri-1.18.0-x86_64-linux-gnu.gemspec",
+    )
+    assert (nokogiri.ecosystem, nokogiri.dependencies, nokogiri.complete) == (Ecosystem.GEM, (), None)
+    assert found["pkg:gem/json@2.9.1"].properties == ()
+
+
+@pytest.mark.parametrize(
+    ("line", "declared"),
+    [
+        ('s.licenses = ["MIT".freeze]', DeclaredLicenses(expression="MIT")),
+        ('s.licenses = ["Ruby".freeze, "BSD-2-Clause".freeze]', DeclaredLicenses(expression="(Ruby OR BSD-2-Clause)")),
+        ('s.license = "Apache-2.0".freeze', DeclaredLicenses(expression="Apache-2.0")),
+        ('s.licenses = ["Apache License (2.0)".freeze]', DeclaredLicenses(names=("Apache License (2.0)",))),
+        (
+            's.licenses = ["Nonstandard".freeze, "GPL-2.0-only".freeze]',
+            DeclaredLicenses(names=("Nonstandard", "GPL-2.0-only")),
+        ),
+        ('s.licenses = ["".freeze]', None),
+        ('s.summary = "no license".freeze', None),
+    ],
+)
+def test_a_gem_declares_any_of_its_licenses(line: str, declared: DeclaredLicenses | None) -> None:
+    package = parse_gemspec(_gemspec("demo", "1.0.0", line).encode())
+    assert package is not None
+    assert package.licenses == declared
+
+
+def test_a_gemspec_string_is_read_as_ruby_dumped_it() -> None:
+    package = parse_gemspec(_gemspec('q\\"uote', "1.0.0", 's.licenses = ["caf\\u00E9 \\#{x}".freeze]').encode())
+    assert package is not None
+    assert package.name == 'q"uote'
+    assert package.licenses == DeclaredLicenses(names=("café #{x}",))
 
 
 def test_a_pypi_purl_folds_case_and_underscores_but_not_dots() -> None:
