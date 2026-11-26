@@ -39,6 +39,7 @@ let
     pynix-lsp = [ "test" ];
   };
 
+  testPrefix = lib.optionalString (sanitizer != null) sanitizer.testPrefix;
 in
 (writeShellApplication {
   name = "nanopynix-tests";
@@ -79,9 +80,9 @@ in
     # construction: nothing else is alive to hold the database. Unset, this
     # is a plain pytest run, so the documented local `pytest --cov` workflow
     # is untouched.
-    pytest_cmd=(python -m pytest -p no:cacheprovider)
+    pytest_cmd=(${testPrefix}python -m pytest -p no:cacheprovider)
     if [ -n "''${NANOPYNIX_COVERAGE:-}" ]; then
-      pytest_cmd=(python -m coverage run -m pytest -p no:cacheprovider)
+      pytest_cmd=(${testPrefix}python -m coverage run -m pytest -p no:cacheprovider)
     fi
 
     # Reports the combine/report failure through the exit status rather than
