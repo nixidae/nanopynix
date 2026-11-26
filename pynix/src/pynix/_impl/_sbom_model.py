@@ -19,7 +19,7 @@ from pathlib import PurePosixPath
 from typing import cast
 from urllib.parse import quote
 
-from pynix._impl._sbom_embedded import Package, merge
+from pynix._impl._sbom_embedded import Ecosystem, Package, merge
 
 #: Outputs that hold documentation. bombon leaves them out of every SBOM.
 _DOC_OUTPUTS = frozenset({"doc", "man"})
@@ -93,6 +93,8 @@ class Record:
     licenses: tuple[License, ...] = ()
     #: An SPDX expression for a compound license (``AND``, ``WITH``, ``+``); it replaces *licenses*.
     license_expression: str | None = None
+    #: The package URL whose own metadata declared the license, when ``meta`` named none (:func:`with_embedded`).
+    license_declared_by: str | None = None
     homepages: tuple[str, ...] = ()
     changelogs: tuple[str, ...] = ()
     download_page: str | None = None
@@ -367,12 +369,43 @@ def with_embedded(listed: Inventory, found: Mapping[str, tuple[Package, ...]]) -
     """*listed*, with the packages *found* in each path under the listed path that stands for it.
 
     A path with no component drops its packages, as it drops its own record.
+    A record with no license takes the one its gem declares (:func:`inherited_license`).
     """
     grouped: dict[str, list[Package]] = {}
     for path, packages in found.items():
         if (kept := listed.aliases.get(path)) is not None and packages:
             grouped.setdefault(kept, []).extend(packages)
-    return replace(listed, embedded={path: merge(packages) for path, packages in sorted(grouped.items())})
+    embedded = {path: merge(packages) for path, packages in sorted(grouped.items())}
+    return replace(
+        listed,
+        target=inherited_license(listed.target, embedded.get(listed.target.path, ())),
+        components=tuple(inherited_license(r, embedded.get(r.path, ())) for r in listed.components),
+        embedded=embedded,
+    )
+
+
+def inherited_license(record: Record, packages: tuple[Package, ...]) -> Record:
+    """*record* with the license of the one gem it installs, when ``meta`` named none.
+
+    nixpkgs' ``buildRubyGem`` builds one derivation per gem, with the gem's
+    name as ``pname`` and no ``meta.license``; the gem's own spec declares
+    one. The record takes it only when the path holds that gem alone,
+    named as the record is (``pname``, or the store name ``ruby3.4-<gem>``).
+    """
+    if record.licenses or record.license_expression or len(packages) != 1:
+        return record
+    (package,) = packages
+    declared = package.licenses
+    if package.ecosystem is not Ecosystem.GEM or declared is None:
+        return record
+    if record.name != package.name and not record.name.endswith(f"-{package.name}"):
+        return record
+    return replace(
+        record,
+        license_expression=declared.expression,
+        licenses=tuple(License(spdx_id=None, name=name) for name in declared.names),
+        license_declared_by=package.purl,
+    )
 
 
 def _completeness(graph: Mapping[str, set[str]], alias: Mapping[str, str], *, walked: bool) -> dict[str, Aggregate]:

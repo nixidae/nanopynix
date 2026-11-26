@@ -35,17 +35,19 @@ def _hashes(sri: str | None) -> list[JsonValue] | None:
     return [{"alg": digest.algorithm, "content": digest.hex}] if digest else None
 
 
-def _license(entry: License) -> JsonValue:
+def _license(entry: License, acknowledged: dict[str, JsonValue]) -> JsonValue:
     if entry.spdx_id:
-        return {"license": {"id": entry.spdx_id}}
-    return {"license": {"name": entry.name or "NOASSERTION"}}
+        return {"license": {"id": entry.spdx_id, **acknowledged}}
+    return {"license": {"name": entry.name or "NOASSERTION", **acknowledged}}
 
 
 def _licenses(record: Record) -> list[JsonValue]:
+    # A license from the package's own metadata, not nixpkgs' `meta`, says so.
+    acknowledged: dict[str, JsonValue] = {"acknowledgement": "declared"} if record.license_declared_by else {}
     if record.license_expression:
         # CycloneDX allows one expression, alone in the list.
-        return [{"expression": record.license_expression}]
-    return [_license(entry) for entry in record.licenses]
+        return [{"expression": record.license_expression, **acknowledged}]
+    return [_license(entry, acknowledged) for entry in record.licenses]
 
 
 def _external_references(record: Record) -> list[JsonValue]:
@@ -207,6 +209,8 @@ def _properties(record: Record) -> list[JsonValue]:
         pairs.append(("nix:position", record.position))
     if record.main_program:
         pairs.append(("nix:mainProgram", record.main_program))
+    if record.license_declared_by:
+        pairs.append(("nix:licenseDeclaredBy", record.license_declared_by))
     if record.long_description:
         pairs.append(("nix:longDescription", record.long_description))
     flags = {"nix:unfree": record.unfree, "nix:insecure": record.insecure, "nix:broken": record.broken}

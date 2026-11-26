@@ -34,7 +34,7 @@ from pynix._impl._sbom_embedded import (
     read_binary,
     scan,
 )
-from pynix._impl._sbom_model import inventory, parse_walk, with_embedded
+from pynix._impl._sbom_model import Record, inherited_license, inventory, parse_walk, with_embedded
 
 #: ``cmd/go/internal/modload``'s ``infoStart`` and ``infoEnd``.
 _GO_START = bytes.fromhex("3077af0c9274080241e1c107e6d618e6")
@@ -384,6 +384,73 @@ def test_a_gemspec_string_is_read_as_ruby_dumped_it() -> None:
     assert package is not None
     assert package.name == 'q"uote'
     assert package.licenses == DeclaredLicenses(names=("café #{x}",))
+
+
+_GEM = "/nix/store/dddddddddddddddddddddddddddddddd-ruby3.4-mini_suffix-0.3.3"
+_MIT = DeclaredLicenses(expression="MIT")
+
+
+@pytest.mark.parametrize(
+    ("record", "packages", "inherits"),
+    [
+        (Record(_GEM, "mini_suffix", "0.3.3"), (Package(Ecosystem.GEM, "mini_suffix", "0.3.3", licenses=_MIT),), True),
+        # A record from the store name alone carries the ruby prefix.
+        (
+            Record(_GEM, "ruby3.4-mini_suffix", "0.3.3"),
+            (Package(Ecosystem.GEM, "mini_suffix", "0.3.3", licenses=_MIT),),
+            True,
+        ),
+        # nixpkgs' own license wins.
+        (
+            Record(_GEM, "mini_suffix", "0.3.3", license_expression="Apache-2.0"),
+            (Package(Ecosystem.GEM, "mini_suffix", "0.3.3", licenses=_MIT),),
+            False,
+        ),
+        # Another gem's license, or one of several, is not the record's own.
+        (Record(_GEM, "mini_suffix", "0.3.3"), (Package(Ecosystem.GEM, "ffi", "1.0", licenses=_MIT),), False),
+        (
+            Record(_GEM, "mini_suffix", "0.3.3"),
+            (
+                Package(Ecosystem.GEM, "mini_suffix", "0.3.3", licenses=_MIT),
+                Package(Ecosystem.GEM, "ffi", "1.0", licenses=_MIT),
+            ),
+            False,
+        ),
+        (
+            Record(_GEM, "mini_suffix", "0.3.3"),
+            (Package(Ecosystem.PYPI, "mini_suffix", "0.3.3", licenses=_MIT),),
+            False,
+        ),
+        (Record(_GEM, "mini_suffix", "0.3.3"), (Package(Ecosystem.GEM, "mini_suffix", "0.3.3"),), False),
+    ],
+)
+def test_a_gem_derivation_inherits_the_license_its_gem_declares(
+    record: Record, packages: tuple[Package, ...], inherits: bool
+) -> None:
+    result = inherited_license(record, packages)
+    assert (result.license_declared_by is not None) == inherits
+    if inherits:
+        assert (result.license_expression, result.license_declared_by) == ("MIT", "pkg:gem/mini_suffix@0.3.3")
+    else:
+        assert result == record
+
+
+def test_an_inherited_license_is_declared_in_the_document() -> None:
+    records = parse_walk(json.dumps([{"path": _GEM, "pname": "mini_suffix", "version": "0.3.3", "outputName": "out"}]))
+    listed = inventory(records, _GEM, {_GEM: ()}, buildtime=False)
+    gem = Package(Ecosystem.GEM, "mini_suffix", "0.3.3", licenses=DeclaredLicenses(names=("Nonstandard",)))
+    bom = document(
+        with_embedded(listed, {_GEM: (gem,)}),
+        serial_number="urn:uuid:" + "0" * 8 + "-0000-4000-8000-" + "0" * 12,
+        tool_version="0",
+        patches={},
+    )
+    assert JsonStrictValidator(SchemaVersion.V1_7).validate_str(json.dumps(bom)) is None
+    target = cast("dict[str, object]", cast("dict[str, object]", bom["metadata"])["component"])
+    assert target["licenses"] == [{"license": {"name": "Nonstandard", "acknowledgement": "declared"}}]
+    assert {"name": "nix:licenseDeclaredBy", "value": "pkg:gem/mini_suffix@0.3.3"} in cast(
+        "list[object]", target["properties"]
+    )
 
 
 def test_a_pypi_purl_folds_case_and_underscores_but_not_dots() -> None:
