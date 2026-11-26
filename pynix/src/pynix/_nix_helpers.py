@@ -29,6 +29,6 @@ _NAME = "pynix-nix-helpers"
 
 async def helper(state: AsyncEvalState, name: str) -> AsyncValue:
     """The value of ``nix/<name>.nix``, imported through *state*."""
-    mounted = await state.mount(huggorm.filesystem_accessor(HELPERS), _NAME)
+    mounted = await (await state.mount(huggorm.filesystem_accessor(HELPERS), _NAME)).path()
     store_dir = await to_python(await state.eval_expr("builtins.storeDir"))
     return await state.eval_expr(f"import {store_dir}/{mounted}/{name}.nix")
