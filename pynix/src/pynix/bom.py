@@ -474,13 +474,53 @@ async def build_bom(
     return Bom(listed, texts, buildtime=True, builds=graph.builds)
 
 
-async def recorded_records(state: AsyncEvalState, paths: Iterable[str]) -> dict[str, Record]:
+async def _output_paths(derivation: AsyncDerivation) -> list[str]:
+    """The output paths of *derivation*: never its inputs, which its environment also names."""
+    env = dict(await derivation.env())
+    # With `__structuredAttrs` the environment holds only the outputs.
+    names = env["outputs"].split() if "outputs" in env else list(env)
+    return [env[name] for name in names if name in env]
+
+
+async def _recorded_sibling(store: AsyncStore, drv_store: AsyncStore, path: str, recorded: set[str]) -> str | None:
+    """A recorded output of the derivation that built *path*, or None.
+
+    A build coerces an input's dev output (stdenv's `chooseDevOutputs`), so
+    the state recorded `openssl-dev` while the runtime closure holds
+    `openssl`: one value, another path. Without this, 644 of the 669 Nix
+    packages with no license in sg1's SBOM had none (2026-11-26).
+    """
+    try:
+        deriver = (await store.query_path_info(await store.parse_store_path(path))).deriver()
+        if deriver is None:
+            return None
+        outputs = await _output_paths(await drv_store.read_derivation(deriver))
+    except NixError:
+        return None
+    return next((output for output in sorted(outputs) if output in recorded), None)
+
+
+async def recorded_records(
+    state: AsyncEvalState,
+    paths: Iterable[str],
+    *,
+    store: AsyncStore | None = None,
+    drv_store: AsyncStore | None = None,
+) -> dict[str, Record]:
     """The records of the values *state* recorded for *paths*, and of their sibling outputs.
 
-    Empty unless *state* recorded its derivations as it evaluated.
+    Empty unless *state* recorded its derivations as it evaluated. With
+    *store*, a path whose own output was not recorded takes the value of a
+    recorded sibling output, through its deriver in *drv_store*.
     """
     recorded = set(await state.recorded_out_paths())
-    wanted = sorted(recorded.intersection(paths))
+    given = set(paths)
+    found = recorded.intersection(given)
+    if store is not None:
+        for path in sorted(given - found):
+            if (sibling := await _recorded_sibling(store, drv_store or store, path, recorded)) is not None:
+                found.add(sibling)
+    wanted = sorted(found)
     if not wanted:
         return {}
     values = await state.make_list()
@@ -515,7 +555,7 @@ async def closure_bom(  # noqa: PLR0913 -- keyword-only, one per source of what 
     wanted = sorted(set(roots))
     runtime = await runtime_closure(store, wanted)
     readers = drv_store or store
-    records = await recorded_records(state, runtime) if state is not None else {}
+    records = await recorded_records(state, runtime, store=store, drv_store=readers) if state is not None else {}
     for path in runtime:
         if path not in records:
             records[path] = await record_of_path(store, readers, path)

@@ -118,6 +118,49 @@ async def test_a_recorded_value_gives_its_path_the_meta(
     assert JsonStrictValidator(SchemaVersion.V1_7).validate_str(json.dumps(cyclonedx(bom))) is None
 
 
+#: `split` has two outputs, and `dev` names `out`, as a pkg-config file does.
+#: `user`'s build coerces `split.dev` alone, as stdenv's `chooseDevOutputs` does,
+#: and keeps only the `out` path it reads there: the runtime closure holds
+#: `split`'s `out` and not `dev`, and the state recorded only `dev`.
+_SPLIT = """
+with import <nixpkgs> { };
+rec {
+  split = runCommand "pynix-bom-split-3.0" {
+    pname = "pynix-bom-split";
+    version = "3.0";
+    outputs = [ "out" "dev" ];
+    meta.license = pkgs.lib.licenses.mit;
+  } "mkdir $out $dev; echo $out > $dev/out";
+  user = runCommand "pynix-bom-split-user" { } "mkdir $out; cat ${split.dev}/out > $out/lib";
+}
+"""
+
+
+@LINUX_CHROOT_BUILD
+async def test_an_output_takes_the_value_recorded_for_its_sibling(
+    shared_nix_environment: NixTestEnvironment, tmp_path: Path, nixpkgs_path: str
+) -> None:
+    """Only `split.dev` was coerced, so only it was recorded; `split`'s `out` takes that value through its deriver."""
+    path = tmp_path / "split.nix"
+    path.write_text(with_nixpkgs(_SPLIT, nixpkgs_path), encoding="utf-8")
+    async with _util.huggorm_build_session(shared_nix_environment.store_uri) as opened:
+        _session, store, eval_store, state = opened
+        await state.set_record_derivations(True)
+        manifest = await state.eval_expr(f'builtins.toJSON {{ command = "${{(import {path}).user}}/lib"; }}')
+        await state.force(manifest)
+        await manifest.realise_string()
+        roots = await context_roots(eval_store, manifest)
+        recorded = set(await state.recorded_out_paths())
+        bom = await closure_bom(store, roots, name="cluster", drv_store=eval_store, state=state)
+
+    (split,) = [record for record in bom.inventory.components if record.name == "pynix-bom-split"]
+    assert split.output_name == "out"
+    assert not any(record.output_name == "dev" for record in bom.inventory.components)
+    assert split.path not in recorded
+    assert split.origin == Origin.VALUE
+    assert [entry.spdx_id for entry in split.licenses] == ["MIT"]
+
+
 @LINUX_CHROOT_BUILD
 async def test_a_path_named_without_context_still_finds_its_value(
     shared_nix_environment: NixTestEnvironment, packages: Path
