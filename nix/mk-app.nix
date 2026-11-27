@@ -22,10 +22,11 @@
 }:
 
 {
-  # Attribute name of the project in `pythonSet`, and the name of the
-  # executable it installs. These are the same for every application here; if
-  # they ever diverge, that is worth a second argument rather than a guess.
+  # Attribute name of the project in `pythonSet`.
   name,
+  # The executable the project installs, which the wrapper and the completions
+  # name. vivarium-eval installs `vivarium`.
+  program ? name,
   # The package set to resolve `name` in, and the package itself. Both, because
   # `mkApplication` needs the venv for content and the package for shape.
   pythonSet,
@@ -78,8 +79,8 @@ let
         ];
       }
       ''
-        ${venv}/bin/python ${./render-completions.py} ${name} "$PWD/rendered"
-        installShellCompletion --cmd ${name} \
+        ${venv}/bin/python ${./render-completions.py} ${program} "$PWD/rendered"
+        installShellCompletion --cmd ${program} \
           --bash rendered/bash \
           --zsh rendered/zsh \
           --fish rendered/fish
@@ -167,8 +168,8 @@ let
         paths = [ app ];
         nativeBuildInputs = [ makeWrapper ];
         postBuild = ''
-          rm "$out/bin/${name}"
-          makeWrapper "${app}/bin/${name}" "$out/bin/${name}" ${lib.escapeShellArgs wrapperArgs}
+          rm "$out/bin/${program}"
+          makeWrapper "${app}/bin/${program}" "$out/bin/${program}" ${lib.escapeShellArgs wrapperArgs}
         '';
       };
 in
